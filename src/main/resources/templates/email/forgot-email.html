@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="vi">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Quên mật khẩu</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; padding: 40px 20px; }
+        .wrapper { max-width: 520px; margin: 0 auto; }
+        .card { background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+
+        /* Header */
+        .header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 40px 30px; text-align: center; }
+        .header .icon { font-size: 48px; margin-bottom: 12px; }
+        .header h1 { color: #ffffff; font-size: 22px; font-weight: 600; }
+
+        /* Body */
+        .body { padding: 36px 30px; }
+        .greeting { font-size: 16px; color: #333; margin-bottom: 16px; }
+        .greeting strong { color: #f5576c; }
+        .message { font-size: 14px; color: #666; line-height: 1.6; margin-bottom: 28px; }
+
+        /* Password Box */
+        .pass-label { font-size: 13px; color: #999; text-align: center; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+        .pass-box { background: linear-gradient(135deg, #fff5f5 0%, #ffe4e8 100%);
+            border: 2px dashed #f5576c; border-radius: 12px;
+            text-align: center; padding: 20px;
+            font-size: 28px; font-weight: 800;
+            color: #c0392b; letter-spacing: 4px;
+            margin-bottom: 24px; word-break: break-all; }
+
+        /* Steps */
+        .steps { margin-bottom: 24px; }
+        .steps p { font-size: 13px; color: #555; font-weight: 600; margin-bottom: 10px; }
+        .step { display: flex; align-items: flex-start; gap: 10px;
+            font-size: 13px; color: #666; margin-bottom: 8px; }
+        .step-num { background: #f5576c; color: white; border-radius: 50%;
+            width: 20px; height: 20px; display: flex;
+            align-items: center; justify-content: center;
+            font-size: 11px; font-weight: bold; flex-shrink: 0; margin-top: 1px; }
+
+        /* Warning */
+        .warning { background: #fff3cd; border-left: 4px solid #ffc107;
+            border-radius: 4px; padding: 12px 16px;
+            font-size: 13px; color: #856404; line-height: 1.5; }
+
+        /* Footer */
+        .footer { background: #f8f9fa; padding: 20px 30px; text-align: center;
+            font-size: 12px; color: #aaa; border-top: 1px solid #eee; }
+    </style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="card">
+
+        <!-- Header -->
+        <div class="header">
+            <div class="icon">🔐</div>
+            <h1>Đặt lại mật khẩu</h1>
+        </div>
+
+        <!-- Body -->
+        <div class="body">
+            <p class="greeting">Xin chào, <strong th:text="${fullName}">Người dùng</strong>!</p>
+            <p class="message">
+                Chúng tôi đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn.
+                Đây là mật khẩu mới được tạo tự động:
+            </p>
+
+            <p class="pass-label">Mật khẩu mới của bạn</p>
+            <div class="pass-box" th:text="${newPassword}">••••••••••</div>
+
+            <div class="steps">
+                <p>Các bước tiếp theo:</p>
+                <div class="step">
+                    <div class="step-num">1</div>
+                    <span>Đăng nhập bằng mật khẩu mới ở trên</span>
+                </div>
+                <div class="step">
+                    <div class="step-num">2</div>
+                    <span>Vào phần <strong>Đổi mật khẩu</strong> trong hồ sơ cá nhân</span>
+                </div>
+                <div class="step">
+                    <div class="step-num">3</div>
+                    <span>Tạo mật khẩu mới theo ý muốn của bạn</span>
+                </div>
+            </div>
+
+            <div class="warning">
+                ⚠️ <strong>Lưu ý:</strong> Nếu bạn không thực hiện yêu cầu này,
+                vui lòng liên hệ hỗ trợ ngay để bảo vệ tài khoản.
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>© 2026 SBA301 Group Project</p>
+        </div>
+
+    </div>
+</div>
+</body>
+</html>
