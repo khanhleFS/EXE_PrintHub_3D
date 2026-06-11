@@ -42,11 +42,5 @@ public class User extends BaseEntity {
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
-
-    @NotNull
-    @ColumnDefault("0")
-    @Column(name = "coin_balance", nullable = false)
-    @Builder.Default
-    private Integer coinBalance = 0;
 }
 

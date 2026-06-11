@@ -13,6 +13,8 @@ public record LoginResponseDTO(
         @Schema(example = "550e8400-e29b-41d4-a716-446655440000")
         UUID userId,
         @Schema(example = "Nguyen Van A")
+        String fullName,
+        @Schema(example = "nguyenvana")
         String username,
         @Schema(example = "user@example.com")
         String email,

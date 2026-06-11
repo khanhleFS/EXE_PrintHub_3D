@@ -1,0 +1,9 @@
+# Chỉ chạy infrastructure, KHÔNG chạy app
+# Dùng khi dev local trên IntelliJ
+services:
+  sba-redis:
+    image: redis:alpine
+    container_name: exe-dev
+    ports:
+      - "6380:6379"
+    restart: unless-stopped

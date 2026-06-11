@@ -114,29 +114,4 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         String desc = request.getDescription(false);
         return desc.startsWith("uri=") ? desc.substring(4) : desc;
     }
-
-//     private ErrorCode mapErrorCode(HttpStatus status) {
-//     int s = status.value();
-//
-//     switch (s) {
-//     case 400:
-//     return CommonErrorCode.REQUEST_FAILED;
-//     case 401:
-//     return CommonErrorCode.UNAUTHENTICATED;
-//     case 403:
-//     return ErrorCode.FORBIDDEN_ACTION;
-//     case 404:
-//     return ErrorCode.RESOURCE_NOT_FOUND;
-//     case 415:
-//     return ErrorCode.UNSUPPORTED_MEDIA_TYPE;
-//     case 429:
-//     return ErrorCode.TOO_MANY_REQUESTS;
-//     default:
-//     if (status.is4xxClientError()) {
-//     return ErrorCode.REQUEST_FAILED;
-//     }
-//     return ErrorCode.UNEXPECTED_ERROR;
-//     }
-//     }
-
 }

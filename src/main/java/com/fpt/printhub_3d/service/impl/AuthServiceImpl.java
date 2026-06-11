@@ -53,7 +53,7 @@ public class AuthServiceImpl implements AuthService {
     public LoginResponseDTO login(LoginRequestDTO request) {
         // Thực hiện authenticate thông qua authenticationManager
         Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.email(), request.password())
+                new UsernamePasswordAuthenticationToken(request.userNameOrEmail(), request.password())
         );
         CustomUserDetail userDetail = (CustomUserDetail) authentication.getPrincipal();
         User user = userDetail.getUser();
@@ -78,6 +78,7 @@ public class AuthServiceImpl implements AuthService {
                 refreshToken,
                 user.getId(),
                 user.getUsername(),
+                user.getFullName(),
                 user.getEmail(),
                 user.getRole()
         );
