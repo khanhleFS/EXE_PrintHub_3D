@@ -19,6 +19,7 @@ public class SecurityConstants {
             "/favicon.ico",
             "/error",
             "/assets/**",
-            "/images/**"
+            "/images/**",
+            "/uploads/**"
     };
 }

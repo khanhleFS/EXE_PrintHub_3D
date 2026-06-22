@@ -17,6 +17,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import com.fpt.printhub_3d.dto.custom_prints.CustomOrderResponseDTO;
+import org.springframework.web.multipart.MultipartFile;
+import java.util.UUID;
+
 @RequestMapping("/api/custom-prints")
 @Tag(name = "Custom Print Service APIs", description = "APIs for managing custom 3D printing services")
 public interface CustomPrintAPI {
@@ -59,5 +63,22 @@ public interface CustomPrintAPI {
 
             @Parameter(description = "Kích thước trang")
             @RequestParam(required = false, defaultValue = "10") Integer size
+    );
+
+    @Operation(
+            summary = "Create custom print request",
+            description = "Khách hàng khởi tạo yêu cầu gia công đặt in Custom đặc thù, bắt buộc đính kèm tệp file thiết kế hình học định dạng .STL.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping(value = "/requests", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    ResponseEntity<ApiResponse<CustomOrderResponseDTO>> createCustomOrderRequest(
+            @Parameter(description = "ID của Maker nhận yêu cầu")
+            @RequestParam("makerId") UUID makerId,
+
+            @Parameter(description = "Mô tả chi tiết yêu cầu gia công (vật liệu, màu sắc, độ phân giải...)")
+            @RequestParam("requirements") String requirements,
+
+            @Parameter(description = "Tệp file thiết kế hình học định dạng .STL")
+            @RequestParam("file") MultipartFile file
     );
 }

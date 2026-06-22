@@ -18,6 +18,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.fpt.printhub_3d.dto.custom_prints.CustomOrderResponseDTO;
+import com.fpt.printhub_3d.service.CustomOrderService;
+import org.springframework.web.multipart.MultipartFile;
+import java.util.UUID;
+
 @Slf4j
 @RestController
 @RequestMapping("/api/custom-prints")
@@ -25,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class CustomPrintController implements CustomPrintAPI {
 
     private final CustomPrintManagementService customPrintManagementService;
+    private final CustomOrderService customOrderService;
 
     @Override
     @PreAuthorize("hasRole('MAKER')")
@@ -52,7 +58,7 @@ public class CustomPrintController implements CustomPrintAPI {
 
         CustomPrintServiceFilterDTO filter = new CustomPrintServiceFilterDTO(
                 keyword, material, minPrice, maxPrice, sortBy, sortDirection, page, size
-        );
+            );
 
         Page<CustomPrintServiceResponseDTO> result = customPrintManagementService.getServices(filter);
 
@@ -61,5 +67,26 @@ public class CustomPrintController implements CustomPrintAPI {
                 .message("Lấy danh sách dịch vụ in thành công")
                 .result(result)
                 .build());
+    }
+
+    @Override
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<ApiResponse<CustomOrderResponseDTO>> createCustomOrderRequest(
+            UUID makerId, String requirements, MultipartFile file) {
+
+        log.info("Nhận yêu cầu in custom từ customer gửi tới maker: {}", makerId);
+
+        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
+                .getContext().getAuthentication().getPrincipal();
+        User buyer = userDetail.getUser();
+
+        CustomOrderResponseDTO response = customOrderService.createRequest(makerId, requirements, file, buyer);
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.<CustomOrderResponseDTO>builder()
+                        .code(201)
+                        .message("Khởi tạo yêu cầu gia công in custom thành công")
+                        .result(response)
+                        .build());
     }
 }
