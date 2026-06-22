@@ -3,10 +3,8 @@ package com.fpt.printhub_3d.entity;
 import com.fpt.printhub_3d.common.infrastructure.BaseEntity;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import jakarta.persistence.*;
-import jakarta.validation.constraints.NotNull;
 import lombok.*;
 import lombok.experimental.SuperBuilder;
-import org.hibernate.annotations.ColumnDefault;
 
 @Entity
 @Table(name = "users")
