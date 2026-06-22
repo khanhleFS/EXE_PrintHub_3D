@@ -2,6 +2,8 @@ package com.fpt.printhub_3d.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.UuidGenerator;
+
 import java.time.Instant;
 import java.util.UUID;
 @Entity
@@ -13,7 +15,8 @@ import java.util.UUID;
 @Builder
 public class OTP {
     @Id
-    @GeneratedValue(strategy = GenerationType.AUTO)
+    @GeneratedValue
+    @UuidGenerator
     private UUID id;
     @Column(nullable = false)
     private String email;

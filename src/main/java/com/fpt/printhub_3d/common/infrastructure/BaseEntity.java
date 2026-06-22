@@ -1,5 +1,6 @@
 package com.fpt.printhub_3d.common.infrastructure;
 
+import org.hibernate.annotations.UuidGenerator;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -21,7 +22,8 @@ import java.util.UUID;
 public abstract class BaseEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.AUTO)
+    @GeneratedValue
+    @UuidGenerator
     @Column(name = "id", nullable = false, columnDefinition = "uniqueidentifier")
     @EqualsAndHashCode.Include
     private UUID id;
