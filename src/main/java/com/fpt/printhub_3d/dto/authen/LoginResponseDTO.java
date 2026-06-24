@@ -7,9 +7,9 @@ import java.util.UUID;
 
 public record LoginResponseDTO(
         @Schema(example = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyQGV4YW1wbGUuY29tIn0.signature")
-        String token,
+        String accessToken,
         @Schema(example = "Bearer")
-        String tokenType, // "Bearer"
+        String refreshToken, // "Bearer"
         @Schema(example = "550e8400-e29b-41d4-a716-446655440000")
         UUID userId,
         @Schema(example = "Nguyen Van A")

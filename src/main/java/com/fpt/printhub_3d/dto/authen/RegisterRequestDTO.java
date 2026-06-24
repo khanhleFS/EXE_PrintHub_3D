@@ -8,7 +8,7 @@ import jakarta.validation.constraints.Size;
 
 public record RegisterRequestDTO(
         @NotBlank(message = "Họ tên không được để trống.")
-        @Size(min = 9, max = 50, message = "Họ tên phải từ 2 đến 50 ký tự.")
+        @Size(min = 9, max = 50, message = "Họ tên phải từ 9 đến 50 ký tự.")
         @Pattern(regexp = "^\\S.*\\S$|^\\S$", message = "Họ tên không được có khoảng trắng ở đầu hoặc cuối.")
         @Pattern(regexp = "^[\\p{L} ]+$", message = "Họ tên chỉ được chứa chữ cái và khoảng trắng.")
         @Pattern(regexp = "^(?!.*\\s{2,}).*$", message = "Họ tên không được có 2 khoảng trắng liên tiếp.")
@@ -20,6 +20,14 @@ public record RegisterRequestDTO(
         @Size(message = "Email phải có độ dài từ 10 đến 50 ký tự.", min = 10, max = 50)
         @Schema(example = "user@example.com")
         String email,
+
+        @NotBlank(message = "Tên người dùng không được để trống.")
+        @Size(min = 5, max = 50, message = "Tên người dùng phải từ 5 đến 50 ký tự.")
+        @Pattern(regexp = "^\\S.*\\S$|^\\S$", message = "Tên người dùng không được có khoảng trắng ở đầu hoặc cuối.")
+        @Pattern(regexp = "^[\\p{L}0-9_]+$", message = "Tên người dùng chỉ được chứa chữ cái, số và dấu gạch dưới.")
+        @Pattern(regexp = "^(?!.*__).*$", message = "Tên người dùng không được có 2 dấu gạch dưới liên tiếp.")
+        @Schema(example = "nguyenvana")
+        String username,
 
         @NotBlank(message = "Số điện thoại không được để trống.")
         @Pattern(regexp = "^0[3|5|7|8|9][0-9]{8}$",
