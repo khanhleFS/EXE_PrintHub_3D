@@ -3,15 +3,23 @@ package com.fpt.printhub_3d.controller;
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.controller.api.AuthAPI;
 import com.fpt.printhub_3d.dto.authen.*;
+import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
+import com.fpt.printhub_3d.dto.maker.MakerApplicationResponse;
+import com.fpt.printhub_3d.dto.maker.MakerRegistrationRequest;
+import com.fpt.printhub_3d.dto.maker.MakerStatusUpdateRequest;
 import com.fpt.printhub_3d.service.AuthService;
 import com.fpt.printhub_3d.common.security.CustomUserDetail;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.UUID;
 
 @Slf4j
 @RestController
@@ -90,6 +98,45 @@ public class AuthController implements AuthAPI {
                 .code(200)
                 .message("Xác thực thành công. Tài khoản đã được kích hoạt.")
                 .build());
+    }
+
+    @Override
+    @PreAuthorize("hasAnyRole('USER', 'MAKER')")
+    public ResponseEntity<ApiResponse<MakerApplicationResponse>> registerMaker(MakerRegistrationRequest request) {
+        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        MakerApplicationResponse response = authService.registerMaker(userDetail.getUser().getId(), request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<MakerApplicationResponse>builder()
+                        .code(201)
+                        .message("Gửi yêu cầu đăng ký Maker thành công. Chờ Admin phê duyệt.")
+                        .result(response)
+                        .build()
+        );
+    }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<MakerApplicationResponse>> updateApplicationStatus(UUID id, MakerStatusUpdateRequest request) {
+        MakerApplicationResponse response = authService.updateMakerApplicationStatus(id, request);
+        return ResponseEntity.ok(
+                ApiResponse.<MakerApplicationResponse>builder()
+                        .code(200)
+                        .message("Cập nhật trạng thái hồ sơ Maker thành công.")
+                        .result(response)
+                        .build()
+        );
+    }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Void>> addCccdToBlacklist(BlacklistRequestDTO request) {
+        authService.addCccdToBlacklist(request);
+        return ResponseEntity.ok(
+                ApiResponse.<Void>builder()
+                        .code(200)
+                        .message("Đã thêm số CCCD vào danh sách đen và vô hiệu hóa tài khoản liên quan.")
+                        .build()
+        );
     }
 }
 

@@ -1,6 +1,10 @@
 package com.fpt.printhub_3d.service;
 
 import com.fpt.printhub_3d.dto.authen.*;
+import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
+import com.fpt.printhub_3d.dto.maker.MakerApplicationResponse;
+import com.fpt.printhub_3d.dto.maker.MakerRegistrationRequest;
+import com.fpt.printhub_3d.dto.maker.MakerStatusUpdateRequest;
 
 import java.util.UUID;
 
@@ -23,4 +27,10 @@ public interface AuthService {
     boolean isEmailValid(String email);
 
     boolean verifyRegisterOtp(String email, String otpCode);
+
+    MakerApplicationResponse registerMaker(UUID userId, MakerRegistrationRequest request);
+
+    MakerApplicationResponse updateMakerApplicationStatus(UUID id, MakerStatusUpdateRequest request);
+
+    void addCccdToBlacklist(BlacklistRequestDTO request);
 }

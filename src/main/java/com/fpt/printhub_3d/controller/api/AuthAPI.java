@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.controller.api;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.dto.authen.*;
+import com.fpt.printhub_3d.dto.maker.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -9,6 +10,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.UUID;
 
 @RequestMapping("/api/auth")
 @Tag(name = "Auth APIs", description = "Authentication and user profile APIs")
@@ -67,4 +70,32 @@ public interface AuthAPI {
     @PostMapping("/verify-register-otp")
     ResponseEntity<ApiResponse<Void>> verifyRegisterOtp(
             @Valid @RequestBody VerifyOTPRequestDTO request);
+
+    @Operation(
+            summary = "Apply for Maker registration",
+            description = "Submit CCCD image and profile info to apply to be a Maker. Only users with role USER or MAKER are allowed.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping("/users/maker-registration")
+    ResponseEntity<ApiResponse<MakerApplicationResponse>> registerMaker(
+            @Valid @RequestBody MakerRegistrationRequest request);
+
+    @Operation(
+            summary = "Approve or reject a Maker registration application",
+            description = "Admin updates the application status of a Maker to APPROVED or REJECTED. Promotes user's role to MAKER upon approval.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PutMapping("/admin/maker-applications/{id}/status")
+    ResponseEntity<ApiResponse<MakerApplicationResponse>> updateApplicationStatus(
+            @PathVariable("id") UUID id,
+            @Valid @RequestBody MakerStatusUpdateRequest request);
+
+    @Operation(
+            summary = "Add a CCCD number to the system blacklist",
+            description = "Admin manually bans a CCCD number from being registered or applied in the system.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping("/admin/blacklist")
+    ResponseEntity<ApiResponse<Void>> addCccdToBlacklist(
+            @Valid @RequestBody BlacklistRequestDTO request);
 }

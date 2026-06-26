@@ -41,5 +41,23 @@ public class User extends BaseEntity {
     @Builder.Default
     private Boolean isActive = true;
 
+    @Column(name = "cccd_number", unique = true, length = 20)
+    private String cccdNumber;
+
+    @Column(name = "cccd_name", length = 255)
+    private String cccdName;
+
+    @Column(name = "cccd_dob", length = 20)
+    private String cccdDob;
+
+    @Column(name = "cccd_gender", length = 20)
+    private String cccdGender;
+
+    @Column(name = "cccd_address", length = 255)
+    private String cccdAddress;
+
+    @Column(name = "cccd_front_image_url", length = 500)
+    private String cccdFrontImageUrl;
+
 }
 
