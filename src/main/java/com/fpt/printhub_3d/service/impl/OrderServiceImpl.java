@@ -6,6 +6,7 @@ import com.fpt.printhub_3d.dto.order.OrderCreateRequestDTO;
 import com.fpt.printhub_3d.dto.order.OrderItemRequestDTO;
 import com.fpt.printhub_3d.dto.order.OrderItemResponseDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
+import com.fpt.printhub_3d.dto.order.RewardCompletionResponseDTO;
 import com.fpt.printhub_3d.dto.order.ShippingInfoResponseDTO;
 import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.OrderItem;
@@ -16,6 +17,7 @@ import com.fpt.printhub_3d.repository.OrderItemRepository;
 import com.fpt.printhub_3d.repository.OrderRepository;
 import com.fpt.printhub_3d.repository.ProductRepository;
 import com.fpt.printhub_3d.repository.ShippingInfoRepository;
+import com.fpt.printhub_3d.repository.UserRepository;
 import com.fpt.printhub_3d.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,8 +41,10 @@ public class OrderServiceImpl implements OrderService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final ShippingInfoRepository shippingInfoRepository;
+    private final UserRepository userRepository;
 
     private static final BigDecimal COMMISSION_RATE = new BigDecimal("0.05"); // 5% commission fee
+    private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
 
     @Override
     @Transactional
@@ -205,6 +209,55 @@ public class OrderServiceImpl implements OrderService {
         }
 
         return createdOrders;
+    }
+
+    @Override
+    @Transactional
+    public RewardCompletionResponseDTO completeRewards(UUID orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ApiException(OrderErrorCode.ORDER_NOT_FOUND));
+
+        if (!"COMPLETED".equalsIgnoreCase(order.getStatus())) {
+            throw new ApiException(OrderErrorCode.ORDER_NOT_COMPLETED);
+        }
+
+        User buyer = order.getBuyer();
+
+        if (Boolean.TRUE.equals(order.getRewardProcessed())) {
+            return RewardCompletionResponseDTO.builder()
+                    .orderId(order.getId())
+                    .customerId(buyer.getId())
+                    .customerName(buyer.getFullName())
+                    .rewardPointsEarned(order.getRewardPointsEarned())
+                    .totalRewardPoints(buyer.getRewardPoints())
+                    .alreadyProcessed(true)
+                    .build();
+        }
+
+        int earnedPoints = order.getTotalAmount()
+                .divideToIntegralValue(REWARD_POINT_UNIT)
+                .intValue();
+
+        int currentPoints = buyer.getRewardPoints() == null ? 0 : buyer.getRewardPoints();
+        buyer.setRewardPoints(currentPoints + earnedPoints);
+        userRepository.save(buyer);
+
+        order.setRewardProcessed(true);
+        order.setRewardPointsEarned(earnedPoints);
+        order.setUpdatedAt(Instant.now());
+        orderRepository.save(order);
+
+        log.info("Cộng [{}] điểm thưởng cho customer [{}] từ order [{}]",
+                earnedPoints, buyer.getId(), order.getId());
+
+        return RewardCompletionResponseDTO.builder()
+                .orderId(order.getId())
+                .customerId(buyer.getId())
+                .customerName(buyer.getFullName())
+                .rewardPointsEarned(earnedPoints)
+                .totalRewardPoints(buyer.getRewardPoints())
+                .alreadyProcessed(false)
+                .build();
     }
 
     // Helper class để truyền dữ liệu nội bộ

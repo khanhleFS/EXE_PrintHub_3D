@@ -41,6 +41,10 @@ public class User extends BaseEntity {
     @Builder.Default
     private Boolean isActive = true;
 
+    @Column(name = "reward_points", nullable = false)
+    @Builder.Default
+    private Integer rewardPoints = 0;
+
     @Column(name = "cccd_number", unique = true, length = 20)
     private String cccdNumber;
 

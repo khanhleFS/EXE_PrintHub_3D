@@ -2,9 +2,11 @@ package com.fpt.printhub_3d.service;
 
 import com.fpt.printhub_3d.dto.order.OrderCreateRequestDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
+import com.fpt.printhub_3d.dto.order.RewardCompletionResponseDTO;
 import com.fpt.printhub_3d.entity.User;
 
 import java.util.List;
+import java.util.UUID;
 
 public interface OrderService {
     /**
@@ -17,4 +19,5 @@ public interface OrderService {
      * @return danh sách các đơn hàng đã được tạo thành công
      */
     List<OrderResponseDTO> createOrders(OrderCreateRequestDTO request, User buyer);
+    RewardCompletionResponseDTO completeRewards(UUID orderId);
 }
