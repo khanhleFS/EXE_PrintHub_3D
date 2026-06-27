@@ -48,6 +48,11 @@ public class Dispute {
     @Column(name = "status", nullable = false, length = 20)
     private String status;
 
+    @Nationalized
+    @Lob
+    @Column(name = "resolution_note")
+    private String resolutionNote;
+
     @NotNull
     @ColumnDefault("sysutcdatetime()")
     @Column(name = "created_at", nullable = false)
