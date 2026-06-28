@@ -41,7 +41,7 @@ public class User extends BaseEntity {
     @Builder.Default
     private Boolean isActive = true;
 
-    @Column(name = "reward_points", nullable = false)
+    @Column(name = "reward_points", nullable = false, columnDefinition = "int default 0")
     @Builder.Default
     private Integer rewardPoints = 0;
 
