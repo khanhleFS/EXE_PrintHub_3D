@@ -12,6 +12,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/warranty")
 @RequiredArgsConstructor
+@CrossOrigin("*")
 public class WarrantyController {
 
     private final WarrantyClaimRepository warrantyClaimRepository;

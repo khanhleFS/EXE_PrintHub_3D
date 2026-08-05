@@ -12,6 +12,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/notifications")
 @RequiredArgsConstructor
+@CrossOrigin("*")
 public class NotificationController {
 
     private final NotificationRepository notificationRepository;

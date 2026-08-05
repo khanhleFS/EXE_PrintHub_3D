@@ -102,32 +102,6 @@ public class AuthController implements AuthAPI {
                 .build());
     }
 
-    @Override
-    @PreAuthorize("hasAnyRole('USER', 'MAKER')")
-    public ResponseEntity<ApiResponse<MakerApplicationResponse>> registerMaker(MakerRegistrationRequest request) {
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        MakerApplicationResponse response = authService.registerMaker(userDetail.getUser().getId(), request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(
-                ApiResponse.<MakerApplicationResponse>builder()
-                        .code(201)
-                        .message("Gửi yêu cầu đăng ký Maker thành công. Chờ Admin phê duyệt.")
-                        .result(response)
-                        .build()
-        );
-    }
-
-    @Override
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<MakerApplicationResponse>> updateApplicationStatus(UUID id, MakerStatusUpdateRequest request) {
-        MakerApplicationResponse response = authService.updateMakerApplicationStatus(id, request);
-        return ResponseEntity.ok(
-                ApiResponse.<MakerApplicationResponse>builder()
-                        .code(200)
-                        .message("Cập nhật trạng thái hồ sơ Maker thành công.")
-                        .result(response)
-                        .build()
-        );
-    }
 
     @Override
     @PreAuthorize("hasRole('ADMIN')")

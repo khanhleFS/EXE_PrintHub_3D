@@ -45,8 +45,6 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
         SubscriptionType planType;
         if (user.getRole() == UserRole.USER) {
             planType = SubscriptionType.CUSTOMER_VIP;
-        } else if (user.getRole() == UserRole.MAKER) {
-            planType = SubscriptionType.MAKER_MARKETING;
         } else {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Loại người dùng không hợp lệ.");
         }
@@ -84,9 +82,6 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
 
         if (plan.getType() == SubscriptionType.CUSTOMER_VIP && user.getRole() != UserRole.USER) {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói VIP người mua chỉ dành cho tài khoản khách hàng.");
-        }
-        if (plan.getType() == SubscriptionType.MAKER_MARKETING && user.getRole() != UserRole.MAKER) {
-            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói Marketing người bán chỉ dành cho tài khoản Maker.");
         }
 
         Integer requiredPoints = plan.getRequiredPoints();

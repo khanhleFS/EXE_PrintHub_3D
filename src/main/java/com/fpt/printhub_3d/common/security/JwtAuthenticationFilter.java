@@ -80,11 +80,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         } catch (Exception e) {
             log.error("Authentication failed: {}", e.getMessage());
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setContentType("application/json");
-            response.setCharacterEncoding("UTF-8");
-            response.getWriter().write("{\"code\": 401, \"message\": \"Yêu cầu không hợp lệ: " + e.getMessage() + "\"}");
-            return;
+            // Token hết hạn hoặc không hợp lệ: log cảnh báo và để Spring Security phân quyền xử lý tiếp
         }
 
         filterChain.doFilter(request, response);

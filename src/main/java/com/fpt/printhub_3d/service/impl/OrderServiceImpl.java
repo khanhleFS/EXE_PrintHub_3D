@@ -144,7 +144,6 @@ public class OrderServiceImpl implements OrderService {
             // Khởi tạo & Lưu thông tin giao hàng (ShippingInfo)
             ShippingInfo shippingInfo = new ShippingInfo();
             shippingInfo.setOrders(savedOrder);
-            shippingInfo.setId(savedOrder.getId());
             shippingInfo.setRecipientName(request.recipientName());
             shippingInfo.setPhone(request.phone());
             shippingInfo.setAddress(request.address());
