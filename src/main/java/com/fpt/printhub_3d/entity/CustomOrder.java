@@ -27,15 +27,37 @@ public class CustomOrder {
     @JoinColumn(name = "buyer_id", nullable = false)
     private User buyer;
 
-    @NotNull
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "maker_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "maker_id")
     private User maker;
 
-    @NotNull
+    @Size(max = 100)
+    @Column(name = "ruler_model", length = 100)
+    private String rulerModel;
+
+    @Size(max = 100)
+    @Nationalized
+    @Column(name = "custom_name", length = 100)
+    private String customName;
+
+    @Size(max = 50)
+    @Column(name = "custom_student_id", length = 50)
+    private String customStudentId;
+
+    @Size(max = 50)
+    @Column(name = "color", length = 50)
+    private String color;
+
+    @Size(max = 50)
+    @Column(name = "font_style", length = 50)
+    private String fontStyle;
+
+    @Column(name = "quantity")
+    private Integer quantity = 1;
+
     @Nationalized
     @Lob
-    @Column(name = "requirements", nullable = false)
+    @Column(name = "requirements")
     private String requirements;
 
     @Size(max = 500)
@@ -48,7 +70,7 @@ public class CustomOrder {
 
     @Size(max = 20)
     @NotNull
-    @ColumnDefault("'REQUESTED'")
+    @ColumnDefault("'PENDING'")
     @Column(name = "status", nullable = false, length = 20)
     private String status;
 
@@ -61,5 +83,4 @@ public class CustomOrder {
     @ColumnDefault("sysutcdatetime()")
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
-
 }

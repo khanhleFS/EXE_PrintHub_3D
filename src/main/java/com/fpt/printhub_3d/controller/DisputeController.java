@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
 
+/*
 @Slf4j
 @RestController
 @RequiredArgsConstructor
@@ -52,3 +53,4 @@ public class DisputeController implements DisputeAPI {
                 .build());
     }
 }
+*/
