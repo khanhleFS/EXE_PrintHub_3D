@@ -33,6 +33,10 @@ public record OrderCreateRequestDTO(
         @NotEmpty(message = "Danh sách sản phẩm mua hàng không được để trống")
         @Valid
         @Schema(description = "Danh sách các sản phẩm và số lượng tương ứng")
-        List<OrderItemRequestDTO> items
+        List<OrderItemRequestDTO> items,
+
+        @NotBlank(message = "Phương thức thanh toán không được để trống")
+        @Schema(description = "Phương thức thanh toán (COD hoặc PAYOS)", example = "PAYOS")
+        String paymentMethod
 ) {
 }

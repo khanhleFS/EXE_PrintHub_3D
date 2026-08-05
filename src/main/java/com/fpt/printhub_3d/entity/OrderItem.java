@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.entity;
 
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.OnDelete;
@@ -37,5 +38,13 @@ public class OrderItem {
     @NotNull
     @Column(name = "unit_price", nullable = false, precision = 18, scale = 2)
     private BigDecimal unitPrice;
+
+    @Size(max = 50)
+    @Column(name = "color", length = 50)
+    private String color;
+
+    @Size(max = 255)
+    @Column(name = "engraving_text", length = 255)
+    private String engravingText;
 
 }
