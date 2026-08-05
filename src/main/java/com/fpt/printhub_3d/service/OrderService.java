@@ -20,4 +20,5 @@ public interface OrderService {
      */
     List<OrderResponseDTO> createOrders(OrderCreateRequestDTO request, User buyer);
     RewardCompletionResponseDTO completeRewards(UUID orderId);
+    List<OrderResponseDTO> getMyOrders(UUID buyerId);
 }

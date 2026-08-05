@@ -56,4 +56,20 @@ public class OrderController implements OrderAPI {
                 .result(response)
                 .build());
     }
+
+    @Override
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<ApiResponse<List<OrderResponseDTO>>> getMyOrders() {
+        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
+                .getContext().getAuthentication().getPrincipal();
+        User buyer = userDetail.getUser();
+
+        List<OrderResponseDTO> response = orderService.getMyOrders(buyer.getId());
+
+        return ResponseEntity.ok(ApiResponse.<List<OrderResponseDTO>>builder()
+                .code(200)
+                .message("Lấy danh sách đơn hàng thành công")
+                .result(response)
+                .build());
+    }
 }

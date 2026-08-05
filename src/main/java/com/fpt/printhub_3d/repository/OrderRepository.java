@@ -19,4 +19,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     @Query(value = "select count(*) from orders", nativeQuery = true)
     Long countOrders();
+
+    java.util.List<Order> findByBuyerIdOrderByCreatedAtDesc(UUID buyerId);
 }

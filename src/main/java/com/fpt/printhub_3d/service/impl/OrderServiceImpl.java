@@ -291,6 +291,75 @@ public class OrderServiceImpl implements OrderService {
                 .build();
     }
 
+    @Override
+    public List<OrderResponseDTO> getMyOrders(UUID buyerId) {
+        log.info("Lấy lịch sử đơn hàng của buyer ID: {}", buyerId);
+
+        List<Order> orders = orderRepository.findByBuyerIdOrderByCreatedAtDesc(buyerId);
+        if (orders.isEmpty()) {
+            return List.of();
+        }
+
+        List<UUID> orderIds = orders.stream().map(Order::getId).toList();
+
+        // Batch fetch ShippingInfo
+        List<ShippingInfo> shippingInfos = shippingInfoRepository.findByIdIn(orderIds);
+        Map<UUID, ShippingInfo> shippingMap = shippingInfos.stream()
+                .collect(Collectors.toMap(ShippingInfo::getId, s -> s));
+
+        // Batch fetch OrderItem
+        List<OrderItem> orderItems = orderItemRepository.findByOrderIn(orders);
+        Map<UUID, List<OrderItem>> itemsMap = orderItems.stream()
+                .collect(Collectors.groupingBy(item -> item.getOrder().getId()));
+
+        List<OrderResponseDTO> responseList = new ArrayList<>();
+        for (Order order : orders) {
+            ShippingInfo shippingInfo = shippingMap.get(order.getId());
+            List<OrderItem> items = itemsMap.getOrDefault(order.getId(), List.of());
+
+            ShippingInfoResponseDTO shippingDTO = null;
+            if (shippingInfo != null) {
+                shippingDTO = ShippingInfoResponseDTO.builder()
+                        .recipientName(shippingInfo.getRecipientName())
+                        .phone(shippingInfo.getPhone())
+                        .address(shippingInfo.getAddress())
+                        .province(shippingInfo.getProvince())
+                        .trackingNumber(shippingInfo.getTrackingNumber())
+                        .build();
+            }
+
+            List<OrderItemResponseDTO> itemDTOs = items.stream()
+                    .map(item -> OrderItemResponseDTO.builder()
+                            .id(item.getId())
+                            .productId(item.getProduct().getId())
+                            .productTitle(item.getProduct().getTitle())
+                            .quantity(item.getQuantity())
+                            .unitPrice(item.getUnitPrice())
+                            .subTotal(item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
+                            .color(item.getColor())
+                            .engravingText(item.getEngravingText())
+                            .build())
+                    .toList();
+
+            responseList.add(OrderResponseDTO.builder()
+                    .id(order.getId())
+                    .buyerId(order.getBuyer().getId())
+                    .buyerName(order.getBuyer().getFullName())
+                    .sellerId(order.getSeller().getId())
+                    .sellerName(order.getSeller().getFullName())
+                    .totalAmount(order.getTotalAmount())
+                    .commissionFee(order.getCommissionFee())
+                    .status(order.getStatus())
+                    .shippingInfo(shippingDTO)
+                    .items(itemDTOs)
+                    .createdAt(order.getCreatedAt())
+                    .updatedAt(order.getUpdatedAt())
+                    .build());
+        }
+
+        return responseList;
+    }
+
     // Helper class để truyền dữ liệu nội bộ
     private static class OrderItemBuild {
         final Product product;
