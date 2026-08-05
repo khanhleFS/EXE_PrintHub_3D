@@ -42,7 +42,7 @@ public class SecurityConfig {
                 )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/api/custom-prints/services").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/marketplace/product").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/marketplace/product/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/forgot-password", "/reset-password").permitAll()
                         .requestMatchers(SecurityConstants.PUBLIC_MATCHERS).permitAll()
                         .requestMatchers("/api/author/**").hasRole("AUTHOR")
