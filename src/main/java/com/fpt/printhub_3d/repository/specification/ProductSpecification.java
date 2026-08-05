@@ -27,14 +27,11 @@ public class ProductSpecification {
             // Chỉ hiển thị sản phẩm của người bán đang hoạt động (isActive = true)
             predicates.add(cb.isTrue(root.get("seller").get("isActive")));
 
-            // Tìm kiếm theo từ khóa (tiêu đề, mô tả, tên người bán, tên danh mục)
+            // Tìm kiếm theo tiêu đề sản phẩm (title)
             if (filter.keyword() != null && !filter.keyword().isBlank()) {
                 String pattern = "%" + filter.keyword().trim().toLowerCase() + "%";
                 Predicate titleLike = cb.like(cb.lower(root.get("title")), pattern);
-                Predicate descriptionLike = cb.like(cb.lower(root.get("description")), pattern);
-                Predicate sellerNameLike = cb.like(cb.lower(root.get("seller").get("fullName")), pattern);
-                Predicate categoryNameLike = cb.like(cb.lower(root.get("category").get("categoryName")), pattern);
-                predicates.add(cb.or(titleLike, descriptionLike, sellerNameLike, categoryNameLike));
+                predicates.add(titleLike);
             }
 
             // Lọc theo danh mục
