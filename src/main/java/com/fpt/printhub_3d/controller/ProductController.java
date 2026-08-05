@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import com.fpt.printhub_3d.dto.marketplace.CreateProductRequestDTO;
+import com.fpt.printhub_3d.dto.marketplace.UpdateProductRequestDTO;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -73,5 +74,28 @@ public class ProductController implements ProductAPI {
                         .message("Tạo sản phẩm thành công")
                         .result(result)
                         .build());
+    }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ProductResponseDTO>> updateProduct(UUID id, UpdateProductRequestDTO request) {
+        ProductResponseDTO result = productService.updateProduct(id, request);
+
+        return ResponseEntity.ok(ApiResponse.<ProductResponseDTO>builder()
+                .code(200)
+                .message("Cập nhật sản phẩm thành công")
+                .result(result)
+                .build());
+    }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Void>> deleteProduct(UUID id) {
+        productService.deleteProduct(id);
+
+        return ResponseEntity.ok(ApiResponse.<Void>builder()
+                .code(200)
+                .message("Xóa sản phẩm thành công")
+                .build());
     }
 }

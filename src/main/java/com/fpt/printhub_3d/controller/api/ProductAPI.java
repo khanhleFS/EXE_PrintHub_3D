@@ -12,10 +12,13 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import jakarta.validation.Valid;
 import com.fpt.printhub_3d.dto.marketplace.CreateProductRequestDTO;
+import com.fpt.printhub_3d.dto.marketplace.UpdateProductRequestDTO;
 
 import java.util.UUID;
 
@@ -74,5 +77,26 @@ public interface ProductAPI {
     @PostMapping("/product")
     ResponseEntity<ApiResponse<ProductResponseDTO>> createProduct(
             @RequestBody @Valid CreateProductRequestDTO request
+    );
+
+    @Operation(
+            summary = "Update a marketplace product",
+            description = "ADMIN cập nhật thông tin chi tiết, chỉnh sửa giá thành hoặc điều chỉnh tồn kho của một sản phẩm."
+    )
+    @PutMapping("/product/{id}")
+    ResponseEntity<ApiResponse<ProductResponseDTO>> updateProduct(
+            @Parameter(description = "ID của sản phẩm cần cập nhật")
+            @PathVariable UUID id,
+            @RequestBody @Valid UpdateProductRequestDTO request
+    );
+
+    @Operation(
+            summary = "Delete a marketplace product",
+            description = "ADMIN xóa vĩnh viễn sản phẩm và hình ảnh đính kèm khỏi sàn."
+    )
+    @DeleteMapping("/product/{id}")
+    ResponseEntity<ApiResponse<Void>> deleteProduct(
+            @Parameter(description = "ID của sản phẩm cần xóa")
+            @PathVariable UUID id
     );
 }

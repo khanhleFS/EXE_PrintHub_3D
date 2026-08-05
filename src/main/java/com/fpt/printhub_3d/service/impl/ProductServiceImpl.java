@@ -18,6 +18,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import com.fpt.printhub_3d.dto.marketplace.CreateProductRequestDTO;
+import com.fpt.printhub_3d.dto.marketplace.UpdateProductRequestDTO;
 import com.fpt.printhub_3d.entity.Category;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.repository.CategoryRepository;
@@ -86,6 +87,80 @@ public class ProductServiceImpl implements ProductService {
         }
 
         return mapToResponseDTO(savedProduct, savedImages);
+    }
+
+    @Override
+    @Transactional
+    public ProductResponseDTO updateProduct(UUID id, UpdateProductRequestDTO request) {
+        log.info("Cập nhật sản phẩm marketplace với ID: {}", id);
+
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy sản phẩm"));
+
+        if (request.categoryId() != null) {
+            Category category = categoryRepository.findById(request.categoryId())
+                    .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy danh mục"));
+            product.setCategory(category);
+        }
+
+        if (request.title() != null) {
+            product.setTitle(request.title());
+        }
+
+        if (request.description() != null) {
+            product.setDescription(request.description());
+        }
+
+        if (request.price() != null) {
+            product.setPrice(request.price());
+        }
+
+        if (request.stock() != null) {
+            product.setStock(request.stock());
+        }
+
+        if (request.type() != null) {
+            product.setType(request.type());
+        }
+
+        product.setUpdatedAt(Instant.now());
+        Product savedProduct = productRepository.save(product);
+
+        // Xử lý ảnh
+        if (request.imageUrls() != null) {
+            // Xóa toàn bộ ảnh cũ của sản phẩm
+            productImageRepository.deleteByProduct(savedProduct);
+
+            // Lưu danh sách ảnh mới
+            List<ProductImage> savedImages = new ArrayList<>();
+            for (int i = 0; i < request.imageUrls().size(); i++) {
+                ProductImage image = new ProductImage();
+                image.setProduct(savedProduct);
+                image.setImageUrl(request.imageUrls().get(i));
+                image.setIsPrimary(i == 0);
+                savedImages.add(productImageRepository.save(image));
+            }
+            return mapToResponseDTO(savedProduct, savedImages);
+        } else {
+            // Giữ nguyên ảnh cũ, lấy danh sách ảnh cũ để map trả về
+            List<ProductImage> existingImages = productImageRepository.findByProductIn(List.of(savedProduct));
+            return mapToResponseDTO(savedProduct, existingImages);
+        }
+    }
+
+    @Override
+    @Transactional
+    public void deleteProduct(UUID id) {
+        log.info("Xóa vĩnh viễn sản phẩm với ID: {}", id);
+
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy sản phẩm"));
+
+        // Xóa tất cả ảnh liên quan
+        productImageRepository.deleteByProduct(product);
+
+        // Xóa sản phẩm
+        productRepository.delete(product);
     }
 
     @Override

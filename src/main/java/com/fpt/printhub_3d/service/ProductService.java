@@ -1,6 +1,7 @@
 package com.fpt.printhub_3d.service;
 
 import com.fpt.printhub_3d.dto.marketplace.CreateProductRequestDTO;
+import com.fpt.printhub_3d.dto.marketplace.UpdateProductRequestDTO;
 import com.fpt.printhub_3d.dto.marketplace.ProductFilterDTO;
 import com.fpt.printhub_3d.dto.marketplace.ProductResponseDTO;
 import org.springframework.data.domain.Page;
@@ -32,4 +33,20 @@ public interface ProductService {
      * @return thông tin chi tiết sản phẩm DTO đã tạo
      */
     ProductResponseDTO createProduct(CreateProductRequestDTO request, UUID sellerId);
+
+    /**
+     * Cập nhật thông tin sản phẩm bán sẵn trên marketplace.
+     *
+     * @param id ID của sản phẩm cần cập nhật
+     * @param request thông tin cập nhật sản phẩm
+     * @return thông tin chi tiết sản phẩm DTO sau khi cập nhật
+     */
+    ProductResponseDTO updateProduct(UUID id, UpdateProductRequestDTO request);
+
+    /**
+     * Xóa vĩnh viễn sản phẩm bán sẵn trên marketplace.
+     *
+     * @param id ID của sản phẩm cần xóa
+     */
+    void deleteProduct(UUID id);
 }
