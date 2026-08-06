@@ -138,7 +138,15 @@
             <artifactId>javase</artifactId>
             <version>3.5.3</version>
         </dependency>
+        <!-- Official PayOS Java SDK -->
+        <dependency>
+            <groupId>vn.payos</groupId>
+            <artifactId>payos-java</artifactId>
+            <version>2.0.1</version>
+        </dependency>
+
     </dependencies>
+
 
     <build>
         <plugins>

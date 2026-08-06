@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
 @Schema(description = "Yêu cầu tạo link thanh toán PayOS")
@@ -19,6 +20,13 @@ public record CreatePaymentLinkRequestDTO(
         String orderType,
 
         @Schema(description = "Mô tả bổ sung cho giao dịch thanh toán", example = "Thanh toán đơn hàng in 3D")
-        String description
+        String description,
+
+        @Schema(description = "Số tiền cọc/thanh toán tùy chọn từ FE (VND)", example = "67500")
+        BigDecimal customAmount,
+
+        @Schema(description = "Tùy chọn thanh toán: DEPOSIT (cọc 50%) hoặc FULL (trả trước 100%)", example = "DEPOSIT")
+        String paymentOption
 ) {
 }
+

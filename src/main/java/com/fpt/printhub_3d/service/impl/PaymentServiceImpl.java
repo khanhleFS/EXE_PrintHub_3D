@@ -72,12 +72,18 @@ public class PaymentServiceImpl implements PaymentService {
                 }
             });
 
-            // Tính số tiền thanh toán theo quy tắc escrow:
-            // Đơn ≥ 200.000 VND → cọc 20%, đơn < 200.000 VND → thanh toán 100% (COD không áp dụng escrow)
-            paymentAmount = calculatePaymentAmount(order.getTotalAmount());
+            // Tính số tiền thanh toán theo FE customAmount hoặc quy tắc cọc
+            if (request.customAmount() != null && request.customAmount().compareTo(BigDecimal.ZERO) > 0) {
+                paymentAmount = request.customAmount();
+            } else if ("DEPOSIT".equalsIgnoreCase(request.paymentOption())) {
+                paymentAmount = order.getTotalAmount().multiply(new BigDecimal("0.5")).setScale(0, java.math.RoundingMode.CEILING);
+            } else {
+                paymentAmount = calculatePaymentAmount(order.getTotalAmount());
+            }
             orderDescription = request.description() != null ? request.description()
                     : "Thanh toán đơn hàng #" + order.getId().toString().substring(0, 8);
             orderCode = "PH3D-" + order.getId().toString().substring(0, 8).toUpperCase();
+
 
         } else if ("CUSTOM_ORDER".equals(request.orderType())) {
             // Xử lý đơn in theo yêu cầu (custom print order)
