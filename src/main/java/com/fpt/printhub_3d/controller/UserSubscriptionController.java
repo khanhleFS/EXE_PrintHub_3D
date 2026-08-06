@@ -1,7 +1,7 @@
 package com.fpt.printhub_3d.controller;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
-import com.fpt.printhub_3d.common.security.CustomUserDetail;
+import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.UserSubscriptionAPI;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPlanResponseDTO;
@@ -12,7 +12,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -30,8 +29,7 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
     @Override
     @PreAuthorize("hasAnyRole('USER', 'MAKER')")
     public ResponseEntity<ApiResponse<List<SubscriptionPlanResponseDTO>>> getAvailablePlans() {
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        UUID userId = userDetail.getUser().getId();
+        UUID userId = SecurityUtils.getCurrentUser().getId();
 
         List<SubscriptionPlanResponseDTO> response = userSubscriptionService.getAvailablePlansForUser(userId);
 
@@ -47,8 +45,7 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
     @Override
     @PreAuthorize("hasAnyRole('USER', 'MAKER')")
     public ResponseEntity<ApiResponse<UserSubscriptionResponseDTO>> redeemSubscription(UUID planId) {
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        UUID userId = userDetail.getUser().getId();
+        UUID userId = SecurityUtils.getCurrentUser().getId();
         
         UserSubscriptionResponseDTO response = userSubscriptionService.redeemSubscription(userId, planId);
         

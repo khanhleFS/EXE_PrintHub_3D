@@ -1,6 +1,7 @@
 package com.fpt.printhub_3d.controller;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
+import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.AuthAPI;
 import com.fpt.printhub_3d.dto.authen.*;
 import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
@@ -8,14 +9,12 @@ import com.fpt.printhub_3d.dto.maker.MakerApplicationResponse;
 import com.fpt.printhub_3d.dto.maker.MakerRegistrationRequest;
 import com.fpt.printhub_3d.dto.maker.MakerStatusUpdateRequest;
 import com.fpt.printhub_3d.service.AuthService;
-import com.fpt.printhub_3d.common.security.CustomUserDetail;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -76,8 +75,7 @@ public class AuthController implements AuthAPI {
     @Override
     public ResponseEntity<ApiResponse<ProfileDTO>> getProfile() {
         // Lấy thông tin user hiện tại từ SecurityContext
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        ProfileDTO profile = authService.getProfile(userDetail.getUser().getId());
+        ProfileDTO profile = authService.getProfile(SecurityUtils.getCurrentUser().getId());
         return ResponseEntity.ok(ApiResponse.<ProfileDTO>builder()
                 .code(200)
                 .message("Lấy thông tin cá nhân thành công")
@@ -86,8 +84,7 @@ public class AuthController implements AuthAPI {
     }
     @Override
     public ResponseEntity<ApiResponse<Void>> updateProfile(ProfileDTO profileDTO) {
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        authService.updateProfile(userDetail.getUser().getId(), profileDTO);
+        authService.updateProfile(SecurityUtils.getCurrentUser().getId(), profileDTO);
         return ResponseEntity.ok(ApiResponse.<Void>builder()
                 .code(200)
                 .message("Cập nhật thông tin cá nhân thành công")

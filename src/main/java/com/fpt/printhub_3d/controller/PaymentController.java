@@ -1,7 +1,7 @@
 package com.fpt.printhub_3d.controller;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
-import com.fpt.printhub_3d.common.security.CustomUserDetail;
+import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.PaymentAPI;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkResponseDTO;
@@ -12,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,11 +30,8 @@ public class PaymentController implements PaymentAPI {
     public ResponseEntity<ApiResponse<CreatePaymentLinkResponseDTO>> createPaymentLink(
             CreatePaymentLinkRequestDTO request) {
         // Lấy thông tin user hiện tại từ SecurityContext
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
-                .getContext().getAuthentication().getPrincipal();
-
         CreatePaymentLinkResponseDTO response = paymentService.createPaymentLink(
-                userDetail.getUser().getId(), request);
+                SecurityUtils.getCurrentUser().getId(), request);
 
         return ResponseEntity.ok(ApiResponse.<CreatePaymentLinkResponseDTO>builder()
                 .code(200)

@@ -1,7 +1,7 @@
 package com.fpt.printhub_3d.controller;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
-import com.fpt.printhub_3d.common.security.CustomUserDetail;
+import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.CustomPrintAPI;
 import com.fpt.printhub_3d.dto.custom_prints.CustomPrintServiceFilterDTO;
 import com.fpt.printhub_3d.dto.custom_prints.CustomPrintServiceRequestDTO;
@@ -14,7 +14,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -39,9 +38,7 @@ public class CustomPrintController implements CustomPrintAPI {
     public ResponseEntity<ApiResponse<CustomPrintServiceResponseDTO>> createService(
             CustomPrintServiceRequestDTO request) {
 
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
-                .getContext().getAuthentication().getPrincipal();
-        User maker = userDetail.getUser();
+        User maker = SecurityUtils.getCurrentUser();
 
         CustomPrintServiceResponseDTO response = customPrintManagementService.createService(request, maker);
 
@@ -78,9 +75,7 @@ public class CustomPrintController implements CustomPrintAPI {
 
         log.info("Nhận yêu cầu in custom từ customer gửi tới maker: {}", makerId);
 
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
-                .getContext().getAuthentication().getPrincipal();
-        User buyer = userDetail.getUser();
+        User buyer = SecurityUtils.getCurrentUser();
 
         CustomOrderResponseDTO response = customOrderService.createRequest(makerId, requirements, file, buyer);
 

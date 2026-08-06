@@ -1,7 +1,7 @@
 package com.fpt.printhub_3d.controller;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
-import com.fpt.printhub_3d.common.security.CustomUserDetail;
+import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.OrderAPI;
 import com.fpt.printhub_3d.dto.order.OrderCreateRequestDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
@@ -13,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -31,9 +30,7 @@ public class OrderController implements OrderAPI {
     @Override
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<ApiResponse<List<OrderResponseDTO>>> createOrders(OrderCreateRequestDTO request) {
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
-                .getContext().getAuthentication().getPrincipal();
-        User buyer = userDetail.getUser();
+        User buyer = SecurityUtils.getCurrentUser();
 
         List<OrderResponseDTO> response = orderService.createOrders(request, buyer);
 
@@ -60,9 +57,7 @@ public class OrderController implements OrderAPI {
     @Override
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<ApiResponse<List<OrderResponseDTO>>> getMyOrders() {
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
-                .getContext().getAuthentication().getPrincipal();
-        User buyer = userDetail.getUser();
+        User buyer = SecurityUtils.getCurrentUser();
 
         List<OrderResponseDTO> response = orderService.getMyOrders(buyer.getId());
 
