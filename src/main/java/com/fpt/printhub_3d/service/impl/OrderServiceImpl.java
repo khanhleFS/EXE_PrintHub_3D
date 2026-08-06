@@ -18,19 +18,24 @@ import com.fpt.printhub_3d.repository.OrderRepository;
 import com.fpt.printhub_3d.repository.ProductRepository;
 import com.fpt.printhub_3d.repository.ShippingInfoRepository;
 import com.fpt.printhub_3d.repository.UserRepository;
+import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.service.OrderService;
+import com.fpt.printhub_3d.entity.Payment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -42,9 +47,12 @@ public class OrderServiceImpl implements OrderService {
     private final OrderItemRepository orderItemRepository;
     private final ShippingInfoRepository shippingInfoRepository;
     private final UserRepository userRepository;
+    private final PaymentRepository paymentRepository;
 
     private static final BigDecimal COMMISSION_RATE = new BigDecimal("0.05"); // 5% commission fee
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
+
+    private static final Set<String> VALID_COLORS = Set.of("GREEN", "BLUE", "PINK", "WHITE", "BLACK");
 
     @Override
     @Transactional
@@ -55,26 +63,25 @@ public class OrderServiceImpl implements OrderService {
             throw new ApiException(OrderErrorCode.INVALID_ORDER_ITEMS);
         }
 
-        // 1. Phân nhóm các item request theo Product ID để xử lý số lượng gộp (nếu trùng)
-        Map<UUID, Integer> quantityByProductId = new HashMap<>();
-        for (OrderItemRequestDTO itemReq : request.items()) {
-            quantityByProductId.put(
-                    itemReq.productId(),
-                    quantityByProductId.getOrDefault(itemReq.productId(), 0) + itemReq.quantity()
-            );
-        }
+        // Tải toàn bộ sản phẩm cần mua và xác thực
+        List<UUID> productIds = request.items().stream()
+                .map(OrderItemRequestDTO::productId)
+                .distinct()
+                .toList();
 
-        // 2. Tải toàn bộ sản phẩm cần mua và xác thực
-        List<Product> products = productRepository.findAllById(quantityByProductId.keySet());
-        if (products.size() != quantityByProductId.size()) {
+        List<Product> products = productRepository.findAllById(productIds);
+        if (products.size() != productIds.size()) {
             throw new ApiException(OrderErrorCode.PRODUCT_NOT_FOUND);
         }
 
-        // 3. Phân nhóm sản phẩm theo người bán (Seller/Maker)
+        Map<UUID, Product> productMap = products.stream()
+                .collect(Collectors.toMap(Product::getId, p -> p));
+
+        // Phân nhóm sản phẩm theo người bán (Seller/Maker)
         Map<User, List<OrderItemBuild>> itemsBySeller = new HashMap<>();
 
-        for (Product product : products) {
-            Integer requestedQty = quantityByProductId.get(product.getId());
+        for (OrderItemRequestDTO itemReq : request.items()) {
+            Product product = productMap.get(itemReq.productId());
 
             // Kiểm tra trạng thái sản phẩm
             if (!"ACTIVE".equalsIgnoreCase(product.getStatus())) {
@@ -93,30 +100,31 @@ public class OrderServiceImpl implements OrderService {
             }
 
             // Kiểm tra tồn kho
-            if (product.getStock() < requestedQty) {
+            if (product.getStock() < itemReq.quantity()) {
                 throw new ApiException(
                         OrderErrorCode.OUT_OF_STOCK,
-                        "Sản phẩm '" + product.getTitle() + "' không đủ số lượng tồn kho. Yêu cầu: " + requestedQty + ", Còn lại: " + product.getStock()
+                        "Sản phẩm '" + product.getTitle() + "' không đủ số lượng tồn kho. Yêu cầu: " + itemReq.quantity() + ", Còn lại: " + product.getStock()
                 );
+            }
+
+            // Kiểm tra màu sắc cá nhân hóa hợp lệ
+            if (itemReq.color() != null && !itemReq.color().isBlank()) {
+                String colorUpper = itemReq.color().trim().toUpperCase();
+                if (!VALID_COLORS.contains(colorUpper)) {
+                    throw new ApiException(com.fpt.printhub_3d.common.exception.CommonErrorCode.INVALID_INPUT,
+                            "Màu sắc '" + itemReq.color() + "' không hợp lệ. Các màu hợp lệ: GREEN, BLUE, PINK, WHITE, BLACK");
+                }
             }
 
             // Đưa vào nhóm của Seller tương ứng
             User seller = product.getSeller();
             itemsBySeller.computeIfAbsent(seller, k -> new ArrayList<>())
-                    .add(new OrderItemBuild(product, requestedQty));
-
-            //có thể viết tách ra thành
-            //if (!itemsBySeller.containsKey(seller)) {
-            //    itemsBySeller.put(seller, new ArrayList<>());
-            //}
-            //
-            //List<OrderItemBuild> list = itemsBySeller.get(seller);
-            //list.add(new OrderItemBuild(product, requestedQty));
+                    .add(new OrderItemBuild(product, itemReq.quantity(), itemReq.color(), itemReq.engravingText()));
         }
 
         List<OrderResponseDTO> createdOrders = new ArrayList<>();
 
-        // 4. Tạo từng đơn hàng cho từng nhóm Seller
+        // Tạo từng đơn hàng cho từng nhóm Seller
         for (Map.Entry<User, List<OrderItemBuild>> entry : itemsBySeller.entrySet()) {
             User seller = entry.getKey();
             List<OrderItemBuild> orderItemsBuild = entry.getValue();
@@ -144,7 +152,6 @@ public class OrderServiceImpl implements OrderService {
             // Khởi tạo & Lưu thông tin giao hàng (ShippingInfo)
             ShippingInfo shippingInfo = new ShippingInfo();
             shippingInfo.setOrders(savedOrder);
-            shippingInfo.setId(savedOrder.getId());
             shippingInfo.setRecipientName(request.recipientName());
             shippingInfo.setPhone(request.phone());
             shippingInfo.setAddress(request.address());
@@ -169,6 +176,8 @@ public class OrderServiceImpl implements OrderService {
                 orderItem.setProduct(product);
                 orderItem.setQuantity(itemBuild.quantity);
                 orderItem.setUnitPrice(product.getPrice());
+                orderItem.setColor(itemBuild.color);
+                orderItem.setEngravingText(itemBuild.engravingText);
 
                 OrderItem savedItem = orderItemRepository.save(orderItem);
 
@@ -179,7 +188,29 @@ public class OrderServiceImpl implements OrderService {
                         .quantity(savedItem.getQuantity())
                         .unitPrice(savedItem.getUnitPrice())
                         .subTotal(savedItem.getUnitPrice().multiply(BigDecimal.valueOf(savedItem.getQuantity())))
+                        .color(savedItem.getColor())
+                        .engravingText(savedItem.getEngravingText())
                         .build());
+            }
+
+            // Xử lý thanh toán trực tiếp cho đơn hàng này
+            String paymentMethod = request.paymentMethod().trim().toUpperCase();
+
+            if ("PAYOS".equals(paymentMethod)) {
+                // Không tạo bản ghi Payment ở đây, sẽ được tạo khi gọi API /api/payments/create-link
+            } else if ("COD".equals(paymentMethod)) {
+                Payment payment = new Payment();
+                payment.setOrder(savedOrder);
+                payment.setAmount(totalAmount);
+                payment.setGateway("COD");
+                payment.setStatus("PENDING");
+                payment.setTransactionId(null);
+                payment.setCreatedAt(Instant.now());
+                payment.setUpdatedAt(Instant.now());
+                paymentRepository.save(payment);
+            } else {
+                throw new ApiException(com.fpt.printhub_3d.common.exception.CommonErrorCode.INVALID_INPUT,
+                        "Phương thức thanh toán '" + request.paymentMethod() + "' không hợp lệ. Chỉ chấp nhận COD hoặc PAYOS");
             }
 
             // Tạo response DTO cho đơn hàng này
@@ -260,14 +291,87 @@ public class OrderServiceImpl implements OrderService {
                 .build();
     }
 
+    @Override
+    public List<OrderResponseDTO> getMyOrders(UUID buyerId) {
+        log.info("Lấy lịch sử đơn hàng của buyer ID: {}", buyerId);
+
+        List<Order> orders = orderRepository.findByBuyerIdOrderByCreatedAtDesc(buyerId);
+        if (orders.isEmpty()) {
+            return List.of();
+        }
+
+        List<UUID> orderIds = orders.stream().map(Order::getId).toList();
+
+        // Batch fetch ShippingInfo
+        List<ShippingInfo> shippingInfos = shippingInfoRepository.findByIdIn(orderIds);
+        Map<UUID, ShippingInfo> shippingMap = shippingInfos.stream()
+                .collect(Collectors.toMap(ShippingInfo::getId, s -> s));
+
+        // Batch fetch OrderItem
+        List<OrderItem> orderItems = orderItemRepository.findByOrderIn(orders);
+        Map<UUID, List<OrderItem>> itemsMap = orderItems.stream()
+                .collect(Collectors.groupingBy(item -> item.getOrder().getId()));
+
+        List<OrderResponseDTO> responseList = new ArrayList<>();
+        for (Order order : orders) {
+            ShippingInfo shippingInfo = shippingMap.get(order.getId());
+            List<OrderItem> items = itemsMap.getOrDefault(order.getId(), List.of());
+
+            ShippingInfoResponseDTO shippingDTO = null;
+            if (shippingInfo != null) {
+                shippingDTO = ShippingInfoResponseDTO.builder()
+                        .recipientName(shippingInfo.getRecipientName())
+                        .phone(shippingInfo.getPhone())
+                        .address(shippingInfo.getAddress())
+                        .province(shippingInfo.getProvince())
+                        .trackingNumber(shippingInfo.getTrackingNumber())
+                        .build();
+            }
+
+            List<OrderItemResponseDTO> itemDTOs = items.stream()
+                    .map(item -> OrderItemResponseDTO.builder()
+                            .id(item.getId())
+                            .productId(item.getProduct().getId())
+                            .productTitle(item.getProduct().getTitle())
+                            .quantity(item.getQuantity())
+                            .unitPrice(item.getUnitPrice())
+                            .subTotal(item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
+                            .color(item.getColor())
+                            .engravingText(item.getEngravingText())
+                            .build())
+                    .toList();
+
+            responseList.add(OrderResponseDTO.builder()
+                    .id(order.getId())
+                    .buyerId(order.getBuyer().getId())
+                    .buyerName(order.getBuyer().getFullName())
+                    .sellerId(order.getSeller().getId())
+                    .sellerName(order.getSeller().getFullName())
+                    .totalAmount(order.getTotalAmount())
+                    .commissionFee(order.getCommissionFee())
+                    .status(order.getStatus())
+                    .shippingInfo(shippingDTO)
+                    .items(itemDTOs)
+                    .createdAt(order.getCreatedAt())
+                    .updatedAt(order.getUpdatedAt())
+                    .build());
+        }
+
+        return responseList;
+    }
+
     // Helper class để truyền dữ liệu nội bộ
     private static class OrderItemBuild {
         final Product product;
         final int quantity;
+        final String color;
+        final String engravingText;
 
-        OrderItemBuild(Product product, int quantity) {
+        OrderItemBuild(Product product, int quantity, String color, String engravingText) {
             this.product = product;
             this.quantity = quantity;
+            this.color = color != null ? color.trim().toUpperCase() : null;
+            this.engravingText = engravingText;
         }
     }
 }

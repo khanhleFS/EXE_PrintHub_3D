@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -22,6 +23,7 @@ import java.util.UUID;
 @Slf4j
 @RestController
 @RequiredArgsConstructor
+@CrossOrigin("*")
 public class OrderController implements OrderAPI {
 
     private final OrderService orderService;
@@ -51,6 +53,22 @@ public class OrderController implements OrderAPI {
         return ResponseEntity.ok(ApiResponse.<RewardCompletionResponseDTO>builder()
                 .code(200)
                 .message("Cộng điểm thưởng cho đơn hàng thành công")
+                .result(response)
+                .build());
+    }
+
+    @Override
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<ApiResponse<List<OrderResponseDTO>>> getMyOrders() {
+        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
+                .getContext().getAuthentication().getPrincipal();
+        User buyer = userDetail.getUser();
+
+        List<OrderResponseDTO> response = orderService.getMyOrders(buyer.getId());
+
+        return ResponseEntity.ok(ApiResponse.<List<OrderResponseDTO>>builder()
+                .code(200)
+                .message("Lấy danh sách đơn hàng thành công")
                 .result(response)
                 .build());
     }

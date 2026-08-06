@@ -25,6 +25,12 @@ public record OrderItemResponseDTO(
         BigDecimal unitPrice,
 
         @Schema(description = "Tổng tiền mặt hàng (VND)", example = "700000")
-        BigDecimal subTotal
+        BigDecimal subTotal,
+
+        @Schema(description = "Màu của thước (GREEN, BLUE, PINK, WHITE, BLACK)", example = "BLUE")
+        String color,
+
+        @Schema(description = "Nội dung khắc chữ lên thước", example = "SV12345 - Nguyễn Văn A")
+        String engravingText
 ) {
 }

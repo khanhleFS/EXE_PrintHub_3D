@@ -28,9 +28,5 @@ public interface AuthService {
 
     boolean verifyRegisterOtp(String email, String otpCode);
 
-    MakerApplicationResponse registerMaker(UUID userId, MakerRegistrationRequest request);
-
-    MakerApplicationResponse updateMakerApplicationStatus(UUID id, MakerStatusUpdateRequest request);
-
     void addCccdToBlacklist(BlacklistRequestDTO request);
 }

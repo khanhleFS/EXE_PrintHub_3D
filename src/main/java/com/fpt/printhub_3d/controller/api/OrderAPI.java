@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -37,4 +38,12 @@ public interface OrderAPI {
     )
     @PostMapping("/{id}/complete-rewards")
     ResponseEntity<ApiResponse<RewardCompletionResponseDTO>> completeRewards(@PathVariable UUID id);
+
+    @Operation(
+            summary = "Get current user's order history",
+            description = "Người dùng kiểm tra danh sách và tiến độ lịch sử các đơn hàng tổng hợp của mình.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/my-orders")
+    ResponseEntity<ApiResponse<List<OrderResponseDTO>>> getMyOrders();
 }

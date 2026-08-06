@@ -7,16 +7,11 @@ import com.fpt.printhub_3d.common.security.JwtService;
 import com.fpt.printhub_3d.common.security.TokenBlacklistService;
 import com.fpt.printhub_3d.dto.authen.*;
 import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
-import com.fpt.printhub_3d.dto.maker.MakerApplicationResponse;
-import com.fpt.printhub_3d.dto.maker.MakerRegistrationRequest;
-import com.fpt.printhub_3d.dto.maker.MakerStatusUpdateRequest;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
-import com.fpt.printhub_3d.entity.MakerProfile;
 import com.fpt.printhub_3d.entity.OTP;
 import com.fpt.printhub_3d.entity.RefreshTokenRedis;
 import com.fpt.printhub_3d.entity.SystemBlacklist;
 import com.fpt.printhub_3d.entity.User;
-import com.fpt.printhub_3d.repository.MakerProfileRepository;
 import com.fpt.printhub_3d.repository.OTPRepository;
 import com.fpt.printhub_3d.repository.RefreshTokenRedisRepository;
 import com.fpt.printhub_3d.repository.SystemBlacklistRepository;
@@ -57,7 +52,6 @@ public class AuthServiceImpl implements AuthService {
     private final RefreshTokenRedisRepository refreshTokenRepository;
     private final TokenBlacklistService tokenBlacklistService;
     private final KycService kycService;
-    private final MakerProfileRepository makerProfileRepository;
     private final SystemBlacklistRepository systemBlacklistRepository;
 
     @Override
@@ -312,78 +306,6 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
-    public MakerApplicationResponse registerMaker(UUID userId, MakerRegistrationRequest request) {
-        User currentUser = userRepository.findById(userId)
-                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng hiện tại"));
-
-        Map<String, String> extracted = kycService.extractCccdData(request.cccdFrontImageUrl());
-        String cccdNumber = extracted.get("cccdNumber");
-
-        userRepository.findByCccdNumber(cccdNumber).ifPresent(existingUser -> {
-            if (!existingUser.getId().equals(currentUser.getId())) {
-                throw new ApiException(CommonErrorCode.CONFLICT, "Số CCCD này đã được đăng ký cho một tài khoản khác.");
-            }
-        });
-
-        currentUser.setCccdNumber(cccdNumber);
-        currentUser.setCccdName(extracted.get("fullName"));
-        currentUser.setCccdDob(extracted.get("dob"));
-        currentUser.setCccdGender(extracted.get("gender"));
-        currentUser.setCccdAddress(extracted.get("address"));
-        currentUser.setCccdFrontImageUrl(request.cccdFrontImageUrl());
-        userRepository.save(currentUser);
-
-        MakerProfile makerProfile = makerProfileRepository.findById(currentUser.getId()).orElse(null);
-        if (makerProfile == null) {
-            makerProfile = new MakerProfile();
-            makerProfile.setId(currentUser.getId());
-            makerProfile.setUsers(currentUser);
-            makerProfile.setTrustScore(0.0);
-        }
-        makerProfile.setBusinessName(request.businessName());
-        makerProfile.setEquipmentInfo(request.equipmentInfo());
-        makerProfile.setPortfolioUrl(request.portfolioUrl());
-        makerProfile.setBio(request.bio());
-        makerProfile.setStatus("PENDING");
-        makerProfileRepository.save(makerProfile);
-
-        return MakerApplicationResponse.builder()
-                .applicationId(currentUser.getId())
-                .extractedName(currentUser.getCccdName())
-                .extractedIdNumber(currentUser.getCccdNumber())
-                .status(makerProfile.getStatus())
-                .build();
-    }
-
-    @Override
-    @Transactional
-    public MakerApplicationResponse updateMakerApplicationStatus(UUID id, MakerStatusUpdateRequest request) {
-        MakerProfile makerProfile = makerProfileRepository.findById(id)
-                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy hồ sơ đăng ký Maker của người dùng này."));
-
-        User user = makerProfile.getUsers();
-
-        if ("APPROVED".equalsIgnoreCase(request.status())) {
-            makerProfile.setStatus("APPROVED");
-            makerProfile.setVerifiedAt(Instant.now());
-            user.setRole(UserRole.MAKER);
-            userRepository.save(user);
-        } else if ("REJECTED".equalsIgnoreCase(request.status())) {
-            makerProfile.setStatus("REJECTED");
-        }
-
-        makerProfileRepository.save(makerProfile);
-
-        return MakerApplicationResponse.builder()
-                .applicationId(makerProfile.getId())
-                .extractedName(user.getCccdName())
-                .extractedIdNumber(user.getCccdNumber())
-                .status(makerProfile.getStatus())
-                .build();
-    }
-
-    @Override
-    @Transactional
     public void addCccdToBlacklist(BlacklistRequestDTO request) {
         if (systemBlacklistRepository.existsByCccdNumber(request.cccdNumber())) {
             throw new ApiException(CommonErrorCode.CONFLICT, "Số CCCD này đã tồn tại trong danh sách đen.");
@@ -399,11 +321,6 @@ public class AuthServiceImpl implements AuthService {
         userRepository.findByCccdNumber(request.cccdNumber()).ifPresent(user -> {
             user.setIsActive(false);
             userRepository.save(user);
-
-            makerProfileRepository.findById(user.getId()).ifPresent(profile -> {
-                profile.setStatus("SUSPENDED");
-                makerProfileRepository.save(profile);
-            });
         });
     }
 }

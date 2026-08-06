@@ -38,10 +38,6 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         User maker = userRepository.findById(makerId)
                 .orElseThrow(() -> new ApiException(CustomPrintErrorCode.MAKER_NOT_FOUND));
 
-        if (maker.getRole() != UserRole.MAKER) {
-            throw new ApiException(CustomPrintErrorCode.MAKER_INVALID_ROLE);
-        }
-
         // 2. Lưu trữ file thiết kế hình học (.STL)
         String attachmentUrl = fileStorageService.storeFile(file);
 

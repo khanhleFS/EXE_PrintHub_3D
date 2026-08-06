@@ -15,8 +15,10 @@ import java.time.Instant;
  * và đánh @Primary hoặc xóa @Service trên class này.
  */
 @Slf4j
+@org.springframework.context.annotation.Profile("mock")
 @Service
 public class MockPayOSServiceImpl implements PayOSService {
+
 
     private static final String MOCK_BASE_URL = "https://pay.payos.vn/web/";
     private static final String MOCK_QR_BASE_URL = "https://pay.payos.vn/qr/";

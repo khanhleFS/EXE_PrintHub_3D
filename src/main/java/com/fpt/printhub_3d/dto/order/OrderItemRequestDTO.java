@@ -15,6 +15,12 @@ public record OrderItemRequestDTO(
         @NotNull(message = "Số lượng mua không được để trống")
         @Min(value = 1, message = "Số lượng mua tối thiểu là 1")
         @Schema(description = "Số lượng cần mua", example = "2")
-        Integer quantity
+        Integer quantity,
+
+        @Schema(description = "Màu của thước (GREEN, BLUE, PINK, WHITE, BLACK)", example = "BLUE")
+        String color,
+
+        @Schema(description = "Nội dung khắc chữ lên thước", example = "SV12345 - Nguyễn Văn A")
+        String engravingText
 ) {
 }

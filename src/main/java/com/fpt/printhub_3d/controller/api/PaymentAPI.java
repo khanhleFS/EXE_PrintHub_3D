@@ -38,4 +38,13 @@ public interface PaymentAPI {
     @PostMapping("/payos-webhook")
     ResponseEntity<ApiResponse<PayOSWebhookResponseDTO>> handlePayOSWebhook(
             @RequestBody PayOSWebhookRequestDTO request);
+
+    @Operation(
+            summary = "Xác minh trạng thái thanh toán từ PayOS redirect",
+            description = "Xác minh kết quả giao dịch dựa trên orderCode khi FE nhận callback redirect từ PayOS."
+    )
+    @org.springframework.web.bind.annotation.GetMapping("/verify/{orderCode}")
+    ResponseEntity<ApiResponse<java.util.Map<String, Object>>> verifyPayment(
+            @org.springframework.web.bind.annotation.PathVariable("orderCode") String orderCode);
 }
+
