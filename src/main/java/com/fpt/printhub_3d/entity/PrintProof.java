@@ -44,7 +44,7 @@ public class PrintProof {
     private String note;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "uploaded_at", nullable = false)
     private Instant uploadedAt;
 

@@ -75,12 +75,12 @@ public class CustomOrder {
     private String status;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 }

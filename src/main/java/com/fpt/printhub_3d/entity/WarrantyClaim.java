@@ -46,12 +46,12 @@ public class WarrantyClaim {
     private String status = "PENDING"; // PENDING, APPROVED, REJECTED, REPLACED
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
 }

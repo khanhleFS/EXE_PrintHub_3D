@@ -16,7 +16,7 @@ public class SystemBlacklist {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "id", nullable = false, columnDefinition = "uniqueidentifier")
+    @Column(name = "id", nullable = false)
     private UUID id;
 
     @Column(name = "cccd_number", unique = true, nullable = false, length = 20)

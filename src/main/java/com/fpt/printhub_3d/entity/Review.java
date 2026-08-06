@@ -34,7 +34,7 @@ public class Review {
     @JoinColumn(name = "order_id", nullable = false)
     private Order order;
 
-    @Column(name = "rating", columnDefinition = "tinyint not null")
+    @Column(name = "rating", nullable = false)
     private Short rating;
 
     @Nationalized
@@ -43,7 +43,7 @@ public class Review {
     private String comment;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

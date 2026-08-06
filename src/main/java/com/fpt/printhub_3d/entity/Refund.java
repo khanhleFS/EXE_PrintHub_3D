@@ -38,7 +38,7 @@ public class Refund {
     private String type;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "issued_at", nullable = false)
     private Instant issuedAt;
 
