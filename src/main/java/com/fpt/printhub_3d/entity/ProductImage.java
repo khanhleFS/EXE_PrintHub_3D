@@ -33,7 +33,6 @@ public class ProductImage {
     private String imageUrl;
 
     @NotNull
-    @ColumnDefault("0")
     @Column(name = "is_primary", nullable = false)
     private Boolean isPrimary = false;
 

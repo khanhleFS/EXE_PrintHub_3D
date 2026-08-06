@@ -47,7 +47,6 @@ public class Order {
     private String status;
 
     @NotNull
-    @ColumnDefault("0")
     @Column(name = "reward_processed", nullable = false)
     private Boolean rewardProcessed = false;
 

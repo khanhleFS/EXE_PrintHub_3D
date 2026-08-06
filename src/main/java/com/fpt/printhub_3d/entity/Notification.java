@@ -47,7 +47,6 @@ public class Notification {
     private String type;
 
     @NotNull
-    @ColumnDefault("0")
     @Column(name = "is_read", nullable = false)
     private Boolean isRead = false;
 
