@@ -20,6 +20,7 @@ import com.fpt.printhub_3d.service.AuthService;
 import com.fpt.printhub_3d.service.KycService;
 import com.fpt.printhub_3d.service.MailService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -34,6 +35,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -185,7 +187,7 @@ public class AuthServiceImpl implements AuthService {
                     variables
             );
         } catch (Exception e) {
-            throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Lỗi gửi email: " + e.getMessage());
+            log.error("Không thể gửi email xác nhận cho {}: {}", request.email(), e.getMessage());
         }
     }
 
