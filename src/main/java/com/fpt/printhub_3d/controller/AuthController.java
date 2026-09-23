@@ -5,21 +5,15 @@ import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.AuthAPI;
 import com.fpt.printhub_3d.dto.authen.*;
 import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
-import com.fpt.printhub_3d.dto.maker.MakerApplicationResponse;
-import com.fpt.printhub_3d.dto.maker.MakerRegistrationRequest;
-import com.fpt.printhub_3d.dto.maker.MakerStatusUpdateRequest;
 import com.fpt.printhub_3d.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.UUID;
 
 @Slf4j
 @RestController
@@ -28,6 +22,7 @@ import java.util.UUID;
 @CrossOrigin("*")
 public class AuthController implements AuthAPI {
     private final AuthService authService;
+
     @Override
     public ResponseEntity<ApiResponse<LoginResponseDTO>> login(LoginRequestDTO loginRequestDTO) {
         LoginResponseDTO loginResponse = authService.login(loginRequestDTO);
@@ -37,6 +32,7 @@ public class AuthController implements AuthAPI {
                 .result(loginResponse)
                 .build());
     }
+
     @Override
     public ResponseEntity<ApiResponse<Void>> logout(HttpServletRequest request) {
         String authHeader = request.getHeader("Authorization");
@@ -46,6 +42,7 @@ public class AuthController implements AuthAPI {
                 .message("Đăng xuất thành công")
                 .build());
     }
+
     @Override
     public ResponseEntity<ApiResponse<RegisterResponseDTO>> register(RegisterRequestDTO registerRequestDTO) {
         authService.register(registerRequestDTO);
@@ -54,6 +51,7 @@ public class AuthController implements AuthAPI {
                 .message("Đăng ký thành công. Vui lòng kiểm tra email để kích hoạt tài khoản.")
                 .build());
     }
+
     @Override
     public ResponseEntity<ApiResponse<ForgotPasswordResponseDTO>> forgotPassword(ForgotPasswordRequestDTO requestDTO) {
         ForgotPasswordResponseDTO result = authService.forgotPassword(requestDTO.email());
@@ -63,6 +61,7 @@ public class AuthController implements AuthAPI {
                 .result(result)
                 .build());
     }
+
     @Override
     public ResponseEntity<ApiResponse<ResetPasswordResponseDTO>> resetPassword(ResetPasswordRequestDTO requestDTO) {
         ResetPasswordResponseDTO result = authService.resetPassword(requestDTO);
@@ -72,6 +71,7 @@ public class AuthController implements AuthAPI {
                 .result(result)
                 .build());
     }
+
     @Override
     public ResponseEntity<ApiResponse<ProfileDTO>> getProfile() {
         // Lấy thông tin user hiện tại từ SecurityContext
@@ -82,6 +82,7 @@ public class AuthController implements AuthAPI {
                 .result(profile)
                 .build());
     }
+
     @Override
     public ResponseEntity<ApiResponse<Void>> updateProfile(ProfileDTO profileDTO) {
         authService.updateProfile(SecurityUtils.getCurrentUser().getId(), profileDTO);
@@ -90,6 +91,7 @@ public class AuthController implements AuthAPI {
                 .message("Cập nhật thông tin cá nhân thành công")
                 .build());
     }
+
     @Override
     public ResponseEntity<ApiResponse<Void>> verifyRegisterOtp(VerifyOTPRequestDTO requestDTO) {
         authService.verifyRegisterOtp(requestDTO.email(), requestDTO.otpCode());
@@ -98,7 +100,6 @@ public class AuthController implements AuthAPI {
                 .message("Xác thực thành công. Tài khoản đã được kích hoạt.")
                 .build());
     }
-
 
     @Override
     @PreAuthorize("hasRole('ADMIN')")
@@ -112,4 +113,3 @@ public class AuthController implements AuthAPI {
         );
     }
 }
-

@@ -42,13 +42,9 @@ import java.util.UUID;
 public class AuthServiceImpl implements AuthService {
 
     private final UserRepository userRepository;
-
     private final PasswordEncoder passwordEncoder;
-
     private final MailService mailService;
-
     private final OTPRepository otpRepository;
-
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final RefreshTokenRedisRepository refreshTokenRepository;
@@ -59,21 +55,17 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public LoginResponseDTO login(LoginRequestDTO request) {
-        // Thực hiện authenticate thông qua authenticationManager
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.userNameOrEmail(), request.password())
         );
         CustomUserDetail userDetail = (CustomUserDetail) authentication.getPrincipal();
         User user = userDetail.getUser();
-        // Kiểm tra xem tài khoản đã được kích hoạt hay chưa
         if (!user.getIsActive()) {
             throw new ApiException(CommonErrorCode.FORBIDDEN, "Tài khoản chưa được kích hoạt. Vui lòng kiểm tra email để xác nhận.");
         }
-        // Sinh JWT
         String accessToken = jwtService.generateAccessToken(userDetail);
         String refreshToken = jwtService.generateRefreshToken(userDetail);
-        // Lưu Refresh Token vào Redis
-        long expirationInSeconds = 7 * 24 * 60 * 60; // 7 ngày
+        long expirationInSeconds = 7 * 24 * 60 * 60;
         RefreshTokenRedis tokenRedis = RefreshTokenRedis.builder()
                 .token(refreshToken)
                 .userId(user.getId())
@@ -104,7 +96,6 @@ public class AuthServiceImpl implements AuthService {
                     tokenBlacklistService.blacklistToken(jwt, remainingTimeMs);
                 }
             } catch (Exception e) {
-                // Token đã hết hạn, không cần đưa vào blacklist nữa
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Token không hợp lệ hoặc đã hết hạn");
             }
         }
@@ -113,17 +104,19 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public void register(RegisterRequestDTO request) {
-        // Validate password trùng khớp
         if (!request.password().equals(request.confirmPassword())) {
             throw new ApiException(CommonErrorCode.INVALID_INPUT, "Mật khẩu và xác nhận mật khẩu không khớp.");
         }
         if (userRepository.findByEmail(request.email()).isPresent()) {
             throw new ApiException(CommonErrorCode.CONFLICT, "Email đã tồn tại");
         }
+        if (userRepository.findByUsername(request.username()).isPresent()) {
+            throw new ApiException(CommonErrorCode.CONFLICT, "Tên người dùng đã tồn tại");
+        }
         if (userRepository.findByPhone(request.phone()).isPresent()) {
             throw new ApiException(CommonErrorCode.CONFLICT, "Số điện thoại đã tồn tại");
         }
-        // Xử lý thông tin CCCD tùy chọn
+
         String cccdNumber = null;
         String cccdName = null;
         String cccdDob = null;
@@ -140,13 +133,11 @@ public class AuthServiceImpl implements AuthService {
             cccdAddress = extracted.get("address");
             cccdFrontImageUrl = request.cccdFrontImageUrl();
 
-            // Kiểm tra số CCCD đã tồn tại trong hệ thống chưa
             if (cccdNumber != null && userRepository.existsByCccdNumber(cccdNumber)) {
                 throw new ApiException(CommonErrorCode.CONFLICT, "Số CCCD này đã được sử dụng để đăng ký tài khoản khác.");
             }
         }
 
-        // Cưỡng chế trạng thái ban đầu là FALSE để yêu cầu verify OTP
         User user = User.builder()
                 .username(request.username())
                 .fullName(request.fullName())
@@ -155,7 +146,7 @@ public class AuthServiceImpl implements AuthService {
                 .password(passwordEncoder.encode(request.password()))
                 .address(request.address())
                 .role(UserRole.USER)
-                .isActive(false) // Mặc định là false
+                .isActive(false)
                 .cccdNumber(cccdNumber)
                 .cccdName(cccdName)
                 .cccdDob(cccdDob)
@@ -164,18 +155,16 @@ public class AuthServiceImpl implements AuthService {
                 .cccdFrontImageUrl(cccdFrontImageUrl)
                 .build();
         userRepository.save(user);
-        // Sinh OTP 6 số
+
         String otpCode = String.format("%06d", new SecureRandom().nextInt(999999));
-        // Xóa các OTP cũ của email này trước
         otpRepository.deleteByEmail(request.email());
-        // Lưu OTP mới
         OTP otp = OTP.builder()
                 .email(request.email())
                 .otpCode(otpCode)
                 .expiryTime(Instant.now().plusSeconds(5 * 60))
                 .build();
         otpRepository.save(otp);
-        // Gửi mail
+
         try {
             Map<String, Object> variables = new HashMap<>();
             variables.put("fullName", request.fullName());
@@ -202,7 +191,7 @@ public class AuthServiceImpl implements AuthService {
         userRepository.save(user);
         try {
             Map<String, Object> variables = new HashMap<>();
-            variables.put("fullName", user.getUsername());
+            variables.put("fullName", user.getFullName() != null ? user.getFullName() : user.getUsername());
             variables.put("newPassword", newPassword);
 
             mailService.sendWithTemplate(
@@ -238,7 +227,7 @@ public class AuthServiceImpl implements AuthService {
             throw new ApiException(CommonErrorCode.INVALID_INPUT, "Người dùng không tồn tại");
         }
         return ProfileDTO.builder()
-                .fullName(user.getUsername())
+                .fullName(user.getFullName())
                 .email(user.getEmail())
                 .phone(user.getPhone())
                 .address(user.getAddress())
@@ -246,12 +235,12 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    @Transactional
     public void updateProfile(UUID id, ProfileDTO profile) {
         User user = userRepository.findById(id).orElse(null);
         if (user == null) {
             throw new ApiException(CommonErrorCode.INVALID_INPUT, "Người dùng không tồn tại");
         }
-        // Check if email or phone is already taken by another user
         userRepository.findByEmail(profile.email()).ifPresent(existingUser -> {
             if (!existingUser.getId().equals(id)) {
                 throw new ApiException(CommonErrorCode.CONFLICT, "Email đã tồn tại");
@@ -262,8 +251,8 @@ public class AuthServiceImpl implements AuthService {
                 throw new ApiException(CommonErrorCode.CONFLICT, "Số điện thoại đã tồn tại");
             }
         });
-        // Update user profile
-        user.setUsername(profile.fullName());
+
+        user.setFullName(profile.fullName());
         user.setEmail(profile.email());
         user.setPhone(profile.phone());
         user.setAddress(profile.address());
@@ -283,12 +272,10 @@ public class AuthServiceImpl implements AuthService {
         if (otp.getExpiryTime().isBefore(Instant.now())) {
             throw new ApiException(CommonErrorCode.INVALID_INPUT, "Mã OTP đã hết hạn");
         }
-        // Kích hoạt User
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng"));
         user.setIsActive(true);
         userRepository.save(user);
-        // Xóa OTP sau khi dùng thành công
         otpRepository.deleteByEmail(email);
         return true;
     }
