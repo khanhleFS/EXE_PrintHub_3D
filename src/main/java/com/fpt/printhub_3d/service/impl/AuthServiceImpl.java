@@ -177,46 +177,127 @@ public class AuthServiceImpl implements AuthService {
             );
         } catch (Exception e) {
             log.error("Không thể gửi email xác nhận cho {}: {}", request.email(), e.getMessage());
+            throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Không gửi được OTP, vui lòng thử lại sau.");
         }
     }
 
     @Override
-    public ForgotPasswordResponseDTO forgotPassword(String email) {
+    @Transactional
+    public void sendForgotPasswordOtp(String email) {
         User user = userRepository.findByEmail(email).orElse(null);
         if (user == null) {
-            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Email không tồn tại");
+            throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Email không tồn tại trong hệ thống");
         }
-        String newPassword = generateRandomPassword();
-        user.setPassword(passwordEncoder.encode(newPassword));
-        userRepository.save(user);
+        String otpCode = String.format("%06d", new SecureRandom().nextInt(999999));
+        otpRepository.deleteByEmail(email);
+        OTP otp = OTP.builder()
+                .email(email)
+                .otpCode(otpCode)
+                .expiryTime(Instant.now().plusSeconds(5 * 60))
+                .build();
+        otpRepository.save(otp);
+
         try {
             Map<String, Object> variables = new HashMap<>();
             variables.put("fullName", user.getFullName() != null ? user.getFullName() : user.getUsername());
-            variables.put("newPassword", newPassword);
+            variables.put("otpCode", otpCode);
 
             mailService.sendWithTemplate(
                     email,
-                    "Quên mật khẩu",
-                    "email/forgot-password-email",
+                    "Mã xác nhận quên mật khẩu PrintHub 3D",
+                    "email/otp-email",
                     variables
             );
         } catch (Exception e) {
-            throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Lỗi gửi email: " + e.getMessage());
+            log.error("Lỗi gửi email OTP quên mật khẩu cho {}: {}", email, e.getMessage());
+            throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Lỗi khi gửi email OTP: " + e.getMessage());
         }
-        return new ForgotPasswordResponseDTO(email, "Mật khẩu mới đã được gửi đến email của bạn.", true, null);
     }
 
     @Override
-    public ResetPasswordResponseDTO resetPassword(ResetPasswordRequestDTO request) {
+    @Transactional
+    public ForgotPasswordResponseDTO forgotPassword(ForgotPasswordRequestDTO request) {
+        if (!request.newPassword().equals(request.confirmPassword())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Xác nhận mật khẩu mới không khớp");
+        }
+        OTP otp = otpRepository.findByEmailAndOtpCode(request.email(), request.otpCode())
+                .orElseThrow(() -> new ApiException(CommonErrorCode.INVALID_INPUT, "Mã OTP không hợp lệ hoặc đã hết hạn"));
+
+        if (otp.getExpiryTime().isBefore(Instant.now())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Mã OTP đã hết hạn");
+        }
+
         User user = userRepository.findByEmail(request.email()).orElse(null);
         if (user == null) {
-            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Người dùng không tồn tại");
+            throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Người dùng không tồn tại");
         }
-        if (!passwordEncoder.matches(request.oldPassword(), user.getPassword())) {
-            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Mật khẩu cũ không khớp");
-        }
+
         user.setPassword(passwordEncoder.encode(request.newPassword()));
         userRepository.save(user);
+        otpRepository.deleteByEmail(request.email());
+
+        return new ForgotPasswordResponseDTO(request.email(), "Mật khẩu đã được đặt lại thành công.", true, null);
+    }
+
+    @Override
+    @Transactional
+    public void sendResetPasswordOtp(String email) {
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Người dùng không tồn tại");
+        }
+        String otpCode = String.format("%06d", new SecureRandom().nextInt(999999));
+        otpRepository.deleteByEmail(email);
+        OTP otp = OTP.builder()
+                .email(email)
+                .otpCode(otpCode)
+                .expiryTime(Instant.now().plusSeconds(5 * 60))
+                .build();
+        otpRepository.save(otp);
+
+        try {
+            Map<String, Object> variables = new HashMap<>();
+            variables.put("fullName", user.getFullName() != null ? user.getFullName() : user.getUsername());
+            variables.put("otpCode", otpCode);
+
+            mailService.sendWithTemplate(
+                    email,
+                    "Mã xác nhận đổi mật khẩu PrintHub 3D",
+                    "email/otp-email",
+                    variables
+            );
+        } catch (Exception e) {
+            log.error("Lỗi gửi email OTP đổi mật khẩu cho {}: {}", email, e.getMessage());
+            throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Lỗi khi gửi email OTP: " + e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional
+    public ResetPasswordResponseDTO resetPassword(ResetPasswordRequestDTO request) {
+        if (!request.newPassword().equals(request.confirmPassword())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Xác nhận mật khẩu mới không khớp");
+        }
+
+        OTP otp = otpRepository.findByEmailAndOtpCode(request.email(), request.otpCode())
+                .orElseThrow(() -> new ApiException(CommonErrorCode.INVALID_INPUT, "Mã OTP không hợp lệ hoặc đã hết hạn"));
+
+        if (otp.getExpiryTime().isBefore(Instant.now())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Mã OTP đã hết hạn");
+        }
+
+        User user = userRepository.findByEmail(request.email()).orElse(null);
+        if (user == null) {
+            throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Người dùng không tồn tại");
+        }
+        if (!passwordEncoder.matches(request.oldPassword(), user.getPassword())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Mật khẩu cũ không chính xác");
+        }
+
+        user.setPassword(passwordEncoder.encode(request.newPassword()));
+        userRepository.save(user);
+        otpRepository.deleteByEmail(request.email());
+
         return new ResetPasswordResponseDTO(request.email(), "Mật khẩu đã được cập nhật thành công.", user.getId(), null);
     }
 
@@ -227,6 +308,8 @@ public class AuthServiceImpl implements AuthService {
             throw new ApiException(CommonErrorCode.INVALID_INPUT, "Người dùng không tồn tại");
         }
         return ProfileDTO.builder()
+                .id(user.getId()).role(user.getRole())
+                .studentId(user.getStudentId()).university(user.getUniversity())
                 .fullName(user.getFullName())
                 .email(user.getEmail())
                 .phone(user.getPhone())
@@ -256,6 +339,8 @@ public class AuthServiceImpl implements AuthService {
         user.setEmail(profile.email());
         user.setPhone(profile.phone());
         user.setAddress(profile.address());
+        user.setStudentId(profile.studentId());
+        user.setUniversity(profile.university());
         userRepository.save(user);
     }
 

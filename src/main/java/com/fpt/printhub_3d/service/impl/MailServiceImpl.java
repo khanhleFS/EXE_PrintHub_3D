@@ -51,7 +51,7 @@ public class MailServiceImpl implements MailService {
     private void sendApiEmail(String to, String subject, String content, boolean isHtml) {
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("RESEND_API_KEY chưa được cấu hình. Bỏ qua gửi email tới: {}", to);
-            return;
+            throw new IllegalStateException("Dịch vụ email chưa được cấu hình");
         }
 
         try {

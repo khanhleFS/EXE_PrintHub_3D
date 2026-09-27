@@ -34,7 +34,7 @@ public class CustomPrintController implements CustomPrintAPI {
     private final CustomOrderService customOrderService;
 
     @Override
-    @PreAuthorize("hasRole('MAKER')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<CustomPrintServiceResponseDTO>> createService(
             CustomPrintServiceRequestDTO request) {
 

@@ -156,11 +156,9 @@ public class ProductServiceImpl implements ProductService {
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy sản phẩm"));
 
-        // Xóa tất cả ảnh liên quan
-        productImageRepository.deleteByProduct(product);
-
-        // Xóa sản phẩm
-        productRepository.delete(product);
+        product.setStatus("INACTIVE");
+        product.setUpdatedAt(Instant.now());
+        productRepository.save(product);
     }
 
     @Override

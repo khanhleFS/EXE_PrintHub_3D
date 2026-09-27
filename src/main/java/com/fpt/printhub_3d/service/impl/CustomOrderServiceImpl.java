@@ -1,47 +1,57 @@
 package com.fpt.printhub_3d.service.impl;
 
 import com.fpt.printhub_3d.common.exception.ApiException;
+import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.exception.CustomPrintErrorCode;
-import com.fpt.printhub_3d.dto.custom_prints.CustomOrderResponseDTO;
+import com.fpt.printhub_3d.common.exception.VaultErrorCode;
+import com.fpt.printhub_3d.dto.custom_prints.*;
 import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Enumeration.CustomOrderStatus;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
+import com.fpt.printhub_3d.entity.FileAsset;
+import com.fpt.printhub_3d.entity.Payment;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.repository.CustomOrderRepository;
+import com.fpt.printhub_3d.repository.FileAssetRepository;
+import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.repository.UserRepository;
 import com.fpt.printhub_3d.service.CustomOrderService;
 import com.fpt.printhub_3d.service.FileStorageService;
+import com.fpt.printhub_3d.service.NotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class CustomOrderServiceImpl implements CustomOrderService {
 
-    private final UserRepository userRepository;
     private final CustomOrderRepository customOrderRepository;
+    private final FileAssetRepository fileAssetRepository;
+    private final PaymentRepository paymentRepository;
+    private final UserRepository userRepository;
     private final FileStorageService fileStorageService;
+    private final NotificationService notificationService;
 
     @Override
-    @Transactional
     public CustomOrderResponseDTO createRequest(UUID makerId, String requirements, MultipartFile file, User buyer) {
         log.info("Buyer [{}] đang tạo yêu cầu in custom đến Maker [{}]", buyer.getId(), makerId);
 
-        // 1. Xác thực Maker tồn tại và có vai trò phù hợp
         User maker = userRepository.findById(makerId)
                 .orElseThrow(() -> new ApiException(CustomPrintErrorCode.MAKER_NOT_FOUND));
 
-        // 2. Lưu trữ file thiết kế hình học (.STL)
         String attachmentUrl = fileStorageService.storeFile(file);
 
-        // 3. Khởi tạo và lưu yêu cầu in Custom
         CustomOrder customOrder = new CustomOrder();
         customOrder.setBuyer(buyer);
         customOrder.setMaker(maker);
@@ -52,25 +62,178 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         customOrder.setUpdatedAt(Instant.now());
 
         CustomOrder saved = customOrderRepository.save(customOrder);
-
         log.info("Tạo yêu cầu in custom thành công. ID đơn: {}", saved.getId());
 
-        return mapToResponseDTO(saved);
+        return CustomOrderResponseDTO.builder()
+                .id(saved.getId())
+                .buyerId(saved.getBuyer().getId())
+                .buyerName(saved.getBuyer().getFullName())
+                .makerId(saved.getMaker().getId())
+                .makerName(saved.getMaker().getFullName())
+                .requirements(saved.getRequirements())
+                .attachmentUrl(saved.getAttachmentUrl())
+                .quotedPrice(saved.getQuotedPrice())
+                .status(saved.getStatus())
+                .createdAt(saved.getCreatedAt())
+                .updatedAt(saved.getUpdatedAt())
+                .build();
     }
 
-    private CustomOrderResponseDTO mapToResponseDTO(CustomOrder entity) {
-        return CustomOrderResponseDTO.builder()
-                .id(entity.getId())
-                .buyerId(entity.getBuyer().getId())
-                .buyerName(entity.getBuyer().getFullName())
-                .makerId(entity.getMaker().getId())
-                .makerName(entity.getMaker().getFullName())
-                .requirements(entity.getRequirements())
-                .attachmentUrl(entity.getAttachmentUrl())
-                .quotedPrice(entity.getQuotedPrice())
-                .status(entity.getStatus())
-                .createdAt(entity.getCreatedAt())
-                .updatedAt(entity.getUpdatedAt())
+    private CustomOrderDetailResponseDTO toDTO(CustomOrder o) {
+        Payment p = paymentRepository.findByCustomOrderId(o.getId()).orElse(null);
+        return CustomOrderDetailResponseDTO.builder()
+                .id(o.getId())
+                .buyerId(o.getBuyer().getId())
+                .buyerName(o.getBuyer().getFullName())
+                .makerId(o.getMaker() != null ? o.getMaker().getId() : null)
+                .makerName(o.getMaker() != null ? o.getMaker().getFullName() : null)
+                .requirements(o.getRequirements())
+                .quantity(o.getQuantity() != null ? o.getQuantity() : 1)
+                .shippingAddress(o.getShippingAddress())
+                .attachmentUrl(o.getAttachmentUrl())
+                .quotedPrice(o.getQuotedPrice())
+                .status(o.getStatus())
+                .rulerModel(o.getRulerModel())
+                .customName(o.getCustomName())
+                .customStudentId(o.getCustomStudentId())
+                .color(o.getColor())
+                .fontStyle(o.getFontStyle())
+                .paymentMethod(o.getPaymentMethod())
+                .paymentStatus(p != null ? p.getStatus() : "PENDING")
+                .createdAt(o.getCreatedAt())
+                .updatedAt(o.getUpdatedAt())
                 .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<CustomOrderDetailResponseDTO> getMyCustomOrders(User user) {
+        return customOrderRepository.findByBuyerIdOrderByCreatedAtDesc(user.getId())
+                .stream()
+                .map(this::toDTO)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<CustomOrderDetailResponseDTO> getAllCustomOrders() {
+        return customOrderRepository.findAllByOrderByCreatedAtDesc()
+                .stream()
+                .map(this::toDTO)
+                .toList();
+    }
+
+    @Override
+    public CustomOrderDetailResponseDTO createCustomOrder(User user, CustomOrderCreateRequestDTO request) {
+        FileAsset file = fileAssetRepository.findByIdAndDeletedFalse(request.fileId())
+                .orElseThrow(() -> new ApiException(VaultErrorCode.FILE_NOT_FOUND, "Không tìm thấy file thiết kế"));
+
+        if (!file.getOwner().getId().equals(user.getId()) && user.getRole() != UserRole.ADMIN) {
+            throw new ApiException(VaultErrorCode.FORBIDDEN_FILE_ACCESS);
+        }
+
+        CustomOrder order = new CustomOrder();
+        order.setBuyer(user);
+        order.setAttachmentUrl("/api/vault/files/" + file.getId() + "/download");
+        order.setRequirements(request.requirements());
+        order.setQuantity(request.quantity());
+        order.setShippingAddress(request.shippingAddress());
+        order.setRulerModel(request.rulerModel());
+        order.setCustomName(request.customName());
+        order.setCustomStudentId(request.customStudentId());
+        order.setColor(request.color());
+        order.setFontStyle(request.fontStyle());
+        order.setStatus("REQUESTED");
+        order.setCreatedAt(Instant.now());
+        order.setUpdatedAt(Instant.now());
+
+        customOrderRepository.save(order);
+        return toDTO(order);
+    }
+
+    @Override
+    public void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User maker) {
+        CustomOrder order = customOrderRepository.findLockedById(id)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in"));
+
+        if (!Set.of("REQUESTED", "QUOTED").contains(order.getStatus())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Không thể sửa báo giá của yêu cầu đã được chấp nhận");
+        }
+
+        order.setQuotedPrice(request.price());
+        order.setMaker(maker);
+        order.setStatus("QUOTED");
+        order.setUpdatedAt(Instant.now());
+        customOrderRepository.save(order);
+
+        notificationService.sendNotification(order.getBuyer(),
+                "Đã có báo giá yêu cầu in",
+                "Yêu cầu in 3D " + id + " đã được báo giá: " + request.price() + " VND.",
+                "CUSTOM_ORDER",
+                "/quotations");
+    }
+
+    @Override
+    public void updateCustomOrderStatus(UUID id, CustomOrderStatusRequestDTO request, User user) {
+        CustomOrder order = customOrderRepository.findLockedById(id)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in"));
+
+        String current = order.getStatus();
+        String next = request.status();
+
+        if ("ACCEPTED".equals(next)) {
+            if (!order.getBuyer().getId().equals(user.getId())) {
+                throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ người đặt mới có quyền duyệt báo giá");
+            }
+            if (!"QUOTED".equals(current)) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Yêu cầu in chưa có báo giá từ maker");
+            }
+            String method = request.paymentMethod();
+            if (method == null || !Set.of("COD", "PAYOS").contains(method.toUpperCase())) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Vui lòng chọn phương thức thanh toán COD hoặc PAYOS");
+            }
+            order.setPaymentMethod(method.toUpperCase());
+        } else if ("CANCELLED".equals(next)) {
+            if (!order.getBuyer().getId().equals(user.getId()) && user.getRole() != UserRole.ADMIN) {
+                throw new ApiException(CommonErrorCode.FORBIDDEN, "Bạn không có quyền hủy yêu cầu này");
+            }
+            if (!Set.of("REQUESTED", "QUOTED").contains(current)) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chỉ có thể hủy yêu cầu khi chưa bước vào sản xuất");
+            }
+        } else {
+            if (user.getRole() != UserRole.ADMIN) {
+                throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có thể chuyển trạng thái sản xuất");
+            }
+            String expected = switch (current) {
+                case "ACCEPTED", "PAID" -> "PRINTING";
+                case "PRINTING" -> "SHIPPING";
+                case "SHIPPING" -> "COMPLETED";
+                default -> "";
+            };
+            if (!expected.equals(next)) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chuyển trạng thái không hợp lệ từ " + current + " sang " + next);
+            }
+            if ("COMPLETED".equals(next) && "COD".equals(order.getPaymentMethod())) {
+                Payment p = paymentRepository.findByCustomOrderId(id).orElseGet(Payment::new);
+                p.setCustomOrder(order);
+                p.setAmount(order.getQuotedPrice());
+                p.setGateway("COD");
+                p.setStatus("SUCCESS");
+                p.setPaidAt(Instant.now());
+                p.setCreatedAt(Instant.now());
+                p.setUpdatedAt(Instant.now());
+                paymentRepository.save(p);
+            }
+        }
+
+        order.setStatus(next);
+        order.setUpdatedAt(Instant.now());
+        customOrderRepository.save(order);
+
+        notificationService.sendNotification(order.getBuyer(),
+                "Cập nhật tiến trình in",
+                "Yêu cầu in 3D " + id + " đã chuyển sang trạng thái: " + next,
+                "CUSTOM_ORDER",
+                "/quotations");
     }
 }

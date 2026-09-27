@@ -67,7 +67,8 @@ public class SubscriptionPlanServiceImpl implements SubscriptionPlanService {
     @Transactional
     public void deletePlan(SubscriptionType type, UUID id) {
         SubscriptionPlan plan = findPlanByIdAndType(id, type);
-        subscriptionPlanRepository.delete(plan);
+        plan.setIsActive(false);
+        subscriptionPlanRepository.save(plan);
         log.info("Xóa gói subscription [{}] loại [{}]", id, type);
     }
 

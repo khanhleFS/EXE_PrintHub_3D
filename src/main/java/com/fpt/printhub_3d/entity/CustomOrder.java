@@ -34,6 +34,10 @@ public class CustomOrder {
     @Size(max = 100)
     @Column(name = "ruler_model", length = 100)
     private String rulerModel;
+    @Column(length = 1000)
+    private String shippingAddress;
+    @Column(length = 20)
+    private String paymentMethod;
 
     @Size(max = 100)
     @Nationalized

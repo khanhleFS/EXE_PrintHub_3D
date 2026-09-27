@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
 @Slf4j
 @RestController
 @RequiredArgsConstructor
@@ -26,7 +28,7 @@ public class PaymentController implements PaymentAPI {
     private final PaymentService paymentService;
 
     @Override
-    @PreAuthorize("hasRole('USER')")
+    @PreAuthorize("hasAnyRole('USER','ADMIN')")
     public ResponseEntity<ApiResponse<CreatePaymentLinkResponseDTO>> createPaymentLink(
             CreatePaymentLinkRequestDTO request) {
         // Lấy thông tin user hiện tại từ SecurityContext
@@ -42,9 +44,9 @@ public class PaymentController implements PaymentAPI {
 
     @Override
     public ResponseEntity<ApiResponse<PayOSWebhookResponseDTO>> handlePayOSWebhook(
-            PayOSWebhookRequestDTO request) {
+            vn.payos.model.webhooks.Webhook request) {
         // Webhook từ PayOS — không yêu cầu authentication (đã permit trong SecurityConfig)
-        log.info("Nhận webhook từ PayOS: orderCode={}", request.orderCode());
+        log.info("Nhận webhook từ PayOS: orderCode={}", request.getData() == null ? null : request.getData().getOrderCode());
 
         PayOSWebhookResponseDTO response = paymentService.handleWebhook(request);
 
@@ -56,12 +58,9 @@ public class PaymentController implements PaymentAPI {
     }
 
     @Override
-    public ResponseEntity<ApiResponse<java.util.Map<String, Object>>> verifyPayment(String orderCode) {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> verifyPayment(String orderCode) {
         log.info("Xác minh giao dịch PayOS từ FE redirect: orderCode={}", orderCode);
-        java.util.Map<String, Object> result = new java.util.HashMap<>();
-        result.put("orderCode", orderCode);
-        result.put("status", "PAID");
-        result.put("message", "Xác minh thanh toán PayOS thành công");
+        Map<String, Object> result = paymentService.verify(orderCode, SecurityUtils.getCurrentUser().getId());
 
         return ResponseEntity.ok(ApiResponse.<java.util.Map<String, Object>>builder()
                 .code(200)

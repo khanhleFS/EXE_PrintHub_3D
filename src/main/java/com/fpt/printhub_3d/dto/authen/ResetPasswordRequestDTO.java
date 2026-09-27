@@ -30,5 +30,10 @@ public record ResetPasswordRequestDTO(
 
         @NotBlank(message = "Xác nhận mật khẩu không được để trống.")
         @Schema(example = "NewP@ssw0rd123")
-        String confirmPassword
+        String confirmPassword,
+
+        @NotBlank(message = "Mã OTP không được để trống.")
+        @Size(min = 6, max = 6, message = "Mã OTP phải gồm đúng 6 chữ số.")
+        @Schema(example = "123456")
+        String otpCode
 ) {}

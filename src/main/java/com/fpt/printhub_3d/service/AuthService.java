@@ -8,13 +8,15 @@ import java.util.UUID;
 public interface AuthService {
     LoginResponseDTO login(LoginRequestDTO request);
 
-    // Chuyển logic logout xuống Service
     void logout(String authHeader);
     
-    // Đăng ký tài khoản mới và gửi mã OTP
     void register(RegisterRequestDTO request);
 
-    ForgotPasswordResponseDTO forgotPassword(String email);
+    void sendForgotPasswordOtp(String email);
+
+    ForgotPasswordResponseDTO forgotPassword(ForgotPasswordRequestDTO request);
+
+    void sendResetPasswordOtp(String email);
 
     ResetPasswordResponseDTO resetPassword(ResetPasswordRequestDTO request);
 

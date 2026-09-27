@@ -53,12 +53,33 @@ public class AuthController implements AuthAPI {
     }
 
     @Override
+    public ResponseEntity<ApiResponse<Void>> sendForgotPasswordOtp(String email) {
+        authService.sendForgotPasswordOtp(email);
+        return ResponseEntity.ok(ApiResponse.<Void>builder()
+                .code(200)
+                .message("Mã OTP đã được gửi đến email của bạn.")
+                .build());
+    }
+
+    @Override
     public ResponseEntity<ApiResponse<ForgotPasswordResponseDTO>> forgotPassword(ForgotPasswordRequestDTO requestDTO) {
-        ForgotPasswordResponseDTO result = authService.forgotPassword(requestDTO.email());
+        ForgotPasswordResponseDTO result = authService.forgotPassword(requestDTO);
         return ResponseEntity.ok(ApiResponse.<ForgotPasswordResponseDTO>builder()
                 .code(200)
-                .message("Yêu cầu quên mật khẩu thành công")
+                .message("Đặt lại mật khẩu thành công")
                 .result(result)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<ApiResponse<Void>> sendResetPasswordOtp(String email) {
+        String targetEmail = (email != null && !email.isBlank())
+                ? email
+                : SecurityUtils.getCurrentUser().getEmail();
+        authService.sendResetPasswordOtp(targetEmail);
+        return ResponseEntity.ok(ApiResponse.<Void>builder()
+                .code(200)
+                .message("Mã OTP đổi mật khẩu đã được gửi đến email của bạn.")
                 .build());
     }
 
@@ -67,7 +88,7 @@ public class AuthController implements AuthAPI {
         ResetPasswordResponseDTO result = authService.resetPassword(requestDTO);
         return ResponseEntity.ok(ApiResponse.<ResetPasswordResponseDTO>builder()
                 .code(200)
-                .message("Đặt lại mật khẩu thành công")
+                .message("Cập nhật mật khẩu thành công")
                 .result(result)
                 .build());
     }

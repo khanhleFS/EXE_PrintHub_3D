@@ -94,14 +94,7 @@ public class PayOSServiceImpl implements PayOSService {
 
         } catch (Exception ex) {
             log.error("[PayOS Real 2.0.1] Lỗi khởi tạo link thanh toán PayOS SDK: {}. Tự động fallback Mock URL.", ex.getMessage(), ex);
-            String mockToken = orderCodeStr + "-" + System.currentTimeMillis();
-            return CreatePaymentLinkResponseDTO.builder()
-                    .paymentLinkUrl("https://pay.payos.vn/web/" + mockToken)
-                    .qrCodeUrl("https://pay.payos.vn/qr/" + mockToken)
-                    .amount(amount)
-                    .orderCode(orderCodeStr)
-                    .expiredAt(Instant.now().plusSeconds(15 * 60))
-                    .build();
+            throw new IllegalStateException("Không thể tạo liên kết PayOS", ex);
         }
     }
 
@@ -109,7 +102,7 @@ public class PayOSServiceImpl implements PayOSService {
     public boolean verifyWebhookSignature(String rawPayload, String signature) {
         try {
             log.info("[PayOS Real 2.0.1] Kiểm tra webhook signature PayOS");
-            return true;
+            throw new UnsupportedOperationException("Dùng PayOS.webhooks().verify với payload đầy đủ");
         } catch (Exception e) {
             log.error("[PayOS Real 2.0.1] Lỗi xác minh chữ ký Webhook: {}", e.getMessage());
             return false;

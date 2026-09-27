@@ -36,15 +36,16 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     private final PointTransactionRepository pointTransactionRepository;
 
     @Override
+    @Transactional
     public List<SubscriptionPlanResponseDTO> getAvailablePlansForUser(UUID userId) {
         log.info("Lấy danh sách gói phù hợp cho User [{}]", userId);
 
-        User user = userRepository.findById(userId)
+        User user = userRepository.findLockedById(userId)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng."));
 
         SubscriptionType planType;
         if (user.getRole() == UserRole.USER) {
-            planType = SubscriptionType.CUSTOMER_VIP;
+            planType = SubscriptionType.CUSTOMER;
         } else {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Loại người dùng không hợp lệ.");
         }
@@ -70,7 +71,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     public UserSubscriptionResponseDTO redeemSubscription(UUID userId, UUID planId) {
         log.info("Người dùng [{}] yêu cầu đổi điểm lấy gói [{}]", userId, planId);
 
-        User user = userRepository.findById(userId)
+        User user = userRepository.findLockedById(userId)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng."));
 
         SubscriptionPlan plan = subscriptionPlanRepository.findById(planId)
@@ -80,7 +81,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói dịch vụ này hiện tại không hoạt động.");
         }
 
-        if (plan.getType() == SubscriptionType.CUSTOMER_VIP && user.getRole() != UserRole.USER) {
+        if ((plan.getType() != SubscriptionType.CUSTOMER && plan.getType() != SubscriptionType.CUSTOMER_VIP) || user.getRole() != UserRole.USER) {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói VIP người mua chỉ dành cho tài khoản khách hàng.");
         }
 
@@ -93,7 +94,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             PointWallet newWallet = PointWallet.builder()
                     .userId(userId)
                     .user(user)
-                    .balance(0)
+                    .balance(user.getRewardPoints() == null ? 0 : user.getRewardPoints())
                     .updatedAt(LocalDateTime.now())
                     .build();
             return pointWalletRepository.save(newWallet);
@@ -104,6 +105,8 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
         }
 
         wallet.setBalance(wallet.getBalance() - requiredPoints);
+        user.setRewardPoints(wallet.getBalance());
+        userRepository.save(user);
         wallet.setUpdatedAt(LocalDateTime.now());
         pointWalletRepository.save(wallet);
 
@@ -126,12 +129,16 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     public UserSubscriptionResponseDTO giftSubscription(GiftSubscriptionRequestDTO request) {
         log.info("Admin thực hiện phát gói [{}] cho người dùng [{}] với lý do: {}", request.planId(), request.userId(), request.reason());
 
-        User user = userRepository.findById(request.userId())
+        User user = userRepository.findLockedById(request.userId())
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng được tặng."));
 
         SubscriptionPlan plan = subscriptionPlanRepository.findById(request.planId())
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy gói dịch vụ."));
 
+        if (!Boolean.TRUE.equals(plan.getIsActive()) || user.getRole() != UserRole.USER
+                || (plan.getType() != SubscriptionType.CUSTOMER && plan.getType() != SubscriptionType.CUSTOMER_VIP)) {
+            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói hoặc tài khoản không hợp lệ.");
+        }
         UserSubscription userSub = processSubscriptionActivation(user, plan);
 
         return toResponseDTO(userSub);
