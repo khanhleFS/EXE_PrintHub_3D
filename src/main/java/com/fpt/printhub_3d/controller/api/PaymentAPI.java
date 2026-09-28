@@ -37,7 +37,7 @@ public interface PaymentAPI {
     )
     @PostMapping("/payos-webhook")
     ResponseEntity<ApiResponse<PayOSWebhookResponseDTO>> handlePayOSWebhook(
-            @RequestBody PayOSWebhookRequestDTO request);
+            @RequestBody vn.payos.model.webhooks.Webhook request);
 
     @Operation(
             summary = "Xác minh trạng thái thanh toán từ PayOS redirect",

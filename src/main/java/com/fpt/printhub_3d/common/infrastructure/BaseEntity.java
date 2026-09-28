@@ -24,7 +24,7 @@ public abstract class BaseEntity {
     @Id
     @GeneratedValue
     @UuidGenerator
-    @Column(name = "id", nullable = false, columnDefinition = "uniqueidentifier")
+    @Column(name = "id", nullable = false)
     @EqualsAndHashCode.Include
     private UUID id;
 

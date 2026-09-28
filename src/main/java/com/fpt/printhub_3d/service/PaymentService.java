@@ -2,9 +2,9 @@ package com.fpt.printhub_3d.service;
 
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkResponseDTO;
-import com.fpt.printhub_3d.dto.payment.PayOSWebhookRequestDTO;
 import com.fpt.printhub_3d.dto.payment.PayOSWebhookResponseDTO;
 
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -28,8 +28,9 @@ public interface PaymentService {
      * Xác minh chữ ký, cập nhật trạng thái Payment, chuyển trạng thái đơn hàng,
      * kích hoạt luồng đóng băng/ký quỹ dòng tiền.
      *
-     * @param request payload webhook từ PayOS
      * @return kết quả xử lý webhook
      */
-    PayOSWebhookResponseDTO handleWebhook(PayOSWebhookRequestDTO request);
+    Map<String,Object> verify(String orderCode, java.util.UUID userId);
+
+    PayOSWebhookResponseDTO handleWebhook(vn.payos.model.webhooks.Webhook request);
 }

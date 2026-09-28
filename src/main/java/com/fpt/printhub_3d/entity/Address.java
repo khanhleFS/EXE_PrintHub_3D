@@ -51,7 +51,6 @@ public class Address {
     private String province;
 
     @NotNull
-    @ColumnDefault("0")
     @Column(name = "is_default", nullable = false)
     private Boolean isDefault = false;
 

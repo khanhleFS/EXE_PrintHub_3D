@@ -35,6 +35,15 @@ public record OrderResponseDTO(
         @Schema(description = "Trạng thái đơn hàng", example = "PENDING")
         String status,
 
+        @Schema(description = "Phương thức thanh toán", example = "PAYOS")
+        String paymentMethod,
+
+        @Schema(description = "Trạng thái thanh toán", example = "PENDING")
+        String paymentStatus,
+
+        @Schema(description = "Mã giao dịch / mã đơn cổng thanh toán")
+        String orderCode,
+
         @Schema(description = "Thông tin người nhận hàng")
         ShippingInfoResponseDTO shippingInfo,
 

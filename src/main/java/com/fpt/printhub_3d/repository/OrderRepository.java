@@ -11,6 +11,10 @@ import java.util.UUID;
 
 @Repository
 public interface OrderRepository extends JpaRepository<Order, UUID> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("select e from Order e where e.id = :id")
+    java.util.Optional<Order> findLockedById(@org.springframework.data.repository.query.Param("id") java.util.UUID id);
+
     @Query(value = "select coalesce(sum(commission_fee), cast(0 as decimal(18,2))) from orders", nativeQuery = true)
     BigDecimal sumCommissionFee();
 

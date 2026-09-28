@@ -4,6 +4,7 @@ import com.fpt.printhub_3d.entity.Category;
 import com.fpt.printhub_3d.repository.CategoryRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -21,6 +22,7 @@ public class CategoryController {
         return ResponseEntity.ok(categoryRepository.findAll());
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
     @PostMapping
     public ResponseEntity<Category> createCategory(@RequestBody Category category) {
         Category saved = categoryRepository.save(category);

@@ -2,21 +2,21 @@ package com.fpt.printhub_3d.service;
 
 import com.fpt.printhub_3d.dto.authen.*;
 import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
-import com.fpt.printhub_3d.dto.maker.MakerApplicationResponse;
-import com.fpt.printhub_3d.dto.maker.MakerRegistrationRequest;
-import com.fpt.printhub_3d.dto.maker.MakerStatusUpdateRequest;
 
 import java.util.UUID;
 
 public interface AuthService {
     LoginResponseDTO login(LoginRequestDTO request);
 
-    // Chuyển logic logout xuống Service
     void logout(String authHeader);
-    // Sửa thành void, ném Exception trực tiếp nếu lỗi (Theo chuẩn Error Handling)
+    
     void register(RegisterRequestDTO request);
 
-    ForgotPasswordResponseDTO forgotPassword(String email);
+    void sendForgotPasswordOtp(String email);
+
+    ForgotPasswordResponseDTO forgotPassword(ForgotPasswordRequestDTO request);
+
+    void sendResetPasswordOtp(String email);
 
     ResetPasswordResponseDTO resetPassword(ResetPasswordRequestDTO request);
 

@@ -3,17 +3,14 @@ package com.fpt.printhub_3d.controller.api;
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.dto.order.OrderCreateRequestDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
+import com.fpt.printhub_3d.dto.order.OrderStatusUpdateRequestDTO;
 import com.fpt.printhub_3d.dto.order.RewardCompletionResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
@@ -24,7 +21,7 @@ public interface OrderAPI {
 
     @Operation(
             summary = "Create new marketplace order(s)",
-            description = "Khởi tạo đơn hàng mua các sản phẩm bán sẵn thương mại thông thường dựa trên số lượng tồn kho có sẵn của Maker. Có thể mua nhiều sản phẩm từ các Maker khác nhau cùng lúc, hệ thống sẽ tự động tách thành các đơn hàng riêng biệt.",
+            description = "Khởi tạo đơn hàng mua các sản phẩm.",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @PostMapping
@@ -33,7 +30,7 @@ public interface OrderAPI {
 
     @Operation(
             summary = "Complete reward points for a completed order",
-            description = "Tự động tính và cộng điểm thưởng vào tài khoản Customer khi đơn hàng đã ở trạng thái COMPLETED.",
+            description = "Tự động tính và cộng điểm thưởng khi đơn hoàn thành.",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @PostMapping("/{id}/complete-rewards")
@@ -41,9 +38,35 @@ public interface OrderAPI {
 
     @Operation(
             summary = "Get current user's order history",
-            description = "Người dùng kiểm tra danh sách và tiến độ lịch sử các đơn hàng tổng hợp của mình.",
+            description = "Lấy lịch sử đơn hàng của người dùng.",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @GetMapping("/my-orders")
     ResponseEntity<ApiResponse<List<OrderResponseDTO>>> getMyOrders();
+
+    @Operation(
+            summary = "Get current user's orders (alias /me)",
+            description = "Lấy đơn hàng của người dùng hiện tại.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/me")
+    ResponseEntity<ApiResponse<List<OrderResponseDTO>>> getMyOrdersAlt();
+
+    @Operation(
+            summary = "Get order details by ID",
+            description = "Xem chi tiết một đơn hàng theo ID.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/{id}")
+    ResponseEntity<ApiResponse<OrderResponseDTO>> getOrderById(@PathVariable UUID id);
+
+    @Operation(
+            summary = "Update order status",
+            description = "Cập nhật trạng thái đơn hàng (ví dụ: người mua hủy đơn, admin đổi tiến độ).",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PutMapping("/{id}/status")
+    ResponseEntity<ApiResponse<Void>> updateOrderStatus(
+            @PathVariable UUID id,
+            @Valid @RequestBody OrderStatusUpdateRequestDTO request);
 }

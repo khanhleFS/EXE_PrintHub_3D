@@ -1,7 +1,7 @@
 package com.fpt.printhub_3d.controller;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
-import com.fpt.printhub_3d.common.security.CustomUserDetail;
+import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.ReviewAPI;
 import com.fpt.printhub_3d.dto.review.ReviewCreateRequestDTO;
 import com.fpt.printhub_3d.dto.review.ReviewResponseDTO;
@@ -12,7 +12,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -27,9 +26,7 @@ public class ReviewController implements ReviewAPI {
     @Override
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<ApiResponse<ReviewResponseDTO>> createReview(ReviewCreateRequestDTO request) {
-        CustomUserDetail userDetail = (CustomUserDetail) SecurityContextHolder
-                .getContext().getAuthentication().getPrincipal();
-        User reviewer = userDetail.getUser();
+        User reviewer = SecurityUtils.getCurrentUser();
 
         ReviewResponseDTO response = reviewService.createReview(request, reviewer);
         return ResponseEntity.status(HttpStatus.CREATED)

@@ -34,6 +34,10 @@ public class CustomOrder {
     @Size(max = 100)
     @Column(name = "ruler_model", length = 100)
     private String rulerModel;
+    @Column(length = 1000)
+    private String shippingAddress;
+    @Column(length = 20)
+    private String paymentMethod;
 
     @Size(max = 100)
     @Nationalized
@@ -75,12 +79,12 @@ public class CustomOrder {
     private String status;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 }

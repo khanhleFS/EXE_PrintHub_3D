@@ -35,14 +35,28 @@ public interface AuthAPI {
     ResponseEntity<ApiResponse<RegisterResponseDTO>> register(
             @Valid @RequestBody RegisterRequestDTO request);
 
-    @Operation(summary = "Forgot password", description = "Send new password to user's email")
+    @Operation(summary = "Send forgot password OTP", description = "Send 6-digit OTP code to user's email for resetting password")
+    @PostMapping("/forgot-password/send-otp")
+    ResponseEntity<ApiResponse<Void>> sendForgotPasswordOtp(
+            @RequestParam("email") String email);
+
+    @Operation(summary = "Forgot password", description = "Verify OTP and reset password")
     @PostMapping("/forgot-password")
     ResponseEntity<ApiResponse<ForgotPasswordResponseDTO>> forgotPassword(
             @Valid @RequestBody ForgotPasswordRequestDTO request);
 
     @Operation(
+            summary = "Send reset password OTP",
+            description = "Send 6-digit OTP code to user's email for changing password",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping("/reset-password/send-otp")
+    ResponseEntity<ApiResponse<Void>> sendResetPasswordOtp(
+            @RequestParam(value = "email", required = false) String email);
+
+    @Operation(
             summary = "Reset password",
-            description = "Reset password using old password",
+            description = "Change password using old password, new password, and OTP code",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @PostMapping("/reset-password")

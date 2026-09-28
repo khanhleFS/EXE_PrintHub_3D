@@ -9,16 +9,10 @@ import java.util.List;
 import java.util.UUID;
 
 public interface OrderService {
-    /**
-     * Khởi tạo đơn hàng mua sản phẩm bán sẵn dựa trên giỏ hàng hoặc danh sách mặt hàng đặt mua.
-     * Nếu có nhiều sản phẩm từ nhiều Maker (seller) khác nhau, hệ thống sẽ tự động tách thành nhiều đơn hàng tương ứng.
-     * Đồng thời trừ số lượng tồn kho (stock) của từng sản phẩm.
-     *
-     * @param request thông tin nhận hàng và danh sách sản phẩm cần mua
-     * @param buyer   người mua (Customer)
-     * @return danh sách các đơn hàng đã được tạo thành công
-     */
     List<OrderResponseDTO> createOrders(OrderCreateRequestDTO request, User buyer);
     RewardCompletionResponseDTO completeRewards(UUID orderId);
     List<OrderResponseDTO> getMyOrders(UUID buyerId);
+    OrderResponseDTO getOrderById(UUID id, User currentUser);
+    List<OrderResponseDTO> getAllOrders();
+    void updateOrderStatus(UUID id, String nextStatus, User currentUser);
 }

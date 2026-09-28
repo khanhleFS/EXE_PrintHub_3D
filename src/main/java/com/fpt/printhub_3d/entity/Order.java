@@ -47,7 +47,6 @@ public class Order {
     private String status;
 
     @NotNull
-    @ColumnDefault("0")
     @Column(name = "reward_processed", nullable = false)
     private Boolean rewardProcessed = false;
 
@@ -57,12 +56,12 @@ public class Order {
     private Integer rewardPointsEarned = 0;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

@@ -86,6 +86,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(buildError(ec, ec.getMessage(), request.getRequestURI(), null));
     }
 
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<?> handleStatus(org.springframework.web.server.ResponseStatusException ex) {
+        return ResponseEntity.status(ex.getStatusCode()).body(Map.of("code", ex.getStatusCode().value(),
+                "message", ex.getReason() == null ? "Yêu cầu không hợp lệ" : ex.getReason()));
+    }
+
+    @ExceptionHandler(org.springframework.security.core.AuthenticationException.class)
+    public ResponseEntity<?> handleAuthentication(org.springframework.security.core.AuthenticationException ex) {
+        return ResponseEntity.status(401).body(Map.of("message", "Tài khoản, mật khẩu hoặc trạng thái kích hoạt không hợp lệ"));
+    }
+
     // Handle mọi lỗi không lường trước, log stacktrace và trả 500 UNEXPECTED_ERROR.
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Object>> handleUnexpected(Exception ex, HttpServletRequest request) {

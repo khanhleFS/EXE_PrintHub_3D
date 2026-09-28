@@ -8,10 +8,10 @@ import jakarta.validation.constraints.Size;
 
 public record RegisterRequestDTO(
         @NotBlank(message = "Họ tên không được để trống.")
-        @Size(min = 9, max = 50, message = "Họ tên phải từ 9 đến 50 ký tự.")
-        @Pattern(regexp = "^\\S.*\\S$|^\\S$", message = "Họ tên không được có khoảng trắng ở đầu hoặc cuối.")
-        @Pattern(regexp = "^[\\p{L} ]+$", message = "Họ tên chỉ được chứa chữ cái và khoảng trắng.")
-        @Pattern(regexp = "^(?!.*\\s{2,}).*$", message = "Họ tên không được có 2 khoảng trắng liên tiếp.")
+        @Size(min = 2, max = 50, message = "Họ tên phải từ 2 đến 50 ký tự.")
+        @Pattern(regexp = "^\\S.*\\S$|^\\S$", message = "Họ tên không được có khoảng trống ở đầu hoặc cuối.")
+        @Pattern(regexp = "^[\\p{L} ]+$", message = "Họ tên chỉ được chứa chữ cái và khoảng trống.")
+        @Pattern(regexp = "^(?!.*\\s{2,}).*$", message = "Họ tên không được có 2 khoảng trống liên tiếp.")
         @Schema(example = "Nguyen Van A")
         String fullName,
 
@@ -23,7 +23,7 @@ public record RegisterRequestDTO(
 
         @NotBlank(message = "Tên người dùng không được để trống.")
         @Size(min = 5, max = 50, message = "Tên người dùng phải từ 5 đến 50 ký tự.")
-        @Pattern(regexp = "^\\S.*\\S$|^\\S$", message = "Tên người dùng không được có khoảng trắng ở đầu hoặc cuối.")
+        @Pattern(regexp = "^\\S.*\\S$|^\\S$", message = "Tên người dùng không được có khoảng trống ở đầu hoặc cuối.")
         @Pattern(regexp = "^[\\p{L}0-9_]+$", message = "Tên người dùng chỉ được chứa chữ cái, số và dấu gạch dưới.")
         @Pattern(regexp = "^(?!.*__).*$", message = "Tên người dùng không được có 2 dấu gạch dưới liên tiếp.")
         @Schema(example = "nguyenvana")
@@ -41,7 +41,7 @@ public record RegisterRequestDTO(
         @Pattern(regexp = ".*[a-z].*", message = "Mật khẩu phải có ít nhất 1 chữ thường.")
         @Pattern(regexp = ".*[0-9].*", message = "Mật khẩu phải có ít nhất 1 chữ số.")
         @Pattern(regexp = ".*[!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>\\/?].*", message = "Mật khẩu phải có ít nhất 1 ký tự đặc biệt.")
-        @Pattern(regexp = "^\\S+$", message = "Mật khẩu không được chứa khoảng trắng.")
+        @Pattern(regexp = "^\\S+$", message = "Mật khẩu không được chứa khoảng trống.")
         @Schema(example = "P@ssw0rd123")
         String password,
 
@@ -49,10 +49,8 @@ public record RegisterRequestDTO(
         @Schema(example = "P@ssw0rd123")
         String confirmPassword,
 
-        @NotBlank(message = "Địa chỉ không được để trống.")
         @Size(max = 200, message = "Địa chỉ không được vượt quá 200 ký tự.")
-        @Pattern(regexp = "^\\S.*\\S$|^\\S$", message = "Địa chỉ không được có khoảng trắng ở đầu hoặc cuối.")
-        @Pattern(regexp = "^(?!.*\\s{2,}).*$", message = "Địa chỉ không được có 2 khoảng trắng liên tiếp.")
+        @Pattern(regexp = "^$|^(?!\\s)(?!.*\\s$).*$", message = "Địa chỉ không được có khoảng trống ở đầu hoặc cuối.")
         @Schema(example = "123 Nguyen Trai, District 1, Ho Chi Minh City")
         String address,
 
@@ -61,5 +59,5 @@ public record RegisterRequestDTO(
 
         @Schema(example = "https://example.com/cccd.jpg")
         String cccdFrontImageUrl
-        ){
+){
 }

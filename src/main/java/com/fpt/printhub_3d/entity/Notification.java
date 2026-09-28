@@ -47,17 +47,16 @@ public class Notification {
     private String type;
 
     @NotNull
-    @ColumnDefault("0")
     @Column(name = "is_read", nullable = false)
     private Boolean isRead = false;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
     @NotNull
-    @ColumnDefault("sysutcdatetime()")
+    @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

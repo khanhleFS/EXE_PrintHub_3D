@@ -63,5 +63,10 @@ public class User extends BaseEntity {
     @Column(name = "cccd_front_image_url", length = 500)
     private String cccdFrontImageUrl;
 
+    @Column(length = 50)
+    private String studentId;
+    @Column(length = 200)
+    private String university;
+
 }
 
