@@ -32,7 +32,7 @@ public class ReviewController implements ReviewAPI {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.<ReviewResponseDTO>builder()
                         .code(201)
-                        .message("Tạo đánh giá Maker thành công")
+                        .message("Tạo đánh giá thành công")
                         .result(response)
                         .build());
     }

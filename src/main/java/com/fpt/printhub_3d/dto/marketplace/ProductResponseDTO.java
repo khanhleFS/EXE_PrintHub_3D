@@ -17,7 +17,7 @@ public record ProductResponseDTO(
         @Schema(description = "ID người bán")
         UUID sellerId,
 
-        @Schema(description = "Tên người bán", example = "Maker Hub")
+        @Schema(description = "Tên người bán", example = "PrintHub Store")
         String sellerName,
 
         @Schema(description = "ID danh mục")

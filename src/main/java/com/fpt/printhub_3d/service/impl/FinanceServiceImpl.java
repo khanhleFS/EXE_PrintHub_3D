@@ -37,17 +37,14 @@ public class FinanceServiceImpl implements FinanceService {
     @Transactional(readOnly = true)
     public RevenueAnalyticsResponseDTO getRevenueAnalytics(Instant from, Instant to) {
         BigDecimal orderCommissionRevenue = orderRepository.sumCommissionFeeBetween(from, to);
-        BigDecimal makerSubscriptionRevenue = BigDecimal.ZERO;
         BigDecimal customerSubscriptionRevenue = BigDecimal.ZERO;
 
         return RevenueAnalyticsResponseDTO.builder()
                 .from(from)
                 .to(to)
                 .orderCommissionRevenue(orderCommissionRevenue)
-                .makerSubscriptionRevenue(makerSubscriptionRevenue)
                 .customerSubscriptionRevenue(customerSubscriptionRevenue)
                 .totalRevenue(orderCommissionRevenue
-                        .add(makerSubscriptionRevenue)
                         .add(customerSubscriptionRevenue))
                 .build();
     }

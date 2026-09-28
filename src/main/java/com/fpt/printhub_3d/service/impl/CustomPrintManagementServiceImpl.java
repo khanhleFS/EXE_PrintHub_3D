@@ -37,11 +37,11 @@ public class CustomPrintManagementServiceImpl implements CustomPrintManagementSe
 
     @Override
     @Transactional
-    public CustomPrintServiceResponseDTO createService(CustomPrintServiceRequestDTO request, User maker) {
-        log.info("Maker [{}] đang tạo gói dịch vụ in: {}", maker.getId(), request.serviceName());
+    public CustomPrintServiceResponseDTO createService(CustomPrintServiceRequestDTO request, User admin) {
+        log.info("Admin [{}] đang tạo gói dịch vụ in: {}", admin.getId(), request.serviceName());
 
         CustomPrintService entity = CustomPrintService.builder()
-                .maker(maker)
+                .maker(admin)
                 .serviceName(request.serviceName())
                 .description(request.description())
                 .printerModels(new ArrayList<>(request.printerModels()))

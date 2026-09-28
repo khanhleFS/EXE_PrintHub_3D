@@ -20,10 +20,10 @@ public record OrderResponseDTO(
         @Schema(description = "Tên người mua")
         String buyerName,
 
-        @Schema(description = "ID người bán (Maker)")
+        @Schema(description = "ID người bán")
         UUID sellerId,
 
-        @Schema(description = "Tên người bán (Maker)")
+        @Schema(description = "Tên người bán")
         String sellerName,
 
         @Schema(description = "Tổng giá trị đơn hàng (VND)", example = "700000")

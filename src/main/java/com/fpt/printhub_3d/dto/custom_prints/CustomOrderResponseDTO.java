@@ -19,11 +19,11 @@ public record CustomOrderResponseDTO(
         @Schema(description = "Tên người mua")
         String buyerName,
 
-        @Schema(description = "ID người bán (Maker)")
-        UUID makerId,
+        @Schema(description = "ID người tiếp nhận/xử lý (Admin)")
+        UUID processedById,
 
-        @Schema(description = "Tên người bán")
-        String makerName,
+        @Schema(description = "Tên người tiếp nhận/xử lý (Admin)")
+        String processedByName,
 
         @Schema(description = "Mô tả yêu cầu gia công")
         String requirements,
@@ -31,7 +31,7 @@ public record CustomOrderResponseDTO(
         @Schema(description = "Đường dẫn file thiết kế STL đã đính kèm")
         String attachmentUrl,
 
-        @Schema(description = "Báo giá từ Maker (sẽ được cập nhật sau khi Maker báo giá)")
+        @Schema(description = "Báo giá từ xưởng/Admin (sẽ được cập nhật sau khi Admin báo giá)")
         BigDecimal quotedPrice,
 
         @Schema(description = "Trạng thái yêu cầu (ví dụ: REQUESTED)")

@@ -38,9 +38,9 @@ public class CustomPrintController implements CustomPrintAPI {
     public ResponseEntity<ApiResponse<CustomPrintServiceResponseDTO>> createService(
             CustomPrintServiceRequestDTO request) {
 
-        User maker = SecurityUtils.getCurrentUser();
+        User admin = SecurityUtils.getCurrentUser();
 
-        CustomPrintServiceResponseDTO response = customPrintManagementService.createService(request, maker);
+        CustomPrintServiceResponseDTO response = customPrintManagementService.createService(request, admin);
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.<CustomPrintServiceResponseDTO>builder()
@@ -71,13 +71,13 @@ public class CustomPrintController implements CustomPrintAPI {
     @Override
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<ApiResponse<CustomOrderResponseDTO>> createCustomOrderRequest(
-            UUID makerId, String requirements, MultipartFile file) {
+            String requirements, MultipartFile file) {
 
-        log.info("Nhận yêu cầu in custom từ customer gửi tới maker: {}", makerId);
+        log.info("Nhận yêu cầu in custom từ customer");
 
         User buyer = SecurityUtils.getCurrentUser();
 
-        CustomOrderResponseDTO response = customOrderService.createRequest(makerId, requirements, file, buyer);
+        CustomOrderResponseDTO response = customOrderService.createRequest(requirements, file, buyer);
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.<CustomOrderResponseDTO>builder()

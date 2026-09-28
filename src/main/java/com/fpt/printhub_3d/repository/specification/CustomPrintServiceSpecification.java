@@ -18,25 +18,24 @@ public class CustomPrintServiceSpecification {
 
     /**
      * Tạo Specification từ bộ lọc để tìm kiếm dịch vụ in 3D.
-     * - keyword: tìm theo tên dịch vụ, mô tả, hoặc tên maker (LIKE)
+     * - keyword: tìm theo tên dịch vụ hoặc mô tả (LIKE)
      * - material: lọc theo vật liệu hỗ trợ (exact match trong collection)
      * - minPrice / maxPrice: lọc theo khoảng giá tối thiểu
-     * - Chỉ hiện maker đang hoạt động (isActive = true)
+     * - Chỉ hiện dịch vụ đang hoạt động (isActive = true)
      */
     public static Specification<CustomPrintService> withFilter(CustomPrintServiceFilterDTO filter) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
-            // Chỉ hiển thị dịch vụ của maker đang hoạt động
+            // Chỉ hiển thị dịch vụ của người dùng/hệ thống đang hoạt động
             predicates.add(cb.isTrue(root.get("maker").get("isActive")));
 
-            // Tìm kiếm theo từ khóa (tên dịch vụ, mô tả, tên maker)
+            // Tìm kiếm theo từ khóa (tên dịch vụ, mô tả)
             if (filter.keyword() != null && !filter.keyword().isBlank()) {
                 String pattern = "%" + filter.keyword().trim().toLowerCase() + "%";
                 Predicate serviceNameLike = cb.like(cb.lower(root.get("serviceName")), pattern);
                 Predicate descriptionLike = cb.like(cb.lower(root.get("description")), pattern);
-                Predicate makerNameLike = cb.like(cb.lower(root.get("maker").get("fullName")), pattern);
-                predicates.add(cb.or(serviceNameLike, descriptionLike, makerNameLike));
+                predicates.add(cb.or(serviceNameLike, descriptionLike));
             }
 
             // Lọc theo vật liệu hỗ trợ

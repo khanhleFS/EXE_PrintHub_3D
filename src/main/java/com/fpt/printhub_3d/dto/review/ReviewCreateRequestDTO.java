@@ -8,7 +8,7 @@ import jakarta.validation.constraints.Size;
 
 import java.util.UUID;
 
-@Schema(description = "Thông tin đánh giá Maker sau đơn hàng")
+@Schema(description = "Thông tin đánh giá sau đơn hàng")
 public record ReviewCreateRequestDTO(
         @NotNull(message = "Order ID không được để trống")
         UUID orderId,

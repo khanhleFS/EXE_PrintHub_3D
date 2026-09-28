@@ -62,8 +62,8 @@ public class CustomOrderController implements CustomOrderAPI {
     @Override
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<Void>> quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request) {
-        User maker = SecurityUtils.getCurrentUser();
-        customOrderService.quoteCustomOrder(id, request, maker);
+        User admin = SecurityUtils.getCurrentUser();
+        customOrderService.quoteCustomOrder(id, request, admin);
         return ResponseEntity.ok(ApiResponse.<Void>builder()
                 .code(200)
                 .message("Gửi báo giá thành công")

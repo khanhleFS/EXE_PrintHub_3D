@@ -27,7 +27,7 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
     private final UserSubscriptionService userSubscriptionService;
 
     @Override
-    @PreAuthorize("hasAnyRole('USER', 'MAKER')")
+    @PreAuthorize("hasRole('USER')")
     public ResponseEntity<ApiResponse<List<SubscriptionPlanResponseDTO>>> getAvailablePlans() {
         UUID userId = SecurityUtils.getCurrentUser().getId();
 
@@ -43,7 +43,7 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
     }
 
     @Override
-    @PreAuthorize("hasAnyRole('USER', 'MAKER')")
+    @PreAuthorize("hasRole('USER')")
     public ResponseEntity<ApiResponse<UserSubscriptionResponseDTO>> redeemSubscription(UUID planId) {
         UUID userId = SecurityUtils.getCurrentUser().getId();
         

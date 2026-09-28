@@ -28,8 +28,8 @@ public class CustomOrder {
     private User buyer;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "maker_id")
-    private User maker;
+    @JoinColumn(name = "processed_by_id")
+    private User processedBy;
 
     @Size(max = 100)
     @Column(name = "ruler_model", length = 100)

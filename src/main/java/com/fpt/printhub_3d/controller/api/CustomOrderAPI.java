@@ -25,7 +25,7 @@ public interface CustomOrderAPI {
 
     @Operation(
             summary = "Get all custom print requests (Admin)",
-            description = "Quản trị viên / Maker xem toàn bộ yêu cầu in tùy chỉnh.",
+            description = "Quản trị viên xem toàn bộ yêu cầu in tùy chỉnh.",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @GetMapping("/api/admin/custom-orders")
@@ -41,7 +41,7 @@ public interface CustomOrderAPI {
             @Valid @RequestBody CustomOrderCreateRequestDTO request);
 
     @Operation(
-            summary = "Quote custom order (Admin/Maker)",
+            summary = "Quote custom order (Admin)",
             description = "Báo giá cho yêu cầu in 3D.",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )

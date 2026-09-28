@@ -17,8 +17,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 public interface ReviewAPI {
 
     @Operation(
-            summary = "Create Maker review",
-            description = "Customer viết đánh giá kèm điểm sao tín nhiệm cho Maker sau khi đơn hàng hoàn tất.",
+            summary = "Create review",
+            description = "Customer viết đánh giá kèm điểm sao tín nhiệm cho đơn hàng sau khi hoàn tất.",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @PostMapping

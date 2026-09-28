@@ -22,7 +22,7 @@ public interface UserSubscriptionAPI {
 
     @Operation(
             summary = "Get active subscription plans for current user role",
-            description = "Lấy danh sách các gói dịch vụ đang hoạt động phù hợp với vai trò của người dùng (USER -> CUSTOMER_VIP, MAKER -> MAKER_MARKETING).",
+            description = "Lấy danh sách các gói dịch vụ đang hoạt động phù hợp với vai trò của người dùng (USER -> CUSTOMER, CUSTOMER_VIP).",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @GetMapping("/api/subscriptions/plans")

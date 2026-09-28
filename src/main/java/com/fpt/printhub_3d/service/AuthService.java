@@ -1,7 +1,6 @@
 package com.fpt.printhub_3d.service;
 
 import com.fpt.printhub_3d.dto.authen.*;
-import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
 
 import java.util.UUID;
 
@@ -27,6 +26,4 @@ public interface AuthService {
     boolean isEmailValid(String email);
 
     boolean verifyRegisterOtp(String email, String otpCode);
-
-    void addCccdToBlacklist(BlacklistRequestDTO request);
 }

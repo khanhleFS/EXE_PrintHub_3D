@@ -9,13 +9,13 @@ import org.springframework.data.domain.Page;
 public interface CustomPrintManagementService {
 
     /**
-     * Tạo mới gói dịch vụ in 3D cho maker.
+     * Tạo mới gói dịch vụ in 3D cho hệ thống.
      *
      * @param request thông số kỹ thuật xưởng in
-     * @param maker   user đang đăng nhập (có role MAKER)
+     * @param admin   user quản trị đang đăng nhập
      * @return thông tin dịch vụ vừa tạo
      */
-    CustomPrintServiceResponseDTO createService(CustomPrintServiceRequestDTO request, User maker);
+    CustomPrintServiceResponseDTO createService(CustomPrintServiceRequestDTO request, User admin);
 
     /**
      * Duyệt, tìm kiếm và lọc danh sách dịch vụ in 3D đang hoạt động.

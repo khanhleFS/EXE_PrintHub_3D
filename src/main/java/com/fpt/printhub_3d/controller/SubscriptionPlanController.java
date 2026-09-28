@@ -56,37 +56,4 @@ public class SubscriptionPlanController implements SubscriptionPlanAPI {
                 .message("Xóa gói hội viên Customer thành công")
                 .build());
     }
-
-    @Override
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<SubscriptionPlanResponseDTO>> createMakerPlan(SubscriptionPlanRequestDTO request) {
-        SubscriptionPlanResponseDTO response = subscriptionPlanService.createPlan(SubscriptionType.MAKER, request);
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.<SubscriptionPlanResponseDTO>builder()
-                        .code(201)
-                        .message("Tạo gói Marketing Maker thành công")
-                        .result(response)
-                        .build());
-    }
-
-    @Override
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<SubscriptionPlanResponseDTO>> updateMakerPlan(UUID id, SubscriptionPlanRequestDTO request) {
-        SubscriptionPlanResponseDTO response = subscriptionPlanService.updatePlan(SubscriptionType.MAKER, id, request);
-        return ResponseEntity.ok(ApiResponse.<SubscriptionPlanResponseDTO>builder()
-                .code(200)
-                .message("Cập nhật gói Marketing Maker thành công")
-                .result(response)
-                .build());
-    }
-
-    @Override
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<Void>> deleteMakerPlan(UUID id) {
-        subscriptionPlanService.deletePlan(SubscriptionType.MAKER, id);
-        return ResponseEntity.ok(ApiResponse.<Void>builder()
-                .code(200)
-                .message("Xóa gói Marketing Maker thành công")
-                .build());
-    }
 }

@@ -72,9 +72,6 @@ public interface CustomPrintAPI {
     )
     @PostMapping(value = "/requests", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
     ResponseEntity<ApiResponse<CustomOrderResponseDTO>> createCustomOrderRequest(
-            @Parameter(description = "ID của Maker nhận yêu cầu")
-            @RequestParam("makerId") UUID makerId,
-
             @Parameter(description = "Mô tả chi tiết yêu cầu gia công (vật liệu, màu sắc, độ phân giải...)")
             @RequestParam("requirements") String requirements,
 

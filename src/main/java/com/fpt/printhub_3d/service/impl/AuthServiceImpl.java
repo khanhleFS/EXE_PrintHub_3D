@@ -6,18 +6,14 @@ import com.fpt.printhub_3d.common.security.CustomUserDetail;
 import com.fpt.printhub_3d.common.security.JwtService;
 import com.fpt.printhub_3d.common.security.TokenBlacklistService;
 import com.fpt.printhub_3d.dto.authen.*;
-import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.entity.OTP;
 import com.fpt.printhub_3d.entity.RefreshTokenRedis;
-import com.fpt.printhub_3d.entity.SystemBlacklist;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.repository.OTPRepository;
 import com.fpt.printhub_3d.repository.RefreshTokenRedisRepository;
-import com.fpt.printhub_3d.repository.SystemBlacklistRepository;
 import com.fpt.printhub_3d.repository.UserRepository;
 import com.fpt.printhub_3d.service.AuthService;
-import com.fpt.printhub_3d.service.KycService;
 import com.fpt.printhub_3d.service.MailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,8 +45,6 @@ public class AuthServiceImpl implements AuthService {
     private final JwtService jwtService;
     private final RefreshTokenRedisRepository refreshTokenRepository;
     private final TokenBlacklistService tokenBlacklistService;
-    private final KycService kycService;
-    private final SystemBlacklistRepository systemBlacklistRepository;
 
     @Override
     @Transactional
@@ -117,27 +111,6 @@ public class AuthServiceImpl implements AuthService {
             throw new ApiException(CommonErrorCode.CONFLICT, "Số điện thoại đã tồn tại");
         }
 
-        String cccdNumber = null;
-        String cccdName = null;
-        String cccdDob = null;
-        String cccdGender = null;
-        String cccdAddress = null;
-        String cccdFrontImageUrl = null;
-
-        if (request.cccdFrontImageUrl() != null && !request.cccdFrontImageUrl().isBlank()) {
-            Map<String, String> extracted = kycService.extractCccdData(request.cccdFrontImageUrl());
-            cccdNumber = extracted.get("cccdNumber");
-            cccdName = extracted.get("fullName");
-            cccdDob = extracted.get("dob");
-            cccdGender = extracted.get("gender");
-            cccdAddress = extracted.get("address");
-            cccdFrontImageUrl = request.cccdFrontImageUrl();
-
-            if (cccdNumber != null && userRepository.existsByCccdNumber(cccdNumber)) {
-                throw new ApiException(CommonErrorCode.CONFLICT, "Số CCCD này đã được sử dụng để đăng ký tài khoản khác.");
-            }
-        }
-
         User user = User.builder()
                 .username(request.username())
                 .fullName(request.fullName())
@@ -147,12 +120,6 @@ public class AuthServiceImpl implements AuthService {
                 .address(request.address())
                 .role(UserRole.USER)
                 .isActive(false)
-                .cccdNumber(cccdNumber)
-                .cccdName(cccdName)
-                .cccdDob(cccdDob)
-                .cccdGender(cccdGender)
-                .cccdAddress(cccdAddress)
-                .cccdFrontImageUrl(cccdFrontImageUrl)
                 .build();
         userRepository.save(user);
 
@@ -376,25 +343,5 @@ public class AuthServiceImpl implements AuthService {
             password.append(charSet.charAt(randomIndex));
         }
         return password.toString();
-    }
-
-    @Override
-    @Transactional
-    public void addCccdToBlacklist(BlacklistRequestDTO request) {
-        if (systemBlacklistRepository.existsByCccdNumber(request.cccdNumber())) {
-            throw new ApiException(CommonErrorCode.CONFLICT, "Số CCCD này đã tồn tại trong danh sách đen.");
-        }
-
-        SystemBlacklist entry = SystemBlacklist.builder()
-                .cccdNumber(request.cccdNumber())
-                .reason(request.reason())
-                .blacklistedAt(Instant.now())
-                .build();
-        systemBlacklistRepository.save(entry);
-
-        userRepository.findByCccdNumber(request.cccdNumber()).ifPresent(user -> {
-            user.setIsActive(false);
-            userRepository.save(user);
-        });
     }
 }

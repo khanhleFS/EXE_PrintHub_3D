@@ -60,7 +60,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         }
 
         ErrorCode ec = CommonErrorCode.VALIDATION_FAILED;
-        ApiResponse<Object> body = buildError(ec, "Validation failed", extractPath(request), errors);
+        String primaryMessage = errors.values().stream().findFirst().orElse("Dữ liệu đầu vào không hợp lệ");
+        ApiResponse<Object> body = buildError(ec, primaryMessage, extractPath(request), errors);
         return new ResponseEntity<>(body, ec.getStatus());
     }
 

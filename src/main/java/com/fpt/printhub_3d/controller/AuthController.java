@@ -4,14 +4,15 @@ import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.AuthAPI;
 import com.fpt.printhub_3d.dto.authen.*;
-import com.fpt.printhub_3d.dto.maker.BlacklistRequestDTO;
 import com.fpt.printhub_3d.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -44,7 +45,7 @@ public class AuthController implements AuthAPI {
     }
 
     @Override
-    public ResponseEntity<ApiResponse<RegisterResponseDTO>> register(RegisterRequestDTO registerRequestDTO) {
+    public ResponseEntity<ApiResponse<RegisterResponseDTO>> register(@Valid @RequestBody RegisterRequestDTO registerRequestDTO) {
         authService.register(registerRequestDTO);
         return ResponseEntity.ok(ApiResponse.<RegisterResponseDTO>builder()
                 .code(200)
@@ -120,17 +121,5 @@ public class AuthController implements AuthAPI {
                 .code(200)
                 .message("Xác thực thành công. Tài khoản đã được kích hoạt.")
                 .build());
-    }
-
-    @Override
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<Void>> addCccdToBlacklist(BlacklistRequestDTO request) {
-        authService.addCccdToBlacklist(request);
-        return ResponseEntity.ok(
-                ApiResponse.<Void>builder()
-                        .code(200)
-                        .message("Đã thêm số CCCD vào danh sách đen và vô hiệu hóa tài khoản liên quan.")
-                        .build()
-        );
     }
 }

@@ -2,7 +2,6 @@ package com.fpt.printhub_3d.controller.api;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.dto.authen.*;
-import com.fpt.printhub_3d.dto.maker.*;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -84,13 +83,4 @@ public interface AuthAPI {
     @PostMapping("/verify-register-otp")
     ResponseEntity<ApiResponse<Void>> verifyRegisterOtp(
             @Valid @RequestBody VerifyOTPRequestDTO request);
-
-    @Operation(
-            summary = "Add a CCCD number to the system blacklist",
-            description = "Admin manually bans a CCCD number from being registered or applied in the system.",
-            security = @SecurityRequirement(name = "Bearer Authentication")
-    )
-    @PostMapping("/admin/blacklist")
-    ResponseEntity<ApiResponse<Void>> addCccdToBlacklist(
-            @Valid @RequestBody BlacklistRequestDTO request);
 }

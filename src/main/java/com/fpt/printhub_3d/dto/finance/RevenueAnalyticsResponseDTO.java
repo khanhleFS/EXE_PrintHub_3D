@@ -10,7 +10,6 @@ public record RevenueAnalyticsResponseDTO(
         Instant from,
         Instant to,
         BigDecimal orderCommissionRevenue,
-        BigDecimal makerSubscriptionRevenue,
         BigDecimal customerSubscriptionRevenue,
         BigDecimal totalRevenue
 ) {

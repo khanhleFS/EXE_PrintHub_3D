@@ -55,9 +55,6 @@ public record RegisterRequestDTO(
         String address,
 
         @Schema(example = "false")
-        Boolean isActive,
-
-        @Schema(example = "https://example.com/cccd.jpg")
-        String cccdFrontImageUrl
+        Boolean isActive
 ){
 }

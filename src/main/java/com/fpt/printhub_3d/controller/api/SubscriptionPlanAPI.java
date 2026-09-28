@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import java.util.UUID;
 
 @RequestMapping("/api/admin/subscriptions")
-@Tag(name = "Subscription Admin APIs", description = "APIs for managing Customer and Maker subscription plans")
+@Tag(name = "Subscription Admin APIs", description = "APIs for managing Customer subscription plans")
 public interface SubscriptionPlanAPI {
 
     @Operation(summary = "Create Customer subscription plan", security = @SecurityRequirement(name = "Bearer Authentication"))
@@ -35,19 +35,4 @@ public interface SubscriptionPlanAPI {
     @Operation(summary = "Delete Customer subscription plan", security = @SecurityRequirement(name = "Bearer Authentication"))
     @DeleteMapping("/customer/{id}")
     ResponseEntity<ApiResponse<Void>> deleteCustomerPlan(@PathVariable UUID id);
-
-    @Operation(summary = "Create Maker marketing subscription plan", security = @SecurityRequirement(name = "Bearer Authentication"))
-    @PostMapping("/maker")
-    ResponseEntity<ApiResponse<SubscriptionPlanResponseDTO>> createMakerPlan(
-            @Valid @RequestBody SubscriptionPlanRequestDTO request);
-
-    @Operation(summary = "Update Maker marketing subscription plan", security = @SecurityRequirement(name = "Bearer Authentication"))
-    @PutMapping("/maker/{id}")
-    ResponseEntity<ApiResponse<SubscriptionPlanResponseDTO>> updateMakerPlan(
-            @PathVariable UUID id,
-            @Valid @RequestBody SubscriptionPlanRequestDTO request);
-
-    @Operation(summary = "Delete Maker marketing subscription plan", security = @SecurityRequirement(name = "Bearer Authentication"))
-    @DeleteMapping("/maker/{id}")
-    ResponseEntity<ApiResponse<Void>> deleteMakerPlan(@PathVariable UUID id);
 }

@@ -44,17 +44,14 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final NotificationService notificationService;
 
     @Override
-    public CustomOrderResponseDTO createRequest(UUID makerId, String requirements, MultipartFile file, User buyer) {
-        log.info("Buyer [{}] đang tạo yêu cầu in custom đến Maker [{}]", buyer.getId(), makerId);
-
-        User maker = userRepository.findById(makerId)
-                .orElseThrow(() -> new ApiException(CustomPrintErrorCode.MAKER_NOT_FOUND));
+    public CustomOrderResponseDTO createRequest(String requirements, MultipartFile file, User buyer) {
+        log.info("Buyer [{}] đang tạo yêu cầu in custom", buyer.getId());
 
         String attachmentUrl = fileStorageService.storeFile(file);
 
         CustomOrder customOrder = new CustomOrder();
         customOrder.setBuyer(buyer);
-        customOrder.setMaker(maker);
+        customOrder.setProcessedBy(null);
         customOrder.setRequirements(requirements);
         customOrder.setAttachmentUrl(attachmentUrl);
         customOrder.setStatus(CustomOrderStatus.REQUESTED.name());
@@ -68,8 +65,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .id(saved.getId())
                 .buyerId(saved.getBuyer().getId())
                 .buyerName(saved.getBuyer().getFullName())
-                .makerId(saved.getMaker().getId())
-                .makerName(saved.getMaker().getFullName())
+                .processedById(saved.getProcessedBy() != null ? saved.getProcessedBy().getId() : null)
+                .processedByName(saved.getProcessedBy() != null ? saved.getProcessedBy().getFullName() : null)
                 .requirements(saved.getRequirements())
                 .attachmentUrl(saved.getAttachmentUrl())
                 .quotedPrice(saved.getQuotedPrice())
@@ -85,8 +82,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .id(o.getId())
                 .buyerId(o.getBuyer().getId())
                 .buyerName(o.getBuyer().getFullName())
-                .makerId(o.getMaker() != null ? o.getMaker().getId() : null)
-                .makerName(o.getMaker() != null ? o.getMaker().getFullName() : null)
+                .processedById(o.getProcessedBy() != null ? o.getProcessedBy().getId() : null)
+                .processedByName(o.getProcessedBy() != null ? o.getProcessedBy().getFullName() : null)
                 .requirements(o.getRequirements())
                 .quantity(o.getQuantity() != null ? o.getQuantity() : 1)
                 .shippingAddress(o.getShippingAddress())
@@ -152,7 +149,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     }
 
     @Override
-    public void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User maker) {
+    public void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User admin) {
         CustomOrder order = customOrderRepository.findLockedById(id)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in"));
 
@@ -161,7 +158,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         }
 
         order.setQuotedPrice(request.price());
-        order.setMaker(maker);
+        order.setProcessedBy(admin);
         order.setStatus("QUOTED");
         order.setUpdatedAt(Instant.now());
         customOrderRepository.save(order);
@@ -186,7 +183,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ người đặt mới có quyền duyệt báo giá");
             }
             if (!"QUOTED".equals(current)) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Yêu cầu in chưa có báo giá từ maker");
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Yêu cầu in chưa có báo giá từ xưởng/hệ thống");
             }
             String method = request.paymentMethod();
             if (method == null || !Set.of("COD", "PAYOS").contains(method.toUpperCase())) {

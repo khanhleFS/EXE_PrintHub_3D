@@ -8,10 +8,10 @@ import java.util.List;
 import java.util.UUID;
 
 public interface CustomOrderService {
-    CustomOrderResponseDTO createRequest(UUID makerId, String requirements, MultipartFile file, User buyer);
+    CustomOrderResponseDTO createRequest(String requirements, MultipartFile file, User buyer);
     List<CustomOrderDetailResponseDTO> getMyCustomOrders(User user);
     List<CustomOrderDetailResponseDTO> getAllCustomOrders();
     CustomOrderDetailResponseDTO createCustomOrder(User user, CustomOrderCreateRequestDTO request);
-    void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User maker);
+    void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User admin);
     void updateCustomOrderStatus(UUID id, CustomOrderStatusRequestDTO request, User user);
 }
