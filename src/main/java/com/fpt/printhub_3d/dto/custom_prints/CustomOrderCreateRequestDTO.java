@@ -45,5 +45,8 @@ public record CustomOrderCreateRequestDTO(
         String color,
 
         @Size(max = 50)
-        String fontStyle
+        String fontStyle,
+
+        @Size(max = 20)
+        String paymentMethod
 ) {}

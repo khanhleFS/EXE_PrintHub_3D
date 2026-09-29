@@ -150,6 +150,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         order.setCustomStudentId(request.customStudentId());
         order.setColor(request.color());
         order.setFontStyle(request.fontStyle());
+        order.setPaymentMethod(request.paymentMethod());
         order.setStatus("REQUESTED");
         order.setCreatedAt(Instant.now());
         order.setUpdatedAt(Instant.now());
