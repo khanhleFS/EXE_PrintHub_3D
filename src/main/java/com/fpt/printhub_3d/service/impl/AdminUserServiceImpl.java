@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -31,12 +32,15 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Transactional(readOnly = true)
     public List<AdminUserResponseDTO> getAllUsers() {
         return userRepository.findAll().stream()
-                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+                .sorted(Comparator.comparing(
+                        User::getCreatedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())
+                ))
                 .map(u -> AdminUserResponseDTO.builder()
                         .id(u.getId())
                         .name(u.getFullName())
                         .email(u.getEmail())
-                        .role(u.getRole().name())
+                        .role(u.getRole() != null ? u.getRole().name() : "USER")
                         .isLocked(!Boolean.TRUE.equals(u.getIsActive()))
                         .createdAt(u.getCreatedAt())
                         .build())

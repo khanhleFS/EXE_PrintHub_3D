@@ -212,13 +212,14 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             if (user.getRole() != UserRole.ADMIN) {
                 throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có thể chuyển trạng thái sản xuất");
             }
-            String expected = switch (current) {
-                case "ACCEPTED", "PAID" -> "PRINTING";
-                case "PRINTING" -> "SHIPPING";
-                case "SHIPPING" -> "COMPLETED";
-                default -> "";
+            boolean isValidTransition = switch (current) {
+                case "ACCEPTED", "PAID" -> "PREPARING".equals(next) || "PRINTING".equals(next);
+                case "PREPARING" -> "PRINTING".equals(next);
+                case "PRINTING" -> "SHIPPING".equals(next);
+                case "SHIPPING" -> "COMPLETED".equals(next);
+                default -> false;
             };
-            if (!expected.equals(next)) {
+            if (!isValidTransition) {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chuyển trạng thái không hợp lệ từ " + current + " sang " + next);
             }
             if ("COMPLETED".equals(next) && "COD".equals(order.getPaymentMethod())) {

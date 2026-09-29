@@ -33,4 +33,12 @@ public interface FinanceAPI {
     ResponseEntity<ApiResponse<RevenueAnalyticsResponseDTO>> getRevenueAnalytics(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to);
+
+    @Operation(
+            summary = "Get platform finance summary",
+            description = "Admin xem tổng quan tài chính, doanh số GMV, chiết khấu và giao dịch thật.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/api/admin/finance/summary")
+    ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO>> getFinanceSummary();
 }

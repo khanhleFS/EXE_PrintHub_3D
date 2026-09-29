@@ -381,15 +381,15 @@ public class OrderServiceImpl implements OrderService {
             if (currentUser.getRole() != UserRole.ADMIN) {
                 throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có thể chuyển tiến trình đơn");
             }
-            String expected = switch (currentStatus) {
-                case "PAID" -> "PRINTING";
-                case "PENDING" -> "PRINTING";
-                case "PRINTING" -> "SHIPPING";
-                case "SHIPPING" -> "COMPLETED";
-                default -> "";
+            boolean isValidTransition = switch (currentStatus) {
+                case "PAID", "PENDING" -> "PREPARING".equals(nextStatus) || "PRINTING".equals(nextStatus);
+                case "PREPARING" -> "PRINTING".equals(nextStatus);
+                case "PRINTING" -> "SHIPPING".equals(nextStatus);
+                case "SHIPPING" -> "COMPLETED".equals(nextStatus);
+                default -> false;
             };
 
-            if (!expected.equals(nextStatus)) {
+            if (!isValidTransition) {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chuyển trạng thái đơn không hợp lệ từ " + currentStatus + " sang " + nextStatus);
             }
             if ("COMPLETED".equals(nextStatus) && payment != null && "COD".equals(payment.getGateway())) {

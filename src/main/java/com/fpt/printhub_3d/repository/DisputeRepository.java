@@ -13,4 +13,8 @@ public interface DisputeRepository extends JpaRepository<Dispute, UUID> {
     java.util.Optional<Dispute> findLockedById(@org.springframework.data.repository.query.Param("id") java.util.UUID id);
 
     boolean existsByOrderId(UUID orderId);
+
+    long countByStatus(String status);
+
+    long countByStatusIn(java.util.Collection<String> statuses);
 }

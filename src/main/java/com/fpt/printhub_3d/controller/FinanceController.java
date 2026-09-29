@@ -43,4 +43,15 @@ public class FinanceController implements FinanceAPI {
                 .result(response)
                 .build());
     }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO>> getFinanceSummary() {
+        var response = financeService.getFinanceSummary();
+        return ResponseEntity.ok(ApiResponse.<com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO>builder()
+                .code(200)
+                .message("Lấy tổng quan tài chính sàn thành công")
+                .result(response)
+                .build());
+    }
 }
