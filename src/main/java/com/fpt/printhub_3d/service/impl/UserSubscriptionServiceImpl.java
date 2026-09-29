@@ -94,7 +94,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             PointWallet newWallet = PointWallet.builder()
                     .userId(userId)
                     .user(user)
-                    .balance(user.getRewardPoints() == null ? 0 : user.getRewardPoints())
+                    .balance(0)
                     .updatedAt(LocalDateTime.now())
                     .build();
             return pointWalletRepository.save(newWallet);
@@ -105,8 +105,6 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
         }
 
         wallet.setBalance(wallet.getBalance() - requiredPoints);
-        user.setRewardPoints(wallet.getBalance());
-        userRepository.save(user);
         wallet.setUpdatedAt(LocalDateTime.now());
         pointWalletRepository.save(wallet);
 

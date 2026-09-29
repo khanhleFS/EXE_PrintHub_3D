@@ -29,4 +29,17 @@ public class UploadController {
                 .result(url)
                 .build());
     }
+
+    @Operation(summary = "Upload raw 3D model to Cloudinary", description = "Tải file 3D (STL, OBJ, STEP, 3MF) lên Cloudinary và nhận về URL công khai.")
+    @PostMapping(value = "/raw", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<String>> uploadRawFile(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "folder", required = false, defaultValue = "printhub3d/3d_models") String folder) {
+        String url = cloudinaryService.uploadRawFile(file, folder);
+        return ResponseEntity.ok(ApiResponse.<String>builder()
+                .code(200)
+                .message("Tải file 3D lên Cloudinary thành công")
+                .result(url)
+                .build());
+    }
 }

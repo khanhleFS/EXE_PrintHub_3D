@@ -227,12 +227,8 @@ public class OrderServiceImpl implements OrderService {
                 .divideToIntegralValue(REWARD_POINT_UNIT)
                 .intValue();
 
-        int currentPoints = buyer.getRewardPoints() == null ? 0 : buyer.getRewardPoints();
-        buyer.setRewardPoints(currentPoints + earnedPoints);
-        userRepository.save(buyer);
-
-        var wallet = pointWalletRepository.findById(buyer.getId()).orElseGet(() ->
-                PointWallet.builder().userId(buyer.getId()).user(buyer).balance(currentPoints).build());
+        PointWallet wallet = pointWalletRepository.findById(buyer.getId()).orElseGet(() ->
+                PointWallet.builder().userId(buyer.getId()).user(buyer).balance(0).build());
         wallet.setBalance(wallet.getBalance() + earnedPoints);
         wallet.setUpdatedAt(java.time.LocalDateTime.now());
         pointWalletRepository.save(wallet);
@@ -252,7 +248,7 @@ public class OrderServiceImpl implements OrderService {
                 .customerId(buyer.getId())
                 .customerName(buyer.getFullName())
                 .rewardPointsEarned(earnedPoints)
-                .totalRewardPoints(buyer.getRewardPoints())
+                .totalRewardPoints(wallet.getBalance())
                 .alreadyProcessed(false)
                 .build();
     }

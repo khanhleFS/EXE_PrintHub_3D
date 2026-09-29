@@ -14,6 +14,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -23,6 +24,17 @@ import java.util.UUID;
 public class SubscriptionPlanController implements SubscriptionPlanAPI {
 
     private final SubscriptionPlanService subscriptionPlanService;
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<SubscriptionPlanResponseDTO>>> getAllPlansForAdmin() {
+        List<SubscriptionPlanResponseDTO> plans = subscriptionPlanService.getAllPlansForAdmin();
+        return ResponseEntity.ok(ApiResponse.<java.util.List<SubscriptionPlanResponseDTO>>builder()
+                .code(200)
+                .message("Lấy toàn bộ danh sách gói hội viên thành công")
+                .result(plans)
+                .build());
+    }
 
     @Override
     @PreAuthorize("hasRole('ADMIN')")

@@ -15,6 +15,7 @@ import com.fpt.printhub_3d.repository.CustomOrderRepository;
 import com.fpt.printhub_3d.repository.FileAssetRepository;
 import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.repository.UserRepository;
+import com.fpt.printhub_3d.service.CloudinaryService;
 import com.fpt.printhub_3d.service.CustomOrderService;
 import com.fpt.printhub_3d.service.FileStorageService;
 import com.fpt.printhub_3d.service.NotificationService;
@@ -42,12 +43,13 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final UserRepository userRepository;
     private final FileStorageService fileStorageService;
     private final NotificationService notificationService;
+    private final CloudinaryService cloudinaryService;
 
     @Override
     public CustomOrderResponseDTO createRequest(String requirements, MultipartFile file, User buyer) {
         log.info("Buyer [{}] đang tạo yêu cầu in custom", buyer.getId());
 
-        String attachmentUrl = fileStorageService.storeFile(file);
+        String attachmentUrl = cloudinaryService.uploadRawFile(file, "printhub3d/custom_prints");
 
         CustomOrder customOrder = new CustomOrder();
         customOrder.setBuyer(buyer);
@@ -122,16 +124,24 @@ public class CustomOrderServiceImpl implements CustomOrderService {
 
     @Override
     public CustomOrderDetailResponseDTO createCustomOrder(User user, CustomOrderCreateRequestDTO request) {
-        FileAsset file = fileAssetRepository.findByIdAndDeletedFalse(request.fileId())
-                .orElseThrow(() -> new ApiException(VaultErrorCode.FILE_NOT_FOUND, "Không tìm thấy file thiết kế"));
+        String attachmentUrl = null;
+        if (request.attachmentUrl() != null && !request.attachmentUrl().isBlank()) {
+            attachmentUrl = request.attachmentUrl();
+        } else if (request.fileId() != null) {
+            FileAsset file = fileAssetRepository.findByIdAndDeletedFalse(request.fileId())
+                    .orElseThrow(() -> new ApiException(VaultErrorCode.FILE_NOT_FOUND, "Không tìm thấy file thiết kế"));
 
-        if (!file.getOwner().getId().equals(user.getId()) && user.getRole() != UserRole.ADMIN) {
-            throw new ApiException(VaultErrorCode.FORBIDDEN_FILE_ACCESS);
+            if (!file.getOwner().getId().equals(user.getId()) && user.getRole() != UserRole.ADMIN) {
+                throw new ApiException(VaultErrorCode.FORBIDDEN_FILE_ACCESS);
+            }
+            attachmentUrl = "/api/vault/files/" + file.getId() + "/download";
+        } else {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Vui lòng đính kèm file 3D (attachmentUrl hoặc fileId)");
         }
 
         CustomOrder order = new CustomOrder();
         order.setBuyer(user);
-        order.setAttachmentUrl("/api/vault/files/" + file.getId() + "/download");
+        order.setAttachmentUrl(attachmentUrl);
         order.setRequirements(request.requirements());
         order.setQuantity(request.quantity());
         order.setShippingAddress(request.shippingAddress());

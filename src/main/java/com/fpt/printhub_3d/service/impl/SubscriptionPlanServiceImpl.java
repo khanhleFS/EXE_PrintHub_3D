@@ -72,6 +72,14 @@ public class SubscriptionPlanServiceImpl implements SubscriptionPlanService {
         log.info("Xóa gói subscription [{}] loại [{}]", id, type);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public java.util.List<SubscriptionPlanResponseDTO> getAllPlansForAdmin() {
+        return subscriptionPlanRepository.findAll().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
     private SubscriptionPlan findPlanByIdAndType(UUID id, SubscriptionType type) {
         SubscriptionPlan plan = subscriptionPlanRepository.findById(id)
                 .orElseThrow(() -> new ApiException(SubscriptionErrorCode.PLAN_NOT_FOUND));

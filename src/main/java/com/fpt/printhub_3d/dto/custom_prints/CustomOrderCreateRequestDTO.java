@@ -12,9 +12,11 @@ import java.util.UUID;
 @Builder
 @Schema(description = "Yêu cầu đặt in custom 3D từ file đã tải lên")
 public record CustomOrderCreateRequestDTO(
-        @NotNull(message = "ID tệp file không được để trống")
-        @Schema(description = "ID tệp trong File Vault")
+        @Schema(description = "ID tệp trong File Vault (nếu có)")
         UUID fileId,
+
+        @Schema(description = "URL CDN tệp 3D từ Cloudinary (nếu upload trực tiếp)")
+        String attachmentUrl,
 
         @NotBlank(message = "Mô tả yêu cầu không được để trống")
         @Size(max = 4000, message = "Yêu cầu tối đa 4000 ký tự")

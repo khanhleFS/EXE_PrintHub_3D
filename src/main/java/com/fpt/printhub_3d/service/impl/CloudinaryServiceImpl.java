@@ -36,4 +36,27 @@ public class CloudinaryServiceImpl implements CloudinaryService {
             throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Lỗi khi upload file lên Cloudinary: " + e.getMessage());
         }
     }
+
+    @Override
+    public String uploadRawFile(MultipartFile file, String folder) {
+        if (file == null || file.isEmpty()) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "File 3D không được để trống");
+        }
+        try {
+            log.info("Bắt đầu upload file raw lên Cloudinary: {}, folder: {}", file.getOriginalFilename(), folder);
+            Map<?, ?> params = ObjectUtils.asMap(
+                    "resource_type", "raw",
+                    "folder", folder != null && !folder.isBlank() ? folder : "printhub3d/3d_models",
+                    "use_filename", true,
+                    "unique_filename", true
+            );
+            Map<?, ?> uploadResult = cloudinary.uploader().upload(file.getBytes(), params);
+            String url = (String) uploadResult.get("secure_url");
+            log.info("Upload file raw thành công lên Cloudinary, URL: {}", url);
+            return url;
+        } catch (IOException e) {
+            log.error("Lỗi khi tải file 3D raw lên Cloudinary", e);
+            throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Không thể tải file 3D lên hệ thống đám mây: " + e.getMessage());
+        }
+    }
 }

@@ -12,4 +12,6 @@ public interface SubscriptionPlanService {
     SubscriptionPlanResponseDTO updatePlan(SubscriptionType type, UUID id, SubscriptionPlanRequestDTO request);
 
     void deletePlan(SubscriptionType type, UUID id);
+
+    java.util.List<SubscriptionPlanResponseDTO> getAllPlansForAdmin();
 }
