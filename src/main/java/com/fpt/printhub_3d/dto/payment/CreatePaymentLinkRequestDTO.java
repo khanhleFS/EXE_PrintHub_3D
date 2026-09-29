@@ -26,7 +26,13 @@ public record CreatePaymentLinkRequestDTO(
         BigDecimal customAmount,
 
         @Schema(description = "Tùy chọn thanh toán: DEPOSIT (cọc 50%) hoặc FULL (trả trước 100%)", example = "DEPOSIT")
-        String paymentOption
+        String paymentOption,
+
+        @Schema(description = "URL redirect khi thanh toán thành công", example = "https://exe202-printhub3d-fe.vercel.app/payment-result")
+        String returnUrl,
+
+        @Schema(description = "URL redirect khi hủy thanh toán", example = "https://exe202-printhub3d-fe.vercel.app/payment-result?cancel=true")
+        String cancelUrl
 ) {
 }
 
