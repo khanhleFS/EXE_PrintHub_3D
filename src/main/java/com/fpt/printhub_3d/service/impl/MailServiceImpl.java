@@ -23,7 +23,7 @@ public class MailServiceImpl implements MailService {
     @Value("${resend.api.key:}")
     private String apiKey;
 
-    @Value("${resend.from.email:onboarding@resend.dev}")
+    @Value("${resend.from.email:onboarding@printhub3d.id.vn}")
     private String fromEmail;
 
     private static final String RESEND_API_URL = "https://api.resend.com/emails";
