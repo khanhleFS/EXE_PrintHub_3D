@@ -39,5 +39,6 @@ public record ProfileDTO(
         java.util.UUID id,
         com.fpt.printhub_3d.entity.Enumeration.UserRole role,
         String studentId,
-        String university
+        String university,
+        Integer rewardPoints
 ) {}

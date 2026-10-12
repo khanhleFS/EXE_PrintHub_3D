@@ -21,7 +21,10 @@ import java.util.Set;
 public class StoreSettingServiceImpl implements StoreSettingService {
 
     private final StoreSettingRepository storeSettingRepository;
-    private static final Set<String> ALLOWED_KEYS = Set.of("storeName", "supportEmail", "supportPhone");
+    private static final Set<String> ALLOWED_KEYS = Set.of(
+            "storeName", "supportEmail", "supportPhone",
+            "shippingFee", "commissionRate", "bannerText", "warrantyMonths"
+    );
 
     @Override
     @Transactional(readOnly = true)
@@ -39,8 +42,8 @@ public class StoreSettingServiceImpl implements StoreSettingService {
             if (!ALLOWED_KEYS.contains(entry.getKey())) {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Cài đặt không được hỗ trợ: " + entry.getKey());
             }
-            if (entry.getValue() != null && entry.getValue().length() > 200) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Giá trị cài đặt quá dài (tối đa 200 ký tự)");
+            if (entry.getValue() != null && entry.getValue().length() > 500) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Giá trị cài đặt quá dài (tối đa 500 ký tự)");
             }
             StoreSetting s = storeSettingRepository.findById(entry.getKey()).orElseGet(() -> {
                 StoreSetting newS = new StoreSetting();

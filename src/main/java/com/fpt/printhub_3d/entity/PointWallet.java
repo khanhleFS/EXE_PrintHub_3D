@@ -2,6 +2,8 @@ package com.fpt.printhub_3d.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.springframework.data.domain.Persistable;
+
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -12,7 +14,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class PointWallet {
+public class PointWallet implements Persistable<UUID> {
     @Id
     @Column(name = "user_id")
     private UUID userId;
@@ -28,4 +30,24 @@ public class PointWallet {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Transient
+    @Builder.Default
+    private boolean isNew = true;
+
+    @Override
+    public UUID getId() {
+        return userId;
+    }
+
+    @Override
+    public boolean isNew() {
+        return isNew;
+    }
+
+    @PostLoad
+    @PostPersist
+    void markNotNew() {
+        this.isNew = false;
+    }
 }

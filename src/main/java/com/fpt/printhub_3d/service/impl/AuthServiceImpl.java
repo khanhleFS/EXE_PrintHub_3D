@@ -281,6 +281,7 @@ public class AuthServiceImpl implements AuthService {
                 .email(user.getEmail())
                 .phone(user.getPhone())
                 .address(user.getAddress())
+                .rewardPoints(user.getRewardPoints())
                 .build();
     }
 

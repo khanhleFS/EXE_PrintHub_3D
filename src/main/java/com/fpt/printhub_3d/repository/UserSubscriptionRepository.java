@@ -20,4 +20,9 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
     Optional<UserSubscription> findActiveSubscriptionByUserAndType(
             @Param("user") User user, 
             @Param("type") SubscriptionType type);
+
+    @Query("SELECT us FROM UserSubscription us WHERE us.user = :user " +
+           "AND us.isActive = true " +
+           "AND us.endDate > CURRENT_TIMESTAMP ORDER BY us.endDate DESC")
+    java.util.List<UserSubscription> findActiveSubscriptionsByUser(@Param("user") User user);
 }

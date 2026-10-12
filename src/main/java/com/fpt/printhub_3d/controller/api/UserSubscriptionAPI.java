@@ -45,4 +45,12 @@ public interface UserSubscriptionAPI {
     @PostMapping("/api/admin/subscriptions/gift")
     ResponseEntity<ApiResponse<UserSubscriptionResponseDTO>> giftSubscription(
             @Valid @RequestBody GiftSubscriptionRequestDTO request);
+
+    @Operation(
+            summary = "Get current user subscription summary and points",
+            description = "Lấy điểm thưởng và danh sách các gói dịch vụ đang kích hoạt của người dùng hiện tại.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/api/subscriptions/me")
+    ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO>> getMySubscriptionSummary();
 }

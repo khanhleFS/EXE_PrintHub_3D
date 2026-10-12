@@ -27,7 +27,7 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
     private final UserSubscriptionService userSubscriptionService;
 
     @Override
-    @PreAuthorize("hasRole('USER')")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<List<SubscriptionPlanResponseDTO>>> getAvailablePlans() {
         UUID userId = SecurityUtils.getCurrentUser().getId();
 
@@ -43,7 +43,7 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
     }
 
     @Override
-    @PreAuthorize("hasRole('USER')")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<UserSubscriptionResponseDTO>> redeemSubscription(UUID planId) {
         UUID userId = SecurityUtils.getCurrentUser().getId();
         
@@ -68,6 +68,22 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
                         .code(201)
                         .message("Phát gói dịch vụ cho người dùng thành công.")
                         .result(response)
+                        .build()
+        );
+    }
+
+    @Override
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO>> getMySubscriptionSummary() {
+        UUID userId = SecurityUtils.getCurrentUser().getId();
+        com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO summary =
+                userSubscriptionService.getUserSubscriptionSummary(userId);
+
+        return ResponseEntity.ok(
+                ApiResponse.<com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO>builder()
+                        .code(200)
+                        .message("Lấy thông tin gói hội viên thành công.")
+                        .result(summary)
                         .build()
         );
     }

@@ -5,6 +5,7 @@ import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPlanResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.UserSubscriptionResponseDTO;
+import com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO;
 import com.fpt.printhub_3d.entity.*;
 import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
 import com.fpt.printhub_3d.entity.Enumeration.SubscriptionType;
@@ -17,7 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,8 +35,8 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     private final PointWalletRepository pointWalletRepository;
     private final PointTransactionRepository pointTransactionRepository;
 
-    @Override
     @Transactional
+    @Override
     public List<SubscriptionPlanResponseDTO> getAvailablePlansForUser(UUID userId) {
         log.info("Lấy danh sách gói phù hợp cho User [{}]", userId);
 
@@ -44,7 +44,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng."));
 
         SubscriptionType planType;
-        if (user.getRole() == UserRole.USER) {
+        if (user.getRole() == UserRole.USER || user.getRole() == UserRole.ADMIN) {
             planType = SubscriptionType.CUSTOMER;
         } else {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Loại người dùng không hợp lệ.");
@@ -64,6 +64,25 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                         .updatedAt(plan.getUpdatedAt())
                         .build())
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserSubscriptionSummaryDTO getUserSubscriptionSummary(UUID userId) {
+        log.info("Lấy thông tin gói hội viên và điểm thưởng cho User [{}]", userId);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng."));
+
+        List<UserSubscriptionResponseDTO> activeSubs = userSubscriptionRepository
+                .findActiveSubscriptionsByUser(user)
+                .stream()
+                .map(this::toResponseDTO)
+                .collect(Collectors.toList());
+
+        return UserSubscriptionSummaryDTO.builder()
+                .points(user.getRewardPoints())
+                .subscriptions(activeSubs)
+                .build();
     }
 
     @Override
@@ -95,10 +114,13 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                     .userId(userId)
                     .user(user)
                     .balance(0)
+                    .isNew(true)
                     .updatedAt(LocalDateTime.now())
                     .build();
+            user.setPointWallet(newWallet);
             return pointWalletRepository.save(newWallet);
         });
+        user.setPointWallet(wallet);
 
         if (wallet.getBalance() < requiredPoints) {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Số dư điểm thưởng không đủ. Cần: " + requiredPoints + ", Hiện có: " + wallet.getBalance());

@@ -227,11 +227,20 @@ public class OrderServiceImpl implements OrderService {
                 .divideToIntegralValue(REWARD_POINT_UNIT)
                 .intValue();
 
-        PointWallet wallet = pointWalletRepository.findById(buyer.getId()).orElseGet(() ->
-                PointWallet.builder().userId(buyer.getId()).user(buyer).balance(0).build());
+        PointWallet wallet = pointWalletRepository.findById(buyer.getId()).orElseGet(() -> {
+            PointWallet newWallet = PointWallet.builder()
+                    .userId(buyer.getId())
+                    .user(buyer)
+                    .balance(0)
+                    .isNew(true)
+                    .build();
+            buyer.setPointWallet(newWallet);
+            return newWallet;
+        });
         wallet.setBalance(wallet.getBalance() + earnedPoints);
         wallet.setUpdatedAt(java.time.LocalDateTime.now());
-        pointWalletRepository.save(wallet);
+        wallet = pointWalletRepository.save(wallet);
+        buyer.setPointWallet(wallet);
 
         pointTransactionRepository.save(PointTransaction.builder()
                 .pointWallet(wallet).amount(earnedPoints)
