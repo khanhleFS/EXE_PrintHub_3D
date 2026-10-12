@@ -65,6 +65,16 @@ public class Product {
     private String status;
 
     @NotNull
+    @ColumnDefault("0.0")
+    @Column(name = "average_rating", nullable = false)
+    private Double averageRating = 0.0;
+
+    @NotNull
+    @ColumnDefault("0")
+    @Column(name = "review_count", nullable = false)
+    private Integer reviewCount = 0;
+
+    @NotNull
     @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;

@@ -50,6 +50,12 @@ public record ProductResponseDTO(
         @Schema(description = "Danh sách tất cả ảnh sản phẩm")
         List<String> imageUrls,
 
+        @Schema(description = "Điểm đánh giá trung bình (1.0 - 5.0)", example = "4.8")
+        Double averageRating,
+
+        @Schema(description = "Tổng số lượt đánh giá", example = "24")
+        Integer reviewCount,
+
         @Schema(description = "Thời gian tạo")
         Instant createdAt,
 

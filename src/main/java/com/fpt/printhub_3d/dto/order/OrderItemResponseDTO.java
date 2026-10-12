@@ -31,6 +31,12 @@ public record OrderItemResponseDTO(
         String color,
 
         @Schema(description = "Nội dung khắc chữ lên thước", example = "SV12345 - Nguyễn Văn A")
-        String engravingText
+        String engravingText,
+
+        @Schema(description = "ID đánh giá đã tạo nếu có")
+        Long reviewId,
+
+        @Schema(description = "Số sao đánh giá nếu đã đánh giá")
+        Short reviewRating
 ) {
 }

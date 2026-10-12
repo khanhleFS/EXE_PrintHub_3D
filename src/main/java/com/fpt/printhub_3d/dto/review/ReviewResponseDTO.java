@@ -11,8 +11,6 @@ public record ReviewResponseDTO(
         UUID orderId,
         UUID reviewerId,
         String reviewerName,
-        UUID sellerId,
-        String sellerName,
         Short rating,
         String comment,
         Instant createdAt

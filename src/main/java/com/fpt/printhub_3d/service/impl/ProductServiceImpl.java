@@ -46,7 +46,7 @@ public class ProductServiceImpl implements ProductService {
     private final UserRepository userRepository;
     private final CategoryRepository categoryRepository;
 
-    private static final Set<String> ALLOWED_SORT_FIELDS = Set.of("price", "createdAt", "title");
+    private static final Set<String> ALLOWED_SORT_FIELDS = Set.of("price", "createdAt", "title", "averageRating");
     private static final int DEFAULT_PAGE_SIZE = 12;
     private static final int MAX_PAGE_SIZE = 100;
 
@@ -244,6 +244,8 @@ public class ProductServiceImpl implements ProductService {
                 .status(product.getStatus())
                 .primaryImageUrl(primaryImageUrl)
                 .imageUrls(imageUrls)
+                .averageRating(product.getAverageRating() != null ? product.getAverageRating() : 0.0)
+                .reviewCount(product.getReviewCount() != null ? product.getReviewCount() : 0)
                 .createdAt(product.getCreatedAt())
                 .updatedAt(product.getUpdatedAt())
                 .build();

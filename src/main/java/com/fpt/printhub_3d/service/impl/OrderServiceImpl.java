@@ -34,6 +34,7 @@ public class OrderServiceImpl implements OrderService {
     private final PointWalletRepository pointWalletRepository;
     private final PointTransactionRepository pointTransactionRepository;
     private final NotificationService notificationService;
+    private final ReviewRepository reviewRepository;
 
     private static final BigDecimal COMMISSION_RATE = new BigDecimal("0.05");
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
@@ -276,17 +277,27 @@ public class OrderServiceImpl implements OrderService {
                     .build();
         }
 
+        List<Review> reviews = reviewRepository.findByOrderId(order.getId());
+        Map<Long, Review> reviewByItem = reviews.stream()
+                .filter(r -> r.getOrderItem() != null)
+                .collect(Collectors.toMap(r -> r.getOrderItem().getId(), r -> r, (r1, r2) -> r1));
+
         List<OrderItemResponseDTO> itemDTOs = items != null ? items.stream()
-                .map(item -> OrderItemResponseDTO.builder()
-                        .id(item.getId())
-                        .productId(item.getProduct().getId())
-                        .productTitle(item.getProduct().getTitle())
-                        .quantity(item.getQuantity())
-                        .unitPrice(item.getUnitPrice())
-                        .subTotal(item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
-                        .color(item.getColor())
-                        .engravingText(item.getEngravingText())
-                        .build())
+                .map(item -> {
+                    Review itemReview = reviewByItem.get(item.getId());
+                    return OrderItemResponseDTO.builder()
+                            .id(item.getId())
+                            .productId(item.getProduct().getId())
+                            .productTitle(item.getProduct().getTitle())
+                            .quantity(item.getQuantity())
+                            .unitPrice(item.getUnitPrice())
+                            .subTotal(item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
+                            .color(item.getColor())
+                            .engravingText(item.getEngravingText())
+                            .reviewId(itemReview != null ? itemReview.getId() : null)
+                            .reviewRating(itemReview != null ? itemReview.getRating() : null)
+                            .build();
+                })
                 .toList() : List.of();
 
         return OrderResponseDTO.builder()
