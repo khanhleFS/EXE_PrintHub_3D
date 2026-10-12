@@ -44,8 +44,7 @@ public class Review {
     private Short rating;
 
     @Nationalized
-    @Lob
-    @Column(name = "comment")
+    @Column(name = "comment", columnDefinition = "TEXT")
     private String comment;
 
     @ElementCollection
