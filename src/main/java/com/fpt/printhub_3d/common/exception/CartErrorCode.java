@@ -12,7 +12,10 @@ public enum CartErrorCode implements ErrorCode {
     PRODUCT_INACTIVE(25002, "Sản phẩm hiện không còn hoạt động hoặc đã ngừng bán", HttpStatus.BAD_REQUEST, "cart.product_inactive"),
     INVALID_QUANTITY(25003, "Số lượng sản phẩm không hợp lệ (1-999)", HttpStatus.BAD_REQUEST, "cart.invalid_quantity"),
     DUPLICATE_PRODUCT(25004, "Sản phẩm bị trùng lặp trong giỏ hàng", HttpStatus.BAD_REQUEST, "cart.duplicate_product"),
-    CART_NOT_FOUND(25005, "Không tìm thấy thông tin giỏ hàng", HttpStatus.NOT_FOUND, "cart.not_found");
+    CART_NOT_FOUND(25005, "Không tìm thấy thông tin giỏ hàng", HttpStatus.NOT_FOUND, "cart.not_found"),
+    LINE_NOT_FOUND(25006, "Dòng sản phẩm trong giỏ không tồn tại hoặc đã bị xóa", HttpStatus.NOT_FOUND, "cart.line_not_found"),
+    VERSION_CONFLICT(25007, "Dữ liệu giỏ hàng đã được thay đổi từ thiết bị khác. Vui lòng tải lại trang", HttpStatus.CONFLICT, "cart.version_conflict"),
+    INVALID_CUSTOM_DATA(25008, "Dữ liệu thiết kế 3D custom không đúng định dạng hoặc vượt quá dung lượng", HttpStatus.BAD_REQUEST, "cart.invalid_custom_data");
 
     private final int code;
     private final String message;

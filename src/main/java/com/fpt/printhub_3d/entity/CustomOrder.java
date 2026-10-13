@@ -87,4 +87,8 @@ public class CustomOrder {
     @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "checkout_order_id")
+    private CheckoutOrder checkoutOrder;
 }

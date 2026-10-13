@@ -5,9 +5,12 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 
+import lombok.Builder;
+
 import java.math.BigDecimal;
 import java.util.UUID;
 
+@Builder
 @Schema(description = "Yêu cầu tạo link thanh toán PayOS")
 public record CreatePaymentLinkRequestDTO(
         @NotNull(message = "ID đơn hàng không được để trống.")
@@ -15,8 +18,8 @@ public record CreatePaymentLinkRequestDTO(
         UUID orderId,
 
         @NotBlank(message = "Loại đơn hàng không được để trống.")
-        @Pattern(regexp = "^(ORDER|CUSTOM_ORDER)$", message = "Loại đơn hàng phải là ORDER hoặc CUSTOM_ORDER.")
-        @Schema(description = "Loại đơn hàng: ORDER (đơn thường) hoặc CUSTOM_ORDER (đơn in theo yêu cầu)", example = "ORDER")
+        @Pattern(regexp = "^(ORDER|CUSTOM_ORDER|CHECKOUT_ORDER)$", message = "Loại đơn hàng phải là ORDER, CUSTOM_ORDER hoặc CHECKOUT_ORDER.")
+        @Schema(description = "Loại đơn hàng: ORDER, CUSTOM_ORDER hoặc CHECKOUT_ORDER", example = "ORDER")
         String orderType,
 
         @Schema(description = "Mô tả bổ sung cho giao dịch thanh toán", example = "Thanh toán đơn hàng in 3D")

@@ -46,5 +46,12 @@ public class CartItem {
     @Column(name = "thumbnail_url", columnDefinition = "TEXT")
     private String thumbnailUrl;
 
+    @Column(name = "client_line_id")
+    private java.util.UUID clientLineId;
+
+    @Column(name = "revision", nullable = false)
+    @ColumnDefault("1")
+    private Long revision = 1L;
+
 
 }

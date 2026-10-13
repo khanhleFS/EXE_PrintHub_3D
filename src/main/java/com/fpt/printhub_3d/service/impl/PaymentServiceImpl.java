@@ -3,10 +3,12 @@ package com.fpt.printhub_3d.service.impl;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkResponseDTO;
 import com.fpt.printhub_3d.dto.payment.PayOSWebhookResponseDTO;
+import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.Payment;
 import com.fpt.printhub_3d.entity.User;
+import com.fpt.printhub_3d.repository.CheckoutOrderRepository;
 import com.fpt.printhub_3d.repository.CustomOrderRepository;
 import com.fpt.printhub_3d.repository.OrderRepository;
 import com.fpt.printhub_3d.repository.PaymentRepository;
@@ -25,6 +27,7 @@ import vn.payos.model.webhooks.WebhookData;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -35,6 +38,7 @@ public class PaymentServiceImpl implements PaymentService {
 
     private final OrderRepository orders;
     private final CustomOrderRepository customs;
+    private final CheckoutOrderRepository checkoutOrders;
     private final PaymentRepository payments;
     private final PayOS payOS;
     private final NotificationService notifications;
@@ -53,6 +57,7 @@ public class PaymentServiceImpl implements PaymentService {
 
         Order order = null;
         CustomOrder custom = null;
+        CheckoutOrder checkoutOrder = null;
         BigDecimal total;
         Payment payment;
 
@@ -79,6 +84,18 @@ public class PaymentServiceImpl implements PaymentService {
             }
             total = custom.getQuotedPrice();
             payment = payments.findByCustomOrderId(custom.getId()).orElseGet(Payment::new);
+
+        } else if ("CHECKOUT_ORDER".equals(request.orderType())) {
+            checkoutOrder = checkoutOrders.findLockedById(request.orderId())
+                    .orElseThrow(() -> bad("Không tìm thấy đơn thanh toán"));
+            if (!checkoutOrder.getUser().getId().equals(userId)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+            }
+            if (!"CONFIRMED".equals(checkoutOrder.getStatus()) && !"PENDING_QUOTE".equals(checkoutOrder.getStatus())) {
+                throw bad("Đơn không ở trạng thái có thể thanh toán");
+            }
+            total = checkoutOrder.getTotalAmount();
+            payment = payments.findByCheckoutOrderId(checkoutOrder.getId()).orElseGet(Payment::new);
 
         } else {
             throw bad("Loại đơn hàng không hợp lệ");
@@ -156,6 +173,7 @@ public class PaymentServiceImpl implements PaymentService {
 
         payment.setOrder(order);
         payment.setCustomOrder(custom);
+        payment.setCheckoutOrder(checkoutOrder);
         payment.setAmount(total);
         payment.setGateway("PAYOS");
         payment.setStatus("PENDING");
@@ -171,6 +189,9 @@ public class PaymentServiceImpl implements PaymentService {
 
         if (custom != null) {
             custom.setPaymentMethod("PAYOS");
+        }
+        if (checkoutOrder != null) {
+            checkoutOrder.setPaymentMethod("PAYOS");
         }
 
         return response(payment);
@@ -192,7 +213,6 @@ public class PaymentServiceImpl implements PaymentService {
                     .build();
         }
 
-        // Hỗ trợ trường hợp PayOS gửi webhook kiểm tra (test webhook) hoặc đơn không tồn tại
         var existing = payments.findByTransactionId(String.valueOf(data.getOrderCode()));
         if (existing.isEmpty()) {
             return PayOSWebhookResponseDTO.builder()
@@ -259,15 +279,22 @@ public class PaymentServiceImpl implements PaymentService {
             orders.findLockedById(payment.getOrder().getId()).orElseThrow();
         } else if (payment.getCustomOrder() != null) {
             customs.findLockedById(payment.getCustomOrder().getId()).orElseThrow();
+        } else if (payment.getCheckoutOrder() != null) {
+            checkoutOrders.findLockedById(payment.getCheckoutOrder().getId()).orElseThrow();
         }
 
         return payments.findByTransactionId(code).orElseThrow();
     }
 
     private UUID owner(Payment payment) {
-        return payment.getOrder() != null
-                ? payment.getOrder().getBuyer().getId()
-                : payment.getCustomOrder().getBuyer().getId();
+        if (payment.getOrder() != null) {
+            return payment.getOrder().getBuyer().getId();
+        } else if (payment.getCustomOrder() != null) {
+            return payment.getCustomOrder().getBuyer().getId();
+        } else if (payment.getCheckoutOrder() != null) {
+            return payment.getCheckoutOrder().getUser().getId();
+        }
+        throw bad("Giao dịch không có thông tin người sở hữu");
     }
 
     private void settle(Payment payment, BigDecimal amount) {
@@ -292,7 +319,7 @@ public class PaymentServiceImpl implements PaymentService {
             order.setUpdatedAt(Instant.now());
             orders.save(order);
             buyer = order.getBuyer();
-        } else {
+        } else if (payment.getCustomOrder() != null) {
             CustomOrder customOrder = payment.getCustomOrder();
             if ("CANCELLED".equals(customOrder.getStatus())) {
                 throw bad("Yêu cầu đã hủy");
@@ -301,6 +328,30 @@ public class PaymentServiceImpl implements PaymentService {
             customOrder.setUpdatedAt(Instant.now());
             customs.save(customOrder);
             buyer = customOrder.getBuyer();
+        } else if (payment.getCheckoutOrder() != null) {
+            CheckoutOrder checkoutOrder = payment.getCheckoutOrder();
+            if ("CANCELLED".equals(checkoutOrder.getStatus())) {
+                throw bad("Đơn đã hủy");
+            }
+            checkoutOrder.setStatus("PAID");
+            checkoutOrder.setUpdatedAt(Instant.now());
+            checkoutOrders.save(checkoutOrder);
+            buyer = checkoutOrder.getUser();
+
+            List<Order> childOrders = orders.findByCheckoutOrderId(checkoutOrder.getId());
+            for (Order o : childOrders) {
+                o.setStatus("PAID");
+                o.setUpdatedAt(Instant.now());
+                orders.save(o);
+            }
+            List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());
+            for (CustomOrder c : childCustoms) {
+                c.setStatus("PAID");
+                c.setUpdatedAt(Instant.now());
+                customs.save(c);
+            }
+        } else {
+            throw bad("Giao dịch không có thông tin đơn hàng");
         }
 
         payments.save(payment);

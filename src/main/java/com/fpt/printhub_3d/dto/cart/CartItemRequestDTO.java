@@ -30,6 +30,12 @@ public record CartItemRequestDTO(
         java.math.BigDecimal customPrice,
 
         @Schema(description = "Ảnh thumbnail render 3D (base64 hoặc URL)")
-        String thumbnailUrl
+        String thumbnailUrl,
+
+        @Schema(description = "Client line ID duy nhất")
+        UUID clientLineId,
+
+        @Schema(description = "Số revision của dòng")
+        Long revision
 ) {}
 

@@ -25,4 +25,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     Long countOrders();
 
     java.util.List<Order> findByBuyerIdOrderByCreatedAtDesc(UUID buyerId);
+
+    java.util.List<Order> findByCheckoutOrderId(UUID checkoutOrderId);
 }

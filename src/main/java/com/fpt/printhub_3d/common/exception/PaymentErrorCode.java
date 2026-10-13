@@ -22,7 +22,9 @@ public enum PaymentErrorCode implements ErrorCode {
     INVALID_ORDER_TYPE(40005, "Loại đơn hàng không hợp lệ", HttpStatus.BAD_REQUEST, "payment.invalid_order_type"),
     INVALID_WEBHOOK_SIGNATURE(40006, "Chữ ký webhook không hợp lệ", HttpStatus.UNAUTHORIZED, "payment.invalid_signature"),
     PAYMENT_NOT_FOUND(40007, "Không tìm thấy giao dịch thanh toán", HttpStatus.NOT_FOUND, "payment.not_found"),
-    ORDER_NOT_PAYABLE(40008, "Đơn hàng không ở trạng thái có thể thanh toán", HttpStatus.BAD_REQUEST, "payment.order_not_payable");
+    ORDER_NOT_PAYABLE(40008, "Đơn hàng không ở trạng thái có thể thanh toán", HttpStatus.BAD_REQUEST, "payment.order_not_payable"),
+    CHECKOUT_PAYMENT_FAILED(40009, "Không thể tạo liên kết thanh toán PayOS cho đơn hỗn hợp", HttpStatus.BAD_REQUEST, "payment.checkout_failed"),
+    PAYMENT_AMOUNT_MISMATCH(40010, "Số tiền thanh toán không khớp với báo giá đã được duyệt", HttpStatus.BAD_REQUEST, "payment.amount_mismatch");
 
     private final int code;
     private final String message;

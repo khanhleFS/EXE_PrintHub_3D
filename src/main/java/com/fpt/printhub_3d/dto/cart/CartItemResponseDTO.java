@@ -26,6 +26,12 @@ public record CartItemResponseDTO(
         java.math.BigDecimal customPrice,
 
         @Schema(description = "Ảnh thumbnail render 3D")
-        String thumbnailUrl
+        String thumbnailUrl,
+
+        @Schema(description = "Client line ID duy nhất")
+        java.util.UUID clientLineId,
+
+        @Schema(description = "Số revision của dòng")
+        Long revision
 ) {}
 
