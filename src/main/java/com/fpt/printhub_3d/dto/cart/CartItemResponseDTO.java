@@ -14,5 +14,18 @@ public record CartItemResponseDTO(
         Integer quantity,
 
         @Schema(description = "Thông tin chi tiết sản phẩm")
-        ProductResponseDTO product
+        ProductResponseDTO product,
+
+        @Schema(description = "Dữ liệu cấu hình thiết kế custom 3D")
+        String customDesign,
+
+        @Schema(description = "Tên bản thiết kế custom")
+        String customName,
+
+        @Schema(description = "Giá tính toán của bản custom")
+        java.math.BigDecimal customPrice,
+
+        @Schema(description = "Ảnh thumbnail render 3D")
+        String thumbnailUrl
 ) {}
+

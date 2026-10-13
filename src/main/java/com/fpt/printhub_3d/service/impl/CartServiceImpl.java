@@ -53,11 +53,25 @@ public class CartServiceImpl implements CartService {
         Cart cart = getOrCreateCart(user);
         List<CartItem> items = cartItemRepository.findByCartIdOrderByIdAsc(cart.getId());
         return items.stream()
-                .map(item -> CartItemResponseDTO.builder()
-                        .id(item.getId())
-                        .quantity(item.getQuantity())
-                        .product(productService.getProductById(item.getProduct().getId()))
-                        .build())
+                .map(item -> {
+                    com.fpt.printhub_3d.dto.marketplace.ProductResponseDTO productDTO = null;
+                    if (item.getProduct() != null) {
+                        try {
+                            productDTO = productService.getProductById(item.getProduct().getId());
+                        } catch (Exception e) {
+                            // ignore product resolution error
+                        }
+                    }
+                    return CartItemResponseDTO.builder()
+                            .id(item.getId())
+                            .quantity(item.getQuantity())
+                            .product(productDTO)
+                            .customDesign(item.getCustomDesign())
+                            .customName(item.getCustomName())
+                            .customPrice(item.getCustomPrice())
+                            .thumbnailUrl(item.getThumbnailUrl())
+                            .build();
+                })
                 .toList();
     }
 
@@ -69,25 +83,42 @@ public class CartServiceImpl implements CartService {
         if (items != null) {
             Set<UUID> seenProductIds = new HashSet<>();
             for (CartItemRequestDTO line : items) {
-                if (!seenProductIds.add(line.productId())) {
-                    throw new ApiException(CartErrorCode.DUPLICATE_PRODUCT);
-                }
-                Product product = productRepository.findById(line.productId())
-                        .orElseThrow(() -> new ApiException(CartErrorCode.PRODUCT_NOT_FOUND));
+                boolean isCustom = line.customDesign() != null && !line.customDesign().isBlank();
+                if (!isCustom) {
+                    if (line.productId() == null) {
+                        throw new ApiException(CartErrorCode.PRODUCT_NOT_FOUND);
+                    }
+                    if (!seenProductIds.add(line.productId())) {
+                        throw new ApiException(CartErrorCode.DUPLICATE_PRODUCT);
+                    }
+                    Product product = productRepository.findById(line.productId())
+                            .orElseThrow(() -> new ApiException(CartErrorCode.PRODUCT_NOT_FOUND));
 
-                if (!"ACTIVE".equals(product.getStatus())) {
-                    throw new ApiException(CartErrorCode.PRODUCT_INACTIVE);
+                    if (!"ACTIVE".equals(product.getStatus())) {
+                        throw new ApiException(CartErrorCode.PRODUCT_INACTIVE);
+                    }
                 }
             }
 
             cartItemRepository.deleteByCartId(cart.getId());
 
             for (CartItemRequestDTO line : items) {
-                Product product = productRepository.getReferenceById(line.productId());
+                boolean isCustom = line.customDesign() != null && !line.customDesign().isBlank();
                 CartItem item = new CartItem();
                 item.setCart(cart);
-                item.setProduct(product);
                 item.setQuantity(line.quantity());
+                if (isCustom) {
+                    item.setCustomDesign(line.customDesign());
+                    item.setCustomName(line.customName());
+                    item.setCustomPrice(line.customPrice());
+                    item.setThumbnailUrl(line.thumbnailUrl());
+                    if (line.productId() != null) {
+                        productRepository.findById(line.productId()).ifPresent(item::setProduct);
+                    }
+                } else {
+                    Product product = productRepository.getReferenceById(line.productId());
+                    item.setProduct(product);
+                }
                 cartItemRepository.save(item);
             }
         } else {

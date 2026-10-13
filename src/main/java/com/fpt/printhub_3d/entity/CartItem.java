@@ -24,14 +24,27 @@ public class CartItem {
     @JoinColumn(name = "cart_id", nullable = false)
     private Cart cart;
 
-    @NotNull
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "product_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_id")
     private Product product;
+
 
     @NotNull
     @ColumnDefault("1")
     @Column(name = "quantity", nullable = false)
     private Integer quantity;
+
+    @Column(name = "custom_design", columnDefinition = "TEXT")
+    private String customDesign;
+
+    @Column(name = "custom_name", length = 255)
+    private String customName;
+
+    @Column(name = "custom_price", precision = 18, scale = 2)
+    private java.math.BigDecimal customPrice;
+
+    @Column(name = "thumbnail_url", columnDefinition = "TEXT")
+    private String thumbnailUrl;
+
 
 }
