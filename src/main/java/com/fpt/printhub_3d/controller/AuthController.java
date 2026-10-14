@@ -122,4 +122,13 @@ public class AuthController implements AuthAPI {
                 .message("Xác thực thành công. Tài khoản đã được kích hoạt.")
                 .build());
     }
+
+    @Override
+    public ResponseEntity<ApiResponse<Void>> resendRegisterOtp(String email) {
+        authService.resendRegisterOtp(email);
+        return ResponseEntity.ok(ApiResponse.<Void>builder()
+                .code(200)
+                .message("Mã OTP mới đã được gửi đến email của bạn.")
+                .build());
+    }
 }

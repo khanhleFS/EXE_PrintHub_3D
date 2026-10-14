@@ -1,5 +1,6 @@
 package com.fpt.printhub_3d.common.security;
 
+import com.fpt.printhub_3d.entity.Enumeration.UserStatus;
 import com.fpt.printhub_3d.entity.User;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -38,7 +39,9 @@ public class CustomUserDetail implements UserDetails {
 
     @Override
     public boolean isAccountNonLocked() {
-        return Boolean.TRUE.equals(user.getIsActive());
+        return user.getStatus() != UserStatus.SUSPENDED
+                && user.getStatus() != UserStatus.DISABLED
+                && Boolean.TRUE.equals(user.getIsActive());
     }
 
     @Override
@@ -48,7 +51,9 @@ public class CustomUserDetail implements UserDetails {
 
     @Override
     public boolean isEnabled() {
-        return Boolean.TRUE.equals(user.getIsActive());
+        return user.getStatus() == UserStatus.ACTIVE
+                && Boolean.TRUE.equals(user.getEmailVerified())
+                && Boolean.TRUE.equals(user.getIsActive());
     }
 }
 

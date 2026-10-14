@@ -26,4 +26,6 @@ public interface AuthService {
     boolean isEmailValid(String email);
 
     boolean verifyRegisterOtp(String email, String otpCode);
+
+    void resendRegisterOtp(String email);
 }

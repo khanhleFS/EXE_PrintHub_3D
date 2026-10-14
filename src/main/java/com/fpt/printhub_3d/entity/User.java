@@ -2,9 +2,12 @@ package com.fpt.printhub_3d.entity;
 
 import com.fpt.printhub_3d.common.infrastructure.BaseEntity;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
+import com.fpt.printhub_3d.entity.Enumeration.UserStatus;
 import jakarta.persistence.*;
 import lombok.*;
 import lombok.experimental.SuperBuilder;
+
+import java.time.Instant;
 
 @Entity
 @Table(name = "users")
@@ -40,6 +43,35 @@ public class User extends BaseEntity {
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status")
+    @Builder.Default
+    private UserStatus status = UserStatus.PENDING_VERIFICATION;
+
+    @Column(name = "email_verified")
+    @Builder.Default
+    private Boolean emailVerified = false;
+
+    @Column(name = "email_verified_at")
+    private Instant emailVerifiedAt;
+
+    @Column(name = "registration_expires_at")
+    private Instant registrationExpiresAt;
+
+    public UserStatus getStatus() {
+        if (status == null) {
+            return Boolean.TRUE.equals(isActive) ? UserStatus.ACTIVE : UserStatus.PENDING_VERIFICATION;
+        }
+        return status;
+    }
+
+    public Boolean getEmailVerified() {
+        if (emailVerified == null) {
+            return Boolean.TRUE.equals(isActive);
+        }
+        return emailVerified;
+    }
 
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private PointWallet pointWallet;

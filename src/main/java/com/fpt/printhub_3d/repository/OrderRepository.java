@@ -1,19 +1,24 @@
 package com.fpt.printhub_3d.repository;
 
 import com.fpt.printhub_3d.entity.Order;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
 public interface OrderRepository extends JpaRepository<Order, UUID> {
-    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
-    @org.springframework.data.jpa.repository.Query("select e from Order e where e.id = :id")
-    java.util.Optional<Order> findLockedById(@org.springframework.data.repository.query.Param("id") java.util.UUID id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select e from Order e where e.id = :id")
+    Optional<Order> findLockedById(@Param("id") UUID id);
 
     @Query(value = "select coalesce(sum(commission_fee), cast(0 as decimal(18,2))) from orders", nativeQuery = true)
     BigDecimal sumCommissionFee();
@@ -24,7 +29,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query(value = "select count(*) from orders", nativeQuery = true)
     Long countOrders();
 
-    java.util.List<Order> findByBuyerIdOrderByCreatedAtDesc(UUID buyerId);
+    List<Order> findByBuyerIdOrderByCreatedAtDesc(UUID buyerId);
 
-    java.util.List<Order> findByCheckoutOrderId(UUID checkoutOrderId);
+    List<Order> findByCheckoutOrderId(UUID checkoutOrderId);
+
+    boolean existsByBuyerId(UUID buyerId);
 }

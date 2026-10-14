@@ -8,15 +8,16 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
 public interface CartItemRepository extends JpaRepository<CartItem, Long> {
     List<CartItem> findByCartIdOrderByIdAsc(UUID cartId);
 
-    java.util.Optional<CartItem> findByCartIdAndClientLineId(UUID cartId, UUID clientLineId);
+    Optional<CartItem> findByCartIdAndClientLineId(UUID cartId, UUID clientLineId);
 
-    java.util.Optional<CartItem> findByIdAndCartId(Long id, UUID cartId);
+    Optional<CartItem> findByIdAndCartId(Long id, UUID cartId);
 
     @Modifying
     @Query("DELETE FROM CartItem ci WHERE ci.cart.id = :cartId")

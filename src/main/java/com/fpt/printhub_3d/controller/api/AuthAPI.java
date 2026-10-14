@@ -83,4 +83,9 @@ public interface AuthAPI {
     @PostMapping("/verify-register-otp")
     ResponseEntity<ApiResponse<Void>> verifyRegisterOtp(
             @Valid @RequestBody VerifyOTPRequestDTO request);
+
+    @Operation(summary = "Resend register OTP", description = "Resend OTP for pending register account")
+    @PostMapping("/resend-register-otp")
+    ResponseEntity<ApiResponse<Void>> resendRegisterOtp(
+            @RequestParam("email") String email);
 }
