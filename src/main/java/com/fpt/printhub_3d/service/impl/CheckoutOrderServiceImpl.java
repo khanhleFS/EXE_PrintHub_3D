@@ -109,7 +109,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             customOrder.setRulerModel(cItem.getCustomName() != null ? cItem.getCustomName() : "Thước 3D Cá Nhân Hóa");
             customOrder.setCustomName(cItem.getCustomName());
             customOrder.setRequirements(cItem.getCustomDesign());
-            customOrder.setAttachmentUrl(cItem.getThumbnailUrl());
+            String attachmentUrl = cItem.getThumbnailUrl();
+            if (attachmentUrl != null && (attachmentUrl.startsWith("data:") || attachmentUrl.length() > 500)) {
+                attachmentUrl = null;
+            }
+            customOrder.setAttachmentUrl(attachmentUrl);
             customOrder.setQuantity(cItem.getQuantity() != null ? cItem.getQuantity() : 1);
             customOrder.setShippingAddress(request.shippingAddress());
             customOrder.setPaymentMethod(request.paymentMethod());
