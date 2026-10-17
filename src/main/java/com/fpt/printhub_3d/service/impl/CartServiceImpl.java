@@ -191,10 +191,14 @@ public class CartServiceImpl implements CartService {
     @Override
     public void deleteCartItem(User user, UUID clientLineId) {
         Cart cart = getOrCreateCart(user);
-        CartItem item = cartItemRepository.findByCartIdAndClientLineId(cart.getId(), clientLineId)
-                .orElseThrow(() -> new ApiException(CartErrorCode.LINE_NOT_FOUND));
+        var optionalItem = cartItemRepository.findByCartIdAndClientLineId(cart.getId(), clientLineId);
+        if (optionalItem.isEmpty()) {
+            // Idempotent: Nếu dòng giỏ hàng đã bị xóa trước đó (ví dụ do checkout order đã xóa),
+            // bỏ qua an toàn thay vì ném lỗi 404/25006
+            return;
+        }
 
-        cartItemRepository.delete(item);
+        cartItemRepository.delete(optionalItem.get());
         cart.setUpdatedAt(Instant.now());
         cartRepository.save(cart);
     }

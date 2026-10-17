@@ -92,11 +92,22 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         checkoutOrder.setCreatedAt(Instant.now());
         checkoutOrder.setUpdatedAt(Instant.now());
 
-        if (customLines.isEmpty()) {
-            BigDecimal marketSubtotal = marketplaceLines.stream()
-                    .map(i -> i.getProduct().getPrice().multiply(BigDecimal.valueOf(i.getQuantity())))
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-            checkoutOrder.setTotalAmount(marketSubtotal.add(checkoutOrder.getShippingFee()));
+        BigDecimal marketSubtotal = marketplaceLines.stream()
+                .map(i -> i.getProduct().getPrice().multiply(BigDecimal.valueOf(i.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal customSubtotal = customLines.stream()
+                .map(i -> (i.getCustomPrice() != null ? i.getCustomPrice() : BigDecimal.ZERO).multiply(BigDecimal.valueOf(i.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal finalTotal = marketSubtotal.add(customSubtotal).add(checkoutOrder.getShippingFee());
+        checkoutOrder.setTotalAmount(finalTotal);
+
+        boolean allCustomPriced = !customLines.isEmpty() && customLines.stream().allMatch(i -> i.getCustomPrice() != null && i.getCustomPrice().compareTo(BigDecimal.ZERO) > 0);
+        if (customLines.isEmpty() || allCustomPriced) {
+            checkoutOrder.setStatus("CONFIRMED");
+        } else {
+            checkoutOrder.setStatus("PENDING_QUOTE");
         }
 
         checkoutOrder = checkoutOrderRepository.save(checkoutOrder);
@@ -117,7 +128,12 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             customOrder.setQuantity(cItem.getQuantity() != null ? cItem.getQuantity() : 1);
             customOrder.setShippingAddress(request.shippingAddress());
             customOrder.setPaymentMethod(request.paymentMethod());
-            customOrder.setStatus("REQUESTED");
+            if (cItem.getCustomPrice() != null && cItem.getCustomPrice().compareTo(BigDecimal.ZERO) > 0) {
+                customOrder.setQuotedPrice(cItem.getCustomPrice());
+                customOrder.setStatus("QUOTED");
+            } else {
+                customOrder.setStatus("REQUESTED");
+            }
             customOrder.setCreatedAt(Instant.now());
             customOrder.setUpdatedAt(Instant.now());
             customOrderRepository.save(customOrder);
@@ -161,7 +177,24 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         cart.setUpdatedAt(Instant.now());
         cartRepository.save(cart);
 
-        return toDTO(checkoutOrder, null);
+        String paymentLinkUrl = null;
+        if ("CONFIRMED".equals(checkoutOrder.getStatus()) && "PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())) {
+            try {
+                CreatePaymentLinkRequestDTO payRequest = CreatePaymentLinkRequestDTO.builder()
+                        .orderId(checkoutOrder.getId())
+                        .orderType("CHECKOUT_ORDER")
+                        .paymentOption("FULL")
+                        .customAmount(finalTotal)
+                        .description("Don PrintHub " + checkoutOrder.getId().toString().substring(0, 8))
+                        .build();
+                CreatePaymentLinkResponseDTO payResp = paymentService.createPaymentLink(user.getId(), payRequest);
+                paymentLinkUrl = payResp.paymentLinkUrl();
+            } catch (Exception e) {
+                log.error("Lỗi tạo link PayOS khi tạo checkout order {}: {}", checkoutOrder.getId(), e.getMessage());
+            }
+        }
+
+        return toDTO(checkoutOrder, paymentLinkUrl);
     }
 
     @Override
