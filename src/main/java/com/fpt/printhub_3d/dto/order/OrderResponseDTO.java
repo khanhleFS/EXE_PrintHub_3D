@@ -44,6 +44,9 @@ public record OrderResponseDTO(
         @Schema(description = "Mã giao dịch / mã đơn cổng thanh toán")
         String orderCode,
 
+        @Schema(description = "ID đơn thanh toán cha (CheckoutOrder) nếu thuộc đơn giỏ hàng")
+        UUID checkoutOrderId,
+
         @Schema(description = "Thông tin người nhận hàng")
         ShippingInfoResponseDTO shippingInfo,
 

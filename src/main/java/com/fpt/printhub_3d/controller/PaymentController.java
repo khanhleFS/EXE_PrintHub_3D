@@ -35,9 +35,32 @@ public class PaymentController implements PaymentAPI {
         CreatePaymentLinkResponseDTO response = paymentService.createPaymentLink(
                 SecurityUtils.getCurrentUser().getId(), request);
 
+        if ("INITIALIZING".equalsIgnoreCase(response.status())) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.ACCEPTED)
+                    .body(ApiResponse.<CreatePaymentLinkResponseDTO>builder()
+                            .code(202)
+                            .message("Liên kết thanh toán đang được khởi tạo, vui lòng kiểm tra lại trạng thái")
+                            .result(response)
+                            .build());
+        }
+
         return ResponseEntity.ok(ApiResponse.<CreatePaymentLinkResponseDTO>builder()
                 .code(200)
                 .message("Tạo link thanh toán thành công")
+                .result(response)
+                .build());
+    }
+
+    @Override
+    @PreAuthorize("hasAnyRole('USER','ADMIN')")
+    public ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.payment.PaymentAttemptStatusResponseDTO>> getAttemptStatus(
+            java.util.UUID attemptId) {
+        com.fpt.printhub_3d.dto.payment.PaymentAttemptStatusResponseDTO response = paymentService.getAttemptStatus(
+                attemptId, SecurityUtils.getCurrentUser().getId());
+
+        return ResponseEntity.ok(ApiResponse.<com.fpt.printhub_3d.dto.payment.PaymentAttemptStatusResponseDTO>builder()
+                .code(200)
+                .message("Lấy trạng thái phiên thanh toán thành công")
                 .result(response)
                 .build());
     }

@@ -33,4 +33,24 @@ public class UserSubscription extends BaseEntity {
     @Builder.Default
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
+
+    @Column(name = "duration_days")
+    @Builder.Default
+    private Integer durationDays = 30;
+
+    @Column(name = "applied_price", precision = 18, scale = 2)
+    private java.math.BigDecimal appliedPrice;
+
+    @Column(name = "applied_required_points")
+    private Integer appliedRequiredPoints;
+
+    @Column(name = "applied_free_shipping")
+    @Builder.Default
+    private Boolean appliedFreeShipping = false;
+
+    @Column(name = "applied_shipping_discount_amount", precision = 18, scale = 2)
+    private java.math.BigDecimal appliedShippingDiscountAmount;
+
+    @Column(name = "activation_source", length = 50)
+    private String activationSource;
 }

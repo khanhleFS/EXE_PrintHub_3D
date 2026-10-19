@@ -33,9 +33,14 @@ public class Payment {
     @JoinColumn(name = "custom_order_id", unique = true)
     private CustomOrder customOrder;
 
-    @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "checkout_order_id", unique = true)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "checkout_order_id")
     private CheckoutOrder checkoutOrder;
+
+    @Size(max = 30)
+    @Column(name = "scope", length = 30, nullable = false)
+    @ColumnDefault("'ALL'")
+    private String scope = "ALL"; // ALL, MARKETPLACE, CUSTOM
 
     @Column(length = 1000)
     private String checkoutUrl;
@@ -50,10 +55,10 @@ public class Payment {
     @Column(name = "gateway", nullable = false, length = 30)
     private String gateway;
 
-    @Size(max = 20)
+    @Size(max = 50)
     @NotNull
     @ColumnDefault("'PENDING'")
-    @Column(name = "status", nullable = false, length = 20)
+    @Column(name = "status", nullable = false, length = 50)
     private String status;
 
     @Size(max = 150)

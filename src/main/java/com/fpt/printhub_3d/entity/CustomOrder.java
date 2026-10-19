@@ -72,6 +72,17 @@ public class CustomOrder {
     @Column(name = "quoted_price", precision = 18, scale = 2)
     private BigDecimal quotedPrice;
 
+    @Column(name = "unit_price", precision = 18, scale = 2)
+    private BigDecimal unitPrice;
+
+    @Column(name = "price_version")
+    @ColumnDefault("1")
+    private Integer priceVersion = 1;
+
+    @Column(name = "quote_version")
+    @ColumnDefault("1")
+    private Long quoteVersion = 1L;
+
     @Size(max = 20)
     @NotNull
     @ColumnDefault("'PENDING'")

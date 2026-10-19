@@ -15,4 +15,5 @@ public interface OrderService {
     OrderResponseDTO getOrderById(UUID id, User currentUser);
     List<OrderResponseDTO> getAllOrders();
     void updateOrderStatus(UUID id, String nextStatus, User currentUser);
+    RewardCompletionResponseDTO confirmCodPayment(UUID orderId, User adminUser);
 }

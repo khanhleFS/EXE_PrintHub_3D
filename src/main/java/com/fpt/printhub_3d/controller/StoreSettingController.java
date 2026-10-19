@@ -40,4 +40,18 @@ public class StoreSettingController implements StoreSettingAPI {
                 .message("Cập nhật cấu hình thành công")
                 .build());
     }
+
+    @org.springframework.web.bind.annotation.GetMapping("/api/settings/public")
+    public ResponseEntity<ApiResponse<Map<String, String>>> getPublicSettings() {
+        Map<String, String> all = storeSettingService.getSettings();
+        Map<String, String> publicSettings = Map.of(
+                "shippingFee", all.getOrDefault("shippingFee", "15000"),
+                "storeName", all.getOrDefault("storeName", "PrintHub 3D")
+        );
+        return ResponseEntity.ok(ApiResponse.<Map<String, String>>builder()
+                .code(200)
+                .message("Lấy cấu hình công khai thành công")
+                .result(publicSettings)
+                .build());
+    }
 }

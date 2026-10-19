@@ -13,4 +13,5 @@ public interface CartService {
     List<CartItemResponseDTO> updateCart(User user, CartUpdateRequestDTO request);
     CartItemResponseDTO updateCartItem(User user, UUID clientLineId, CartItemUpdateRequestDTO request);
     void deleteCartItem(User user, UUID clientLineId);
+    List<CartItemResponseDTO> mergeGuestCart(User user, com.fpt.printhub_3d.dto.cart.CartMergeGuestRequestDTO request);
 }

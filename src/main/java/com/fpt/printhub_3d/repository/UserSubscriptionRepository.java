@@ -16,6 +16,7 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
     
     @Query("SELECT us FROM UserSubscription us WHERE us.user = :user " +
            "AND us.plan.type = :type AND us.isActive = true " +
+           "AND us.startDate <= CURRENT_TIMESTAMP " +
            "AND us.endDate > CURRENT_TIMESTAMP ORDER BY us.endDate DESC")
     Optional<UserSubscription> findActiveSubscriptionByUserAndType(
             @Param("user") User user, 
@@ -23,6 +24,16 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
 
     @Query("SELECT us FROM UserSubscription us WHERE us.user = :user " +
            "AND us.isActive = true " +
+           "AND us.startDate <= CURRENT_TIMESTAMP " +
            "AND us.endDate > CURRENT_TIMESTAMP ORDER BY us.endDate DESC")
     java.util.List<UserSubscription> findActiveSubscriptionsByUser(@Param("user") User user);
+
+    @Query("SELECT us FROM UserSubscription us WHERE us.user = :user " +
+           "AND us.isActive = true " +
+           "AND us.endDate > CURRENT_TIMESTAMP ORDER BY us.endDate DESC")
+    java.util.List<UserSubscription> findAllActiveAndFutureSubscriptionsByUser(@Param("user") User user);
+
+    Optional<UserSubscription> findTopByUserIdAndPlanIdOrderByEndDateDesc(UUID userId, UUID planId);
+
+    Optional<UserSubscription> findTopByUserIdOrderByEndDateDesc(UUID userId);
 }

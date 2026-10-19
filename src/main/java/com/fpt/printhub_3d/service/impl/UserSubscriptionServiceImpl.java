@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -109,6 +110,9 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói dịch vụ này không hỗ trợ đổi bằng điểm thưởng.");
         }
 
+        // P1.4 / SUB-03: Kiểm tra tính hợp lệ trước khi trừ điểm ví
+        validateSubscriptionEligibility(user, plan);
+
         PointWallet wallet = pointWalletRepository.findById(userId).orElseGet(() -> {
             PointWallet newWallet = PointWallet.builder()
                     .userId(userId)
@@ -139,7 +143,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .build();
         pointTransactionRepository.save(transaction);
 
-        UserSubscription userSub = processSubscriptionActivation(user, plan);
+        UserSubscription userSub = processSubscriptionActivation(user, plan, "POINTS_REDEEM");
 
         return toResponseDTO(userSub);
     }
@@ -159,35 +163,73 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 || (plan.getType() != SubscriptionType.CUSTOMER && plan.getType() != SubscriptionType.CUSTOMER_VIP)) {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói hoặc tài khoản không hợp lệ.");
         }
-        UserSubscription userSub = processSubscriptionActivation(user, plan);
+        UserSubscription userSub = processSubscriptionActivation(user, plan, "ADMIN_GIFT");
 
         return toResponseDTO(userSub);
     }
 
-    private UserSubscription processSubscriptionActivation(User user, SubscriptionPlan plan) {
+    private void validateSubscriptionEligibility(User user, SubscriptionPlan plan) {
         LocalDateTime now = LocalDateTime.now();
-        int durationDays = 30; // Mặc định gói kéo dài 30 ngày
-
-        Optional<UserSubscription> activeSubOpt = userSubscriptionRepository
-                .findActiveSubscriptionByUserAndType(user, plan.getType());
-
-        UserSubscription userSub;
-        if (activeSubOpt.isPresent()) {
-            UserSubscription activeSub = activeSubOpt.get();
-            activeSub.setEndDate(activeSub.getEndDate().plusDays(durationDays));
-            userSub = userSubscriptionRepository.save(activeSub);
-            log.info("Đã gia hạn gói dịch vụ [{}] cho người dùng [{}]. Hạn mới: {}", plan.getName(), user.getId(), userSub.getEndDate());
-        } else {
-            userSub = UserSubscription.builder()
-                    .user(user)
-                    .plan(plan)
-                    .startDate(now)
-                    .endDate(now.plusDays(durationDays))
-                    .isActive(true)
-                    .build();
-            userSub = userSubscriptionRepository.save(userSub);
-            log.info("Đăng ký mới gói dịch vụ [{}] cho người dùng [{}]. Hạn đến: {}", plan.getName(), user.getId(), userSub.getEndDate());
+        List<UserSubscription> existingSubs = userSubscriptionRepository.findAllActiveAndFutureSubscriptionsByUser(user);
+        if (existingSubs == null || existingSubs.isEmpty()) {
+            existingSubs = userSubscriptionRepository.findActiveSubscriptionsByUser(user);
         }
+        if (existingSubs != null) {
+            for (UserSubscription existingSub : existingSubs) {
+                if (existingSub.getPlan() != null && !existingSub.getPlan().getId().equals(plan.getId())) {
+                    if (existingSub.getEndDate() != null && existingSub.getEndDate().isAfter(now)) {
+                        String planName = existingSub.getPlan().getName() != null ? existingSub.getPlan().getName() : "khác";
+                        log.warn("R2-04 SUB-03: Chặn đổi gói từ [{}] sang [{}]. Người dùng {} vẫn còn kỳ hiệu lực đến {}.",
+                                planName, plan.getName(), user.getId(), existingSub.getEndDate());
+                        throw new ApiException(CommonErrorCode.BAD_REQUEST,
+                                String.format("Bạn đang có gói hội viên '%s' còn hiệu lực đến %s. Hệ thống chưa hỗ trợ chuyển đổi gói khi kỳ cũ chưa kết thúc. Vui lòng sử dụng hết thời hạn trước khi đăng ký gói mới.",
+                                        planName, existingSub.getEndDate()));
+                    }
+                }
+            }
+        }
+    }
+
+    private UserSubscription processSubscriptionActivation(User user, SubscriptionPlan plan, String activationSource) {
+        LocalDateTime now = LocalDateTime.now();
+        int durationDays = (plan.getDurationDays() != null && plan.getDurationDays() > 0) ? plan.getDurationDays() : 30;
+        boolean isFreeShip = Boolean.TRUE.equals(plan.getFreeShipping());
+        BigDecimal shippingDiscount = (plan.getShippingDiscountAmount() != null && plan.getShippingDiscountAmount().compareTo(BigDecimal.ZERO) >= 0)
+                ? plan.getShippingDiscountAmount()
+                : BigDecimal.ZERO;
+
+        // P1.4 / SUB-03: Đổi gói không âm thầm làm mất kỳ đã mua trước.
+        validateSubscriptionEligibility(user, plan);
+
+        // Gia hạn cùng gói: nối tiếp kỳ cuối đã mua dưới khóa User
+        Optional<UserSubscription> latestSubOpt = userSubscriptionRepository
+                .findTopByUserIdAndPlanIdOrderByEndDateDesc(user.getId(), plan.getId());
+
+        LocalDateTime startDate = now;
+        if (latestSubOpt.isPresent()) {
+            UserSubscription latest = latestSubOpt.get();
+            if (latest.getEndDate() != null && latest.getEndDate().isAfter(now)) {
+                startDate = latest.getEndDate();
+            }
+        }
+        LocalDateTime endDate = startDate.plusDays(durationDays);
+
+        UserSubscription userSub = UserSubscription.builder()
+                .user(user)
+                .plan(plan)
+                .startDate(startDate)
+                .endDate(endDate)
+                .isActive(true)
+                .durationDays(durationDays)
+                .appliedPrice(plan.getPrice())
+                .appliedRequiredPoints(plan.getRequiredPoints())
+                .appliedFreeShipping(isFreeShip)
+                .appliedShippingDiscountAmount(shippingDiscount)
+                .activationSource(activationSource)
+                .build();
+        userSub = userSubscriptionRepository.save(userSub);
+        log.info("R2-04: Đã kích hoạt/gia hạn kỳ hội viên [{}] cho user [{}]: {} -> {}. Nguồn: {}",
+                plan.getName(), user.getId(), startDate, endDate, activationSource);
         return userSub;
     }
 

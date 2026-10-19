@@ -36,6 +36,7 @@ public class CartServiceImpl implements CartService {
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final ProductService productService;
+    private final com.fpt.printhub_3d.repository.IdempotencyRecordRepository idempotencyRecordRepository;
 
     private Cart getOrCreateCart(User user) {
         return cartRepository.findByUserId(user.getId())
@@ -201,5 +202,117 @@ public class CartServiceImpl implements CartService {
         cartItemRepository.delete(optionalItem.get());
         cart.setUpdatedAt(Instant.now());
         cartRepository.save(cart);
+    }
+
+    @Override
+    public List<CartItemResponseDTO> mergeGuestCart(User user, com.fpt.printhub_3d.dto.cart.CartMergeGuestRequestDTO request) {
+        if (request.mergeBatchId() == null) {
+            throw new ApiException(com.fpt.printhub_3d.common.exception.CommonErrorCode.INVALID_INPUT, "mergeBatchId không được để trống");
+        }
+
+        // 1. Kiểm tra idempotency bền vững qua idempotency_records
+        var existingRecord = idempotencyRecordRepository.findByUserIdAndActionKeyAndIdempotencyKey(
+                user.getId(), "MERGE_GUEST_CART", request.mergeBatchId().toString());
+        if (existingRecord.isPresent()) {
+            log.info("Idempotent hit cho merge giỏ guest user: {}, batch: {}", user.getId(), request.mergeBatchId());
+            return getCart(user);
+        }
+
+        // 2. Khóa giỏ hàng của user
+        Cart cart = cartRepository.findLockedByUserId(user.getId())
+                .orElseGet(() -> getOrCreateCart(user));
+
+        List<com.fpt.printhub_3d.dto.cart.CartItemRequestDTO> guestItems = request.items();
+        if (guestItems != null && !guestItems.isEmpty()) {
+            List<CartItem> currentCartItems = cartItemRepository.findByCartIdOrderByIdAsc(cart.getId());
+
+            for (com.fpt.printhub_3d.dto.cart.CartItemRequestDTO guestItem : guestItems) {
+                if (guestItem.quantity() == null || guestItem.quantity() <= 0) {
+                    continue;
+                }
+                boolean isCustom = guestItem.customDesign() != null && !guestItem.customDesign().isBlank();
+                CartItem targetItem = null;
+
+                if (isCustom) {
+                    // Đối với custom design: So sánh theo clientLineId hoặc nội dung customDesign
+                    for (CartItem ci : currentCartItems) {
+                        boolean ciIsCustom = ci.getCustomDesign() != null && !ci.getCustomDesign().isBlank();
+                        if (ciIsCustom) {
+                            if (guestItem.clientLineId() != null && guestItem.clientLineId().equals(ci.getClientLineId())) {
+                                targetItem = ci;
+                                break;
+                            } else if (guestItem.customDesign().equals(ci.getCustomDesign())) {
+                                targetItem = ci;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    // Đối với sản phẩm có sẵn: So sánh theo productId
+                    if (guestItem.productId() != null) {
+                        for (CartItem ci : currentCartItems) {
+                            if (ci.getProduct() != null && guestItem.productId().equals(ci.getProduct().getId())) {
+                                targetItem = ci;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (targetItem != null) {
+                    int newQty = targetItem.getQuantity() + guestItem.quantity();
+                    if (newQty > 999) {
+                        throw new ApiException(com.fpt.printhub_3d.common.exception.CommonErrorCode.INVALID_INPUT,
+                                "Số lượng sản phẩm vượt quá giới hạn tối đa 999 trong giỏ hàng");
+                    }
+                    targetItem.setQuantity(newQty);
+                    targetItem.setRevision((targetItem.getRevision() != null ? targetItem.getRevision() : 1L) + 1L);
+                    cartItemRepository.save(targetItem);
+                } else {
+                    if (guestItem.quantity() > 999) {
+                        throw new ApiException(com.fpt.printhub_3d.common.exception.CommonErrorCode.INVALID_INPUT,
+                                "Số lượng sản phẩm vượt quá giới hạn tối đa 999 trong giỏ hàng");
+                    }
+                    CartItem newItem = new CartItem();
+                    newItem.setCart(cart);
+                    newItem.setQuantity(guestItem.quantity());
+                    newItem.setClientLineId(guestItem.clientLineId() != null ? guestItem.clientLineId() : UUID.randomUUID());
+                    newItem.setRevision(1L);
+
+                    if (isCustom) {
+                        newItem.setCustomDesign(guestItem.customDesign());
+                        newItem.setCustomName(guestItem.customName());
+                        newItem.setCustomPrice(guestItem.customPrice());
+                        newItem.setThumbnailUrl(guestItem.thumbnailUrl());
+                        if (guestItem.productId() != null) {
+                            productRepository.findById(guestItem.productId()).ifPresent(newItem::setProduct);
+                        }
+                    } else if (guestItem.productId() != null) {
+                        Product product = productRepository.findById(guestItem.productId())
+                                .orElseThrow(() -> new ApiException(CartErrorCode.PRODUCT_NOT_FOUND));
+                        if (!"ACTIVE".equals(product.getStatus())) {
+                            throw new ApiException(CartErrorCode.PRODUCT_INACTIVE);
+                        }
+                        newItem.setProduct(product);
+                    }
+                    cartItemRepository.save(newItem);
+                    currentCartItems.add(newItem);
+                }
+            }
+
+            cart.setUpdatedAt(Instant.now());
+            cartRepository.save(cart);
+        }
+
+        // 3. Ghi nhận idempotency record trong cùng transaction
+        com.fpt.printhub_3d.entity.IdempotencyRecord record = new com.fpt.printhub_3d.entity.IdempotencyRecord();
+        record.setUser(user);
+        record.setActionKey("MERGE_GUEST_CART");
+        record.setIdempotencyKey(request.mergeBatchId().toString());
+        record.setStatus("COMPLETED");
+        record.setCreatedAt(Instant.now());
+        idempotencyRecordRepository.save(record);
+
+        return getCart(user);
     }
 }

@@ -14,6 +14,10 @@ import java.util.UUID;
 public interface CartRepository extends JpaRepository<Cart, UUID> {
     Optional<Cart> findByUserId(UUID userId);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM Cart c WHERE c.user.id = :userId")
+    Optional<Cart> findLockedByUserId(@Param("userId") UUID userId);
+
     @Modifying
     @Query("DELETE FROM Cart c WHERE c.user.id = :userId")
     void deleteByUserId(@Param("userId") UUID userId);

@@ -53,4 +53,13 @@ public interface CartAPI {
     @DeleteMapping("/items/{clientLineId}")
     ResponseEntity<ApiResponse<Void>> deleteCartItem(
             @PathVariable("clientLineId") UUID clientLineId);
+
+    @Operation(
+            summary = "Hợp nhất giỏ hàng khách vãng lai (Guest)",
+            description = "Hợp nhất giỏ hàng từ localStorage của khách vãng lai vào tài khoản người dùng với mã mergeBatchId chống lặp bền vững.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping("/merge-guest")
+    ResponseEntity<ApiResponse<List<CartItemResponseDTO>>> mergeGuestCart(
+            @Valid @RequestBody com.fpt.printhub_3d.dto.cart.CartMergeGuestRequestDTO request);
 }

@@ -43,6 +43,18 @@ public class SubscriptionPlan extends BaseEntity {
     @Column(name = "required_points")
     private Integer requiredPoints;
 
+    @Column(name = "duration_days")
+    @Builder.Default
+    private Integer durationDays = 30;
+
+    @Column(name = "free_shipping")
+    @Builder.Default
+    private Boolean freeShipping = false;
+
+    @Column(name = "shipping_discount_amount", precision = 18, scale = 2)
+    @Builder.Default
+    private BigDecimal shippingDiscountAmount = BigDecimal.ZERO;
+
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;

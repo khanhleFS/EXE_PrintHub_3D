@@ -92,4 +92,16 @@ public class OrderController implements OrderAPI {
                 .message("Cập nhật trạng thái đơn hàng thành công")
                 .build());
     }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<RewardCompletionResponseDTO>> confirmCodPayment(UUID id) {
+        User user = SecurityUtils.getCurrentUser();
+        RewardCompletionResponseDTO response = orderService.confirmCodPayment(id, user);
+        return ResponseEntity.ok(ApiResponse.<RewardCompletionResponseDTO>builder()
+                .code(200)
+                .message("Xác nhận thu tiền COD thành công")
+                .result(response)
+                .build());
+    }
 }

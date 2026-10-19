@@ -26,9 +26,8 @@ public class Order {
     @JoinColumn(name = "buyer_id", nullable = false)
     private User buyer;
 
-    @NotNull
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "seller_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "seller_id")
     private User seller;
 
     @NotNull
@@ -40,10 +39,10 @@ public class Order {
     @Column(name = "commission_fee", nullable = false, precision = 18, scale = 2)
     private BigDecimal commissionFee;
 
-    @Size(max = 20)
+    @Size(max = 50)
     @NotNull
     @ColumnDefault("'PENDING'")
-    @Column(name = "status", nullable = false, length = 20)
+    @Column(name = "status", nullable = false, length = 50)
     private String status;
 
     @NotNull

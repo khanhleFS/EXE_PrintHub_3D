@@ -33,4 +33,13 @@ public interface PaymentService {
     Map<String,Object> verify(String orderCode, java.util.UUID userId);
 
     PayOSWebhookResponseDTO handleWebhook(vn.payos.model.webhooks.Webhook request);
+
+    /**
+     * Tra cứu trạng thái của một lần thanh toán (Payment Attempt) phục vụ polling từ FE.
+     *
+     * @param attemptId ID lần thanh toán
+     * @param userId ID người dùng hiện tại để kiểm tra quyền sở hữu
+     * @return DTO trạng thái của lần thanh toán
+     */
+    com.fpt.printhub_3d.dto.payment.PaymentAttemptStatusResponseDTO getAttemptStatus(UUID attemptId, UUID userId);
 }

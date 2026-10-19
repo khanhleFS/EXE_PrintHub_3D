@@ -35,7 +35,10 @@ public record CreatePaymentLinkRequestDTO(
         String returnUrl,
 
         @Schema(description = "URL redirect khi hủy thanh toán", example = "https://exe202-printhub3d-fe.vercel.app/payment-result?cancel=true")
-        String cancelUrl
+        String cancelUrl,
+
+        @Schema(description = "Phạm vi thanh toán (ALL, MARKETPLACE, CUSTOM)", example = "ALL")
+        String scope
 ) {
 }
 

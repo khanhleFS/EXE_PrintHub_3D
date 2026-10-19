@@ -28,6 +28,9 @@ public record CustomOrderDetailResponseDTO(
         String fontStyle,
         String paymentMethod,
         String paymentStatus,
+        UUID checkoutOrderId,
+        BigDecimal unitPrice,
+        Integer priceVersion,
         Instant createdAt,
         Instant updatedAt
 ) {}

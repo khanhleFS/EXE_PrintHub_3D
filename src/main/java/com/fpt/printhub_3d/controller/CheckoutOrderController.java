@@ -30,12 +30,53 @@ public class CheckoutOrderController implements CheckoutOrderAPI {
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<CheckoutOrderResponseDTO>> createCheckoutOrder(CheckoutOrderCreateRequestDTO request) {
         User user = SecurityUtils.getCurrentUser();
-        CheckoutOrderResponseDTO response = checkoutOrderService.createCheckoutOrder(user, request);
-        return ResponseEntity.ok(ApiResponse.<CheckoutOrderResponseDTO>builder()
-                .code(200)
-                .message("Tạo đơn hàng thành công")
-                .result(response)
-                .build());
+        try {
+            CheckoutOrderResponseDTO response = checkoutOrderService.createCheckoutOrder(user, request);
+            return ResponseEntity.ok(ApiResponse.<CheckoutOrderResponseDTO>builder()
+                    .code(200)
+                    .message("Tạo đơn hàng thành công")
+                    .result(response)
+                    .build());
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            if (isIdempotencyUniqueConstraintViolation(e) && request.idempotencyKey() != null && !request.idempotencyKey().isBlank()) {
+                log.info("Bắt được unique collision cho idempotencyKey {}. Đọc lại kết quả đơn đã tạo.", request.idempotencyKey());
+                CheckoutOrderResponseDTO existing = checkoutOrderService.getExistingByIdempotency(user, request.idempotencyKey());
+                return ResponseEntity.ok(ApiResponse.<CheckoutOrderResponseDTO>builder()
+                        .code(200)
+                        .message("Tạo đơn hàng thành công (Idempotent)")
+                        .result(existing)
+                        .build());
+            }
+            throw e;
+        }
+    }
+
+    private boolean isIdempotencyUniqueConstraintViolation(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            String msg = current.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase();
+                if (lower.contains("uq_idempotency_user_action_key")
+                        || (lower.contains("idempotency_records") && lower.contains("unique"))
+                        || lower.contains("idx_idempotency")
+                        || lower.contains("checkout_orders_user_idempotency")
+                        || lower.contains("uk_checkout_orders_user_idempotency")) {
+                    return true;
+                }
+            }
+            if (current instanceof org.hibernate.exception.ConstraintViolationException cve) {
+                String constraintName = cve.getConstraintName();
+                if (constraintName != null) {
+                    String lowerName = constraintName.toLowerCase();
+                    if (lowerName.contains("uq_idempotency") || lowerName.contains("idempotency") || lowerName.contains("checkout_orders_user_idempotency")) {
+                        return true;
+                    }
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     @Override

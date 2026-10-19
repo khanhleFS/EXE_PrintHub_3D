@@ -46,5 +46,14 @@ public interface PaymentAPI {
     @org.springframework.web.bind.annotation.GetMapping("/verify/{orderCode}")
     ResponseEntity<ApiResponse<java.util.Map<String, Object>>> verifyPayment(
             @org.springframework.web.bind.annotation.PathVariable("orderCode") String orderCode);
+
+    @Operation(
+            summary = "Kiểm tra trạng thái lần thanh toán (Payment Attempt)",
+            description = "FE polling trạng thái của một lần thanh toán sau khi nhận HTTP 202 hoặc để kiểm tra link thanh toán đã sẵn sàng hay chưa.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @org.springframework.web.bind.annotation.GetMapping("/attempts/{attemptId}/status")
+    ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.payment.PaymentAttemptStatusResponseDTO>> getAttemptStatus(
+            @org.springframework.web.bind.annotation.PathVariable("attemptId") java.util.UUID attemptId);
 }
 

@@ -37,6 +37,18 @@ public record CustomOrderResponseDTO(
         @Schema(description = "Trạng thái yêu cầu (ví dụ: REQUESTED)")
         String status,
 
+        @Schema(description = "Số lượng sản phẩm")
+        Integer quantity,
+
+        @Schema(description = "Đơn giá báo cho 1 sản phẩm")
+        BigDecimal unitPrice,
+
+        @Schema(description = "Phiên bản cách tính giá: 1=legacy flat, 2=unitPrice*quantity")
+        Integer priceVersion,
+
+        @Schema(description = "Tên mẫu thước custom")
+        String rulerModel,
+
         @Schema(description = "Thời gian tạo yêu cầu")
         Instant createdAt,
 

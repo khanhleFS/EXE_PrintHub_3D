@@ -35,6 +35,9 @@ public class SubscriptionPlanServiceImpl implements SubscriptionPlanService {
                 .price(request.price())
                 .benefits(request.benefits())
                 .requiredPoints(type == SubscriptionType.CUSTOMER ? request.requiredPoints() : null)
+                .durationDays(request.durationDays() != null && request.durationDays() > 0 ? request.durationDays() : 30)
+                .freeShipping(Boolean.TRUE.equals(request.freeShipping()))
+                .shippingDiscountAmount(request.shippingDiscountAmount() != null ? request.shippingDiscountAmount() : java.math.BigDecimal.ZERO)
                 .isActive(true)
                 .build();
 
@@ -57,6 +60,15 @@ public class SubscriptionPlanServiceImpl implements SubscriptionPlanService {
         plan.setPrice(request.price());
         plan.setBenefits(request.benefits());
         plan.setRequiredPoints(type == SubscriptionType.CUSTOMER ? request.requiredPoints() : null);
+        if (request.durationDays() != null && request.durationDays() > 0) {
+            plan.setDurationDays(request.durationDays());
+        }
+        if (request.freeShipping() != null) {
+            plan.setFreeShipping(request.freeShipping());
+        }
+        if (request.shippingDiscountAmount() != null) {
+            plan.setShippingDiscountAmount(request.shippingDiscountAmount());
+        }
 
         SubscriptionPlan savedPlan = subscriptionPlanRepository.save(plan);
         log.info("Cập nhật gói subscription [{}] loại [{}]", savedPlan.getId(), type);
@@ -97,6 +109,9 @@ public class SubscriptionPlanServiceImpl implements SubscriptionPlanService {
                 .price(plan.getPrice())
                 .benefits(plan.getBenefits())
                 .requiredPoints(plan.getRequiredPoints())
+                .durationDays(plan.getDurationDays())
+                .freeShipping(plan.getFreeShipping())
+                .shippingDiscountAmount(plan.getShippingDiscountAmount())
                 .isActive(plan.getIsActive())
                 .createdAt(plan.getCreatedAt())
                 .updatedAt(plan.getUpdatedAt())

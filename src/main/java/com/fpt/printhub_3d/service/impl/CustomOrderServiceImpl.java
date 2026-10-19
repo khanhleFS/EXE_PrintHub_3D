@@ -9,12 +9,14 @@ import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Enumeration.CustomOrderStatus;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.entity.FileAsset;
+import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.Payment;
 import com.fpt.printhub_3d.entity.User;
-import com.fpt.printhub_3d.repository.CustomOrderRepository;
-import com.fpt.printhub_3d.repository.FileAssetRepository;
-import com.fpt.printhub_3d.repository.PaymentRepository;
-import com.fpt.printhub_3d.repository.UserRepository;
+import com.fpt.printhub_3d.repository.CheckoutOrderRepository;
+import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
+import com.fpt.printhub_3d.entity.PointTransaction;
+import com.fpt.printhub_3d.entity.PointWallet;
+import com.fpt.printhub_3d.repository.*;
 import com.fpt.printhub_3d.service.CloudinaryService;
 import com.fpt.printhub_3d.service.CustomOrderService;
 import com.fpt.printhub_3d.service.FileStorageService;
@@ -27,9 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -44,6 +44,11 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final FileStorageService fileStorageService;
     private final NotificationService notificationService;
     private final CloudinaryService cloudinaryService;
+    private final CheckoutOrderRepository checkoutOrderRepository;
+    private final PointWalletRepository pointWalletRepository;
+    private final PointTransactionRepository pointTransactionRepository;
+    private final OrderRepository orderRepository;
+    private final CheckoutRewardService checkoutRewardService;
 
     @Override
     public CustomOrderResponseDTO createRequest(String requirements, MultipartFile file, User buyer) {
@@ -72,6 +77,10 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .requirements(saved.getRequirements())
                 .attachmentUrl(saved.getAttachmentUrl())
                 .quotedPrice(saved.getQuotedPrice())
+                .unitPrice(saved.getUnitPrice())
+                .quantity(saved.getQuantity())
+                .priceVersion(saved.getPriceVersion())
+                .rulerModel(saved.getRulerModel())
                 .status(saved.getStatus())
                 .createdAt(saved.getCreatedAt())
                 .updatedAt(saved.getUpdatedAt())
@@ -99,6 +108,9 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .fontStyle(o.getFontStyle())
                 .paymentMethod(o.getPaymentMethod())
                 .paymentStatus(p != null ? p.getStatus() : "PENDING")
+                .checkoutOrderId(o.getCheckoutOrder() != null ? o.getCheckoutOrder().getId() : null)
+                .unitPrice(o.getUnitPrice())
+                .priceVersion(o.getPriceVersion())
                 .createdAt(o.getCreatedAt())
                 .updatedAt(o.getUpdatedAt())
                 .build();
@@ -150,7 +162,11 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         order.setCustomStudentId(request.customStudentId());
         order.setColor(request.color());
         order.setFontStyle(request.fontStyle());
-        order.setPaymentMethod(request.paymentMethod());
+        order.setPriceVersion(2);
+        if (request.paymentMethod() != null && "COD".equalsIgnoreCase(request.paymentMethod())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn in 3D theo yêu cầu chỉ chấp nhận thanh toán trực tuyến qua PayOS (không hỗ trợ COD)");
+        }
+        order.setPaymentMethod("PAYOS");
         order.setStatus("REQUESTED");
         order.setCreatedAt(Instant.now());
         order.setUpdatedAt(Instant.now());
@@ -169,9 +185,36 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         }
 
         order.setQuotedPrice(request.price());
+        order.setUnitPrice(request.price());
         order.setProcessedBy(admin);
         order.setStatus("QUOTED");
         order.setUpdatedAt(Instant.now());
+
+        if (order.getCheckoutOrder() != null) {
+            com.fpt.printhub_3d.entity.CheckoutOrder parent = checkoutOrderRepository
+                    .findLockedById(order.getCheckoutOrder().getId())
+                    .orElse(order.getCheckoutOrder());
+            parent.setCustomPricingVersion(parent.getCustomPricingVersion() != null ? parent.getCustomPricingVersion() + 1 : 2L);
+            parent.setSummaryVersion(parent.getSummaryVersion() != null ? parent.getSummaryVersion() + 1 : 2L);
+            parent.setUpdatedAt(Instant.now());
+
+            order.setQuoteVersion(parent.getCustomPricingVersion());
+            order.setPriceVersion(parent.getCustomPricingVersion().intValue());
+
+            List<CustomOrder> siblings = customOrderRepository.findByCheckoutOrderId(parent.getId());
+            boolean allQuoted = siblings.stream().allMatch(c -> c.getQuotedPrice() != null || "CANCELLED".equals(c.getStatus()));
+            if (allQuoted) {
+                parent.setCustomStatus("QUOTED");
+                if ("PENDING_QUOTE".equals(parent.getStatus())) {
+                    parent.setStatus("QUOTED");
+                }
+            }
+            checkoutOrderRepository.save(parent);
+        } else {
+            long newQuoteVer = order.getQuoteVersion() != null ? order.getQuoteVersion() + 1 : 2L;
+            order.setQuoteVersion(newQuoteVer);
+            order.setPriceVersion((int) newQuoteVer);
+        }
         customOrderRepository.save(order);
 
         notificationService.sendNotification(order.getBuyer(),
@@ -197,10 +240,10 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Yêu cầu in chưa có báo giá từ xưởng/hệ thống");
             }
             String method = request.paymentMethod();
-            if (method == null || !Set.of("COD", "PAYOS").contains(method.toUpperCase())) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Vui lòng chọn phương thức thanh toán COD hoặc PAYOS");
+            if (method == null || !"PAYOS".equalsIgnoreCase(method)) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn in 3D theo yêu cầu chỉ chấp nhận thanh toán trực tuyến qua PayOS (không hỗ trợ COD)");
             }
-            order.setPaymentMethod(method.toUpperCase());
+            order.setPaymentMethod("PAYOS");
         } else if ("CANCELLED".equals(next)) {
             if (!order.getBuyer().getId().equals(user.getId()) && user.getRole() != UserRole.ADMIN) {
                 throw new ApiException(CommonErrorCode.FORBIDDEN, "Bạn không có quyền hủy yêu cầu này");
@@ -213,7 +256,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có thể chuyển trạng thái sản xuất");
             }
             boolean isValidTransition = switch (current) {
-                case "ACCEPTED", "PAID" -> "PREPARING".equals(next) || "PRINTING".equals(next);
+                case "PAID" -> "PREPARING".equals(next) || "PRINTING".equals(next);
                 case "PREPARING" -> "PRINTING".equals(next);
                 case "PRINTING" -> "SHIPPING".equals(next);
                 case "SHIPPING" -> "COMPLETED".equals(next);
@@ -239,10 +282,107 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         order.setUpdatedAt(Instant.now());
         customOrderRepository.save(order);
 
+        if ("COMPLETED".equals(next)) {
+            awardCustomOrderRewards(order);
+        }
+
+        if (order.getCheckoutOrder() != null) {
+            syncParentCheckoutOrder(order.getCheckoutOrder().getId());
+        }
+
         notificationService.sendNotification(order.getBuyer(),
                 "Cập nhật tiến trình in",
                 "Yêu cầu in 3D " + id + " đã chuyển sang trạng thái: " + next,
                 "CUSTOM_ORDER",
                 "/quotations");
+    }
+
+    private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
+
+    private void awardCustomOrderRewards(CustomOrder order) {
+        if (order.getQuotedPrice() == null || pointWalletRepository == null || pointTransactionRepository == null) {
+            return;
+        }
+
+        User buyer = order.getBuyer();
+        if (buyer == null) return;
+
+        // P1.6: Nếu thuộc CheckoutOrder, chuyển sang xử lý tích điểm lũy kế tập trung có khóa cha
+        if (order.getCheckoutOrder() != null) {
+            checkoutRewardService.rewardCheckoutOrderCumulative(order.getCheckoutOrder().getId(), buyer);
+            return;
+        }
+
+        // Đơn custom standalone: Kiểm tra thanh toán và chống cấp trùng
+        String desc = "Hoàn thành yêu cầu in 3D " + order.getId();
+        if (pointTransactionRepository.existsByPointWalletUserIdAndDescription(buyer.getId(), desc)) {
+            return;
+        }
+
+        Payment payment = paymentRepository.findByCustomOrderId(order.getId()).orElse(null);
+        if (payment == null || !"SUCCESS".equals(payment.getStatus())) {
+            log.info("Chưa cộng điểm cho CustomOrder đơn lẻ {} vì thanh toán chưa hoàn tất", order.getId());
+            return;
+        }
+
+        int q = (order.getQuantity() != null && order.getQuantity() > 0) ? order.getQuantity() : 1;
+        BigDecimal eligibleAmount = (order.getPriceVersion() != null && order.getPriceVersion() >= 2)
+                ? order.getQuotedPrice().multiply(BigDecimal.valueOf(q))
+                : order.getQuotedPrice();
+
+        int earnedPoints = eligibleAmount.divideToIntegralValue(REWARD_POINT_UNIT).intValue();
+        if (earnedPoints <= 0) {
+            return;
+        }
+
+        PointWallet wallet = pointWalletRepository.findById(buyer.getId()).orElseGet(() -> {
+            PointWallet newWallet = PointWallet.builder()
+                    .userId(buyer.getId())
+                    .user(buyer)
+                    .balance(0)
+                    .isNew(true)
+                    .build();
+            buyer.setPointWallet(newWallet);
+            return newWallet;
+        });
+
+        wallet.setBalance(wallet.getBalance() + earnedPoints);
+        wallet.setUpdatedAt(java.time.LocalDateTime.now());
+        wallet = pointWalletRepository.save(wallet);
+        buyer.setPointWallet(wallet);
+
+        pointTransactionRepository.save(PointTransaction.builder()
+                .pointWallet(wallet)
+                .amount(earnedPoints)
+                .type(PointTransactionType.EARN)
+                .description(desc)
+                .createdAt(java.time.LocalDateTime.now())
+                .build());
+
+        log.info("Đã tích {} điểm cho buyer {} từ CustomOrder đơn lẻ {}", earnedPoints, buyer.getId(), order.getId());
+    }
+
+    private void syncParentCheckoutOrder(UUID checkoutOrderId) {
+        if (checkoutOrderId == null || checkoutOrderRepository == null) return;
+        checkoutOrderRepository.findById(checkoutOrderId).ifPresent(parent -> {
+            List<Order> childOrders = (orderRepository != null)
+                    ? orderRepository.findByCheckoutOrderId(checkoutOrderId) : Collections.emptyList();
+            List<CustomOrder> childCustoms = customOrderRepository.findByCheckoutOrderId(checkoutOrderId);
+
+            boolean allOrdersDone = childOrders.stream().allMatch(o -> "COMPLETED".equals(o.getStatus()) || "CANCELLED".equals(o.getStatus()));
+            boolean allCustomsDone = childCustoms.stream().allMatch(c -> "COMPLETED".equals(c.getStatus()) || "CANCELLED".equals(c.getStatus()));
+
+            if (allOrdersDone && allCustomsDone && (!childOrders.isEmpty() || !childCustoms.isEmpty())) {
+                parent.setStatus("COMPLETED");
+            } else {
+                boolean anyShipping = childOrders.stream().anyMatch(o -> "SHIPPING".equals(o.getStatus()))
+                        || childCustoms.stream().anyMatch(c -> "SHIPPING".equals(c.getStatus()));
+                if (anyShipping && !"COMPLETED".equals(parent.getStatus())) {
+                    parent.setStatus("SHIPPING");
+                }
+            }
+            parent.setUpdatedAt(Instant.now());
+            checkoutOrderRepository.save(parent);
+        });
     }
 }

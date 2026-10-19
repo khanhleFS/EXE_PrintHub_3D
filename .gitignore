@@ -37,3 +37,6 @@ build/
 .vscode/
 .env
 .env.local
+
+# Artifacts
+artifacts/

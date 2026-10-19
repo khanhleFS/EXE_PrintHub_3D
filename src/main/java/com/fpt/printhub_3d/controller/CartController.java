@@ -72,4 +72,16 @@ public class CartController implements CartAPI {
                 .message("Xóa dòng sản phẩm khỏi giỏ hàng thành công")
                 .build());
     }
+
+    @Override
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<CartItemResponseDTO>>> mergeGuestCart(com.fpt.printhub_3d.dto.cart.CartMergeGuestRequestDTO request) {
+        User user = SecurityUtils.getCurrentUser();
+        List<CartItemResponseDTO> items = cartService.mergeGuestCart(user, request);
+        return ResponseEntity.ok(ApiResponse.<List<CartItemResponseDTO>>builder()
+                .code(200)
+                .message("Hợp nhất giỏ hàng thành công")
+                .result(items)
+                .build());
+    }
 }

@@ -12,5 +12,8 @@ public record CheckoutOrderConfirmRequestDTO(
         Long summaryVersion,
 
         @Schema(description = "Phương thức thanh toán: PAYOS hoặc COD", example = "PAYOS")
-        String paymentMethod
+        String paymentMethod,
+
+        @Schema(description = "Khóa chống trùng lặp gửi request")
+        String idempotencyKey
 ) {}

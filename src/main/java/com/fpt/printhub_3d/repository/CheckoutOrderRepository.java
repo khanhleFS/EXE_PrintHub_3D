@@ -20,4 +20,6 @@ public interface CheckoutOrderRepository extends JpaRepository<CheckoutOrder, UU
     Optional<CheckoutOrder> findLockedById(@Param("id") UUID id);
 
     List<CheckoutOrder> findByUserIdOrderByCreatedAtDesc(UUID userId);
+
+    Optional<CheckoutOrder> findFirstByUserIdAndIdempotencyKey(UUID userId, String idempotencyKey);
 }

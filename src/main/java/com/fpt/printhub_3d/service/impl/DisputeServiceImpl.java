@@ -39,7 +39,7 @@ public class DisputeServiceImpl implements DisputeService {
                 .orElseThrow(() -> new ApiException(ReviewDisputeErrorCode.ORDER_NOT_FOUND));
 
         boolean isBuyer = order.getBuyer().getId().equals(filedBy.getId());
-        boolean isSeller = order.getSeller().getId().equals(filedBy.getId());
+        boolean isSeller = order.getSeller() != null && order.getSeller().getId().equals(filedBy.getId());
         if (!isBuyer && !isSeller) {
             throw new ApiException(ReviewDisputeErrorCode.NOT_ORDER_PARTICIPANT);
         }
@@ -125,7 +125,7 @@ public class DisputeServiceImpl implements DisputeService {
 
         if (user.getRole() != UserRole.ADMIN
                 && !d.getOrder().getBuyer().getId().equals(user.getId())
-                && !d.getOrder().getSeller().getId().equals(user.getId())) {
+                && (d.getOrder().getSeller() == null || !d.getOrder().getSeller().getId().equals(user.getId()))) {
             throw new ApiException(CommonErrorCode.FORBIDDEN, "Bạn không có quyền truy cập khiếu nại này");
         }
         return d;
@@ -135,7 +135,7 @@ public class DisputeServiceImpl implements DisputeService {
     @Transactional(readOnly = true)
     public List<DisputeDetailDTO> getMyDisputes(User user) {
         return disputeRepository.findAll().stream()
-                .filter(d -> d.getOrder().getBuyer().getId().equals(user.getId()) || d.getOrder().getSeller().getId().equals(user.getId()))
+                .filter(d -> d.getOrder().getBuyer().getId().equals(user.getId()) || (d.getOrder().getSeller() != null && d.getOrder().getSeller().getId().equals(user.getId())))
                 .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
                 .map(this::toDetailDTO)
                 .toList();

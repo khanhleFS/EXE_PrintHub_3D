@@ -5,6 +5,7 @@ import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.exception.OrderErrorCode;
 import com.fpt.printhub_3d.dto.order.*;
 import com.fpt.printhub_3d.entity.*;
+import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.repository.*;
 import com.fpt.printhub_3d.service.NotificationService;
@@ -35,6 +36,10 @@ public class OrderServiceImpl implements OrderService {
     private final PointTransactionRepository pointTransactionRepository;
     private final NotificationService notificationService;
     private final ReviewRepository reviewRepository;
+    private final InventoryReservationRepository inventoryReservationRepository;
+    private final CheckoutOrderRepository checkoutOrderRepository;
+    private final CustomOrderRepository customOrderRepository;
+    private final CheckoutRewardService checkoutRewardService;
 
     private static final BigDecimal COMMISSION_RATE = new BigDecimal("0.05");
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
@@ -65,12 +70,6 @@ public class OrderServiceImpl implements OrderService {
                         "Sản phẩm '" + product.getTitle() + "' hiện không còn hoạt động hoặc đã ngừng bán");
             }
 
-            User seller = product.getSeller();
-            if (seller == null || !Boolean.TRUE.equals(seller.getIsActive())) {
-                throw new ApiException(OrderErrorCode.SELLER_INACTIVE,
-                        "Cửa hàng của sản phẩm '" + product.getTitle() + "' hiện không hoạt động");
-            }
-
             if (itemRequest.color() != null && !itemRequest.color().trim().isEmpty()) {
                 String colorUpper = itemRequest.color().trim().toUpperCase();
                 if (!VALID_COLORS.contains(colorUpper)) {
@@ -83,121 +82,115 @@ public class OrderServiceImpl implements OrderService {
             validatedItems.add(new ItemWithProduct(itemRequest, product));
         }
 
-        for (Map.Entry<UUID, Integer> entry : totalRequestedStock.entrySet()) {
-            Product p = productRepository.findById(entry.getKey()).orElseThrow();
-            if (p.getStock() < entry.getValue()) {
-                throw new ApiException(OrderErrorCode.OUT_OF_STOCK,
-                        "Sản phẩm '" + p.getTitle() + "' không đủ số lượng tồn kho (còn: " + p.getStock() + ", yêu cầu: " + entry.getValue() + ")");
-            }
-        }
+        List<UUID> sortedProductIds = new ArrayList<>(totalRequestedStock.keySet());
+        sortedProductIds.sort(UUID::compareTo);
+        Instant now = Instant.now();
 
-        for (Map.Entry<UUID, Integer> entry : totalRequestedStock.entrySet()) {
-            Product p = productRepository.findById(entry.getKey()).orElseThrow();
-            p.setStock(p.getStock() - entry.getValue());
+        for (UUID prodId : sortedProductIds) {
+            Product p = productRepository.findLockedById(prodId)
+                    .orElseThrow(() -> new ApiException(OrderErrorCode.PRODUCT_NOT_FOUND, "Không tìm thấy sản phẩm"));
+            Integer activeReserved = inventoryReservationRepository.getActiveReservedQuantity(prodId, now);
+            int available = p.getStock() - (activeReserved != null ? activeReserved : 0);
+            int requested = totalRequestedStock.get(prodId);
+            if (available < requested) {
+                throw new ApiException(OrderErrorCode.OUT_OF_STOCK,
+                        "Sản phẩm '" + p.getTitle() + "' không đủ tồn kho khả dụng (khả dụng: " + available + ", yêu cầu: " + requested + ")");
+            }
+            p.setStock(p.getStock() - requested);
             productRepository.save(p);
         }
 
-        Map<UUID, List<ItemWithProduct>> itemsBySeller = validatedItems.stream()
-                .collect(Collectors.groupingBy(iwp -> iwp.product().getSeller().getId()));
-
         List<OrderResponseDTO> createdOrders = new ArrayList<>();
 
-        for (Map.Entry<UUID, List<ItemWithProduct>> sellerEntry : itemsBySeller.entrySet()) {
-            List<ItemWithProduct> sellerItems = sellerEntry.getValue();
-            User seller = sellerItems.getFirst().product().getSeller();
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        for (ItemWithProduct iwp : validatedItems) {
+            BigDecimal itemTotal = iwp.product().getPrice().multiply(BigDecimal.valueOf(iwp.item().quantity()));
+            totalAmount = totalAmount.add(itemTotal);
+        }
 
-            BigDecimal totalAmount = BigDecimal.ZERO;
-            for (ItemWithProduct iwp : sellerItems) {
-                BigDecimal itemTotal = iwp.product().getPrice().multiply(BigDecimal.valueOf(iwp.item().quantity()));
-                totalAmount = totalAmount.add(itemTotal);
-            }
+        Order order = new Order();
+        order.setBuyer(buyer);
+        order.setSeller(null);
+        order.setTotalAmount(totalAmount);
+        order.setCommissionFee(BigDecimal.ZERO);
+        order.setStatus("PENDING");
+        order.setRewardProcessed(false);
+        order.setCreatedAt(Instant.now());
+        order.setUpdatedAt(Instant.now());
+        Order savedOrder = orderRepository.save(order);
 
-            BigDecimal commissionFee = totalAmount.multiply(COMMISSION_RATE).setScale(0, RoundingMode.HALF_UP);
+        ShippingInfo shippingInfo = new ShippingInfo();
+        shippingInfo.setOrders(savedOrder);
+        shippingInfo.setRecipientName(request.recipientName());
+        shippingInfo.setPhone(request.phone());
+        shippingInfo.setAddress(request.address());
+        shippingInfo.setProvince(request.province());
+        shippingInfo.setTrackingNumber(null);
+        shippingInfoRepository.save(shippingInfo);
 
-            Order order = new Order();
-            order.setBuyer(buyer);
-            order.setSeller(seller);
-            order.setTotalAmount(totalAmount);
-            order.setCommissionFee(commissionFee);
-            order.setStatus("PENDING");
-            order.setRewardProcessed(false);
-            order.setCreatedAt(Instant.now());
-            order.setUpdatedAt(Instant.now());
-            Order savedOrder = orderRepository.save(order);
+        List<OrderItemResponseDTO> itemResponses = new ArrayList<>();
+        for (ItemWithProduct iwp : validatedItems) {
+            OrderItem orderItem = new OrderItem();
+            orderItem.setOrder(savedOrder);
+            orderItem.setProduct(iwp.product());
+            orderItem.setQuantity(iwp.item().quantity());
+            orderItem.setUnitPrice(iwp.product().getPrice());
+            orderItem.setColor(iwp.item().color() != null ? iwp.item().color().trim().toUpperCase() : null);
+            orderItem.setEngravingText(iwp.item().engravingText());
 
-            ShippingInfo shippingInfo = new ShippingInfo();
-            shippingInfo.setOrders(savedOrder);
-            shippingInfo.setRecipientName(request.recipientName());
-            shippingInfo.setPhone(request.phone());
-            shippingInfo.setAddress(request.address());
-            shippingInfo.setProvince(request.province());
-            shippingInfo.setTrackingNumber(null);
-            shippingInfoRepository.save(shippingInfo);
+            OrderItem savedItem = orderItemRepository.save(orderItem);
 
-            List<OrderItemResponseDTO> itemResponses = new ArrayList<>();
-            for (ItemWithProduct iwp : sellerItems) {
-                OrderItem orderItem = new OrderItem();
-                orderItem.setOrder(savedOrder);
-                orderItem.setProduct(iwp.product());
-                orderItem.setQuantity(iwp.item().quantity());
-                orderItem.setUnitPrice(iwp.product().getPrice());
-                orderItem.setColor(iwp.item().color() != null ? iwp.item().color().trim().toUpperCase() : null);
-                orderItem.setEngravingText(iwp.item().engravingText());
-
-                OrderItem savedItem = orderItemRepository.save(orderItem);
-
-                itemResponses.add(OrderItemResponseDTO.builder()
-                        .id(savedItem.getId())
-                        .productId(iwp.product().getId())
-                        .productTitle(iwp.product().getTitle())
-                        .quantity(savedItem.getQuantity())
-                        .unitPrice(savedItem.getUnitPrice())
-                        .subTotal(savedItem.getUnitPrice().multiply(BigDecimal.valueOf(savedItem.getQuantity())))
-                        .color(savedItem.getColor())
-                        .engravingText(savedItem.getEngravingText())
-                        .build());
-            }
-
-            String paymentMethod = request.paymentMethod().trim().toUpperCase();
-            String paymentStatus = "PENDING";
-            String orderCode = null;
-
-            if ("COD".equals(paymentMethod)) {
-                Payment payment = new Payment();
-                payment.setOrder(savedOrder);
-                payment.setAmount(totalAmount);
-                payment.setGateway("COD");
-                payment.setStatus("PENDING");
-                payment.setTransactionId(null);
-                payment.setCreatedAt(Instant.now());
-                payment.setUpdatedAt(Instant.now());
-                paymentRepository.save(payment);
-            }
-
-            createdOrders.add(OrderResponseDTO.builder()
-                    .id(savedOrder.getId())
-                    .buyerId(buyer.getId())
-                    .buyerName(buyer.getFullName())
-                    .sellerId(seller.getId())
-                    .sellerName(seller.getFullName())
-                    .totalAmount(savedOrder.getTotalAmount())
-                    .commissionFee(savedOrder.getCommissionFee())
-                    .status(savedOrder.getStatus())
-                    .paymentMethod(paymentMethod)
-                    .paymentStatus(paymentStatus)
-                    .orderCode(orderCode)
-                    .shippingInfo(ShippingInfoResponseDTO.builder()
-                            .recipientName(shippingInfo.getRecipientName())
-                            .phone(shippingInfo.getPhone())
-                            .address(shippingInfo.getAddress())
-                            .province(shippingInfo.getProvince())
-                            .trackingNumber(shippingInfo.getTrackingNumber())
-                            .build())
-                    .items(itemResponses)
-                    .createdAt(savedOrder.getCreatedAt())
-                    .updatedAt(savedOrder.getUpdatedAt())
+            itemResponses.add(OrderItemResponseDTO.builder()
+                    .id(savedItem.getId())
+                    .productId(iwp.product().getId())
+                    .productTitle(iwp.product().getTitle())
+                    .quantity(savedItem.getQuantity())
+                    .unitPrice(savedItem.getUnitPrice())
+                    .subTotal(savedItem.getUnitPrice().multiply(BigDecimal.valueOf(savedItem.getQuantity())))
+                    .color(savedItem.getColor())
+                    .engravingText(savedItem.getEngravingText())
                     .build());
         }
+
+        String paymentMethod = request.paymentMethod().trim().toUpperCase();
+        String paymentStatus = "PENDING";
+        String orderCode = null;
+
+        if ("COD".equals(paymentMethod)) {
+            Payment payment = new Payment();
+            payment.setOrder(savedOrder);
+            payment.setAmount(totalAmount);
+            payment.setGateway("COD");
+            payment.setStatus("PENDING");
+            payment.setTransactionId(null);
+            payment.setCreatedAt(Instant.now());
+            payment.setUpdatedAt(Instant.now());
+            paymentRepository.save(payment);
+        }
+
+        createdOrders.add(OrderResponseDTO.builder()
+                .id(savedOrder.getId())
+                .buyerId(buyer.getId())
+                .buyerName(buyer.getFullName())
+                .sellerId(null)
+                .sellerName(null)
+                .totalAmount(savedOrder.getTotalAmount())
+                .commissionFee(savedOrder.getCommissionFee())
+                .status(savedOrder.getStatus())
+                .paymentMethod(paymentMethod)
+                .paymentStatus(paymentStatus)
+                .orderCode(orderCode)
+                .shippingInfo(ShippingInfoResponseDTO.builder()
+                        .recipientName(shippingInfo.getRecipientName())
+                        .phone(shippingInfo.getPhone())
+                        .address(shippingInfo.getAddress())
+                        .province(shippingInfo.getProvince())
+                        .trackingNumber(shippingInfo.getTrackingNumber())
+                        .build())
+                .items(itemResponses)
+                .createdAt(savedOrder.getCreatedAt())
+                .updatedAt(savedOrder.getUpdatedAt())
+                .build());
 
         return createdOrders;
     }
@@ -224,9 +217,46 @@ public class OrderServiceImpl implements OrderService {
                     .build();
         }
 
-        int earnedPoints = order.getTotalAmount()
-                .divideToIntegralValue(REWARD_POINT_UNIT)
-                .intValue();
+        // P1.7: Chỉ cộng điểm khi ĐÃ THU tiền (payment.status == SUCCESS) VÀ đơn đã COMPLETED
+        Payment payment = paymentRepository.findByOrderId(order.getId())
+                .or(() -> order.getCheckoutOrder() != null ? paymentRepository.findByCheckoutOrderIdAndScope(order.getCheckoutOrder().getId(), "MARKETPLACE") : Optional.empty())
+                .or(() -> order.getCheckoutOrder() != null ? paymentRepository.findByCheckoutOrderIdAndScope(order.getCheckoutOrder().getId(), "ALL") : Optional.empty())
+                .orElse(null);
+
+        boolean isPaid = (payment != null && "SUCCESS".equals(payment.getStatus()))
+                || (order.getCheckoutOrder() != null && "PAID".equalsIgnoreCase(order.getCheckoutOrder().getMarketplaceStatus()));
+
+        if (!isPaid) {
+            log.info("Chưa cấp điểm thưởng cho đơn {} vì tiền thanh toán chưa hoàn tất", order.getId());
+            return RewardCompletionResponseDTO.builder()
+                    .orderId(order.getId())
+                    .customerId(buyer.getId())
+                    .customerName(buyer.getFullName())
+                    .rewardPointsEarned(0)
+                    .totalRewardPoints(buyer.getRewardPoints() != null ? buyer.getRewardPoints() : 0)
+                    .alreadyProcessed(false)
+                    .build();
+        }
+
+        int earnedPoints = 0;
+        CheckoutOrder co = order.getCheckoutOrder();
+        if (co != null) {
+            // P1.6: Dùng service tích điểm lũy kế tập trung, đồng bộ điểm đã cấp cho CheckoutOrder
+            earnedPoints = checkoutRewardService.rewardCheckoutOrderCumulative(co.getId(), buyer);
+        } else {
+            BigDecimal eligibleAmount = BigDecimal.ZERO;
+            List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+            if (items != null && !items.isEmpty()) {
+                for (OrderItem oi : items) {
+                    if (oi.getUnitPrice() != null && oi.getQuantity() != null) {
+                        eligibleAmount = eligibleAmount.add(oi.getUnitPrice().multiply(BigDecimal.valueOf(oi.getQuantity())));
+                    }
+                }
+            } else if (order.getTotalAmount() != null) {
+                eligibleAmount = order.getTotalAmount();
+            }
+            earnedPoints = eligibleAmount.divideToIntegralValue(REWARD_POINT_UNIT).intValue();
+        }
 
         PointWallet wallet = pointWalletRepository.findById(buyer.getId()).orElseGet(() -> {
             PointWallet newWallet = PointWallet.builder()
@@ -238,15 +268,19 @@ public class OrderServiceImpl implements OrderService {
             buyer.setPointWallet(newWallet);
             return newWallet;
         });
-        wallet.setBalance(wallet.getBalance() + earnedPoints);
-        wallet.setUpdatedAt(java.time.LocalDateTime.now());
-        wallet = pointWalletRepository.save(wallet);
-        buyer.setPointWallet(wallet);
 
-        pointTransactionRepository.save(PointTransaction.builder()
-                .pointWallet(wallet).amount(earnedPoints)
-                .type(com.fpt.printhub_3d.entity.Enumeration.PointTransactionType.EARN)
-                .description("Hoàn thành đơn " + order.getId()).createdAt(java.time.LocalDateTime.now()).build());
+        if (earnedPoints > 0) {
+            wallet.setBalance(wallet.getBalance() + earnedPoints);
+            wallet.setUpdatedAt(java.time.LocalDateTime.now());
+            wallet = pointWalletRepository.save(wallet);
+            buyer.setPointWallet(wallet);
+
+            pointTransactionRepository.save(PointTransaction.builder()
+                    .pointWallet(wallet).amount(earnedPoints)
+                    .type(PointTransactionType.EARN)
+                    .description("Hoàn thành đơn " + order.getId() + (co != null ? " (CheckoutOrder #" + co.getId() + ")" : ""))
+                    .createdAt(java.time.LocalDateTime.now()).build());
+        }
 
         order.setRewardProcessed(true);
         order.setRewardPointsEarned(earnedPoints);
@@ -304,14 +338,15 @@ public class OrderServiceImpl implements OrderService {
                 .id(order.getId())
                 .buyerId(order.getBuyer().getId())
                 .buyerName(order.getBuyer().getFullName())
-                .sellerId(order.getSeller().getId())
-                .sellerName(order.getSeller().getFullName())
+                .sellerId(order.getSeller() != null ? order.getSeller().getId() : null)
+                .sellerName(order.getSeller() != null ? order.getSeller().getFullName() : null)
                 .totalAmount(order.getTotalAmount())
                 .commissionFee(order.getCommissionFee())
                 .status(order.getStatus())
                 .paymentMethod(payment != null ? payment.getGateway() : "PAYOS")
                 .paymentStatus(payment != null ? payment.getStatus() : "PENDING")
                 .orderCode(payment != null ? payment.getTransactionId() : null)
+                .checkoutOrderId(order.getCheckoutOrder() != null ? order.getCheckoutOrder().getId() : null)
                 .shippingInfo(shippingDTO)
                 .items(itemDTOs)
                 .createdAt(order.getCreatedAt())
@@ -379,11 +414,16 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public void updateOrderStatus(UUID id, String nextStatus, User currentUser) {
-        Order order = orderRepository.findById(id)
+        Order order = orderRepository.findLockedById(id)
                 .orElseThrow(() -> new ApiException(OrderErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn hàng"));
 
         String currentStatus = order.getStatus();
         Payment payment = paymentRepository.findByOrderId(id).orElse(null);
+        if (payment == null && order.getCheckoutOrder() != null) {
+            payment = paymentRepository.findByCheckoutOrderIdAndScope(order.getCheckoutOrder().getId(), "MARKETPLACE")
+                    .or(() -> paymentRepository.findByCheckoutOrderIdAndScope(order.getCheckoutOrder().getId(), "ALL"))
+                    .orElse(null);
+        }
 
         if ("CANCELLED".equals(nextStatus)) {
             if (currentUser.getRole() != UserRole.ADMIN && !order.getBuyer().getId().equals(currentUser.getId())) {
@@ -392,18 +432,70 @@ public class OrderServiceImpl implements OrderService {
             if (!"PENDING".equals(currentStatus)) {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chỉ được hủy đơn khi đơn chưa thanh toán hoặc chưa sản xuất");
             }
+            if (payment != null && "SUCCESS".equals(payment.getStatus())) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn hàng đã thanh toán thành công, vui lòng liên hệ Admin để được hỗ trợ đối soát");
+            }
             if (payment != null && "PAYOS".equals(payment.getGateway()) && payment.getTransactionId() != null) {
                 payment.setStatus("CANCELLED");
                 payment.setUpdatedAt(Instant.now());
                 paymentRepository.save(payment);
             }
+
+            if (order.getCheckoutOrder() != null) {
+                // Đơn thuộc CheckoutOrder: giải phóng RESERVED, và nếu là COD đã COMMITTED thì khôi phục Product.stock (R2-07)
+                List<InventoryReservation> resList = inventoryReservationRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId());
+                for (var res : resList) {
+                    if ("RESERVED".equals(res.getStatus())) {
+                        res.setStatus("CANCELLED");
+                        res.setUpdatedAt(Instant.now());
+                        inventoryReservationRepository.save(res);
+                    } else if ("COMMITTED".equals(res.getStatus())) {
+                        Product p = productRepository.findLockedById(res.getProduct().getId()).orElse(null);
+                        if (p != null) {
+                            p.setStock(p.getStock() + res.getQuantity());
+                            productRepository.save(p);
+                        }
+                        res.setStatus("CANCELLED");
+                        res.setUpdatedAt(Instant.now());
+                        inventoryReservationRepository.save(res);
+                    }
+                }
+            } else {
+                // Đơn mua trực tiếp (standalone): Đã trừ kho lúc tạo đơn, mới khôi phục tồn kho vào Product.stock (R07)
+                List<OrderItem> orderItems = orderItemRepository.findByOrderId(order.getId());
+                Map<UUID, Integer> restoreMap = new HashMap<>();
+                for (OrderItem oi : orderItems) {
+                    restoreMap.merge(oi.getProduct().getId(), oi.getQuantity(), Integer::sum);
+                }
+                List<UUID> sortedPids = new ArrayList<>(restoreMap.keySet());
+                sortedPids.sort(UUID::compareTo);
+                for (UUID pid : sortedPids) {
+                    Product p = productRepository.findLockedById(pid).orElse(null);
+                    if (p != null) {
+                        p.setStock(p.getStock() + restoreMap.get(pid));
+                        productRepository.save(p);
+                    }
+                }
+            }
         } else {
             if (currentUser.getRole() != UserRole.ADMIN) {
                 throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có thể chuyển tiến trình đơn");
             }
+
+            // Production guard: Online order must be PAID before production; COD can enter preparation (R08)
+            boolean isCod = (payment != null && "COD".equalsIgnoreCase(payment.getGateway()))
+                    || (order.getCheckoutOrder() != null && "COD".equalsIgnoreCase(order.getCheckoutOrder().getPaymentMethod()));
+
+            if (("PREPARING".equals(nextStatus) || "PRINTING".equals(nextStatus)) && "PENDING".equals(currentStatus)) {
+                if (!isCod) {
+                    throw new ApiException(CommonErrorCode.INVALID_INPUT,
+                            "Đơn thanh toán trực tuyến phải hoàn tất thanh toán (PAID) trước khi đưa vào sản xuất");
+                }
+            }
+
             boolean isValidTransition = switch (currentStatus) {
                 case "PAID", "PENDING" -> "PREPARING".equals(nextStatus) || "PRINTING".equals(nextStatus);
-                case "PREPARING" -> "PRINTING".equals(nextStatus);
+                case "PREPARING" -> "PRINTING".equals(nextStatus) || "SHIPPING".equals(nextStatus);
                 case "PRINTING" -> "SHIPPING".equals(nextStatus);
                 case "SHIPPING" -> "COMPLETED".equals(nextStatus);
                 default -> false;
@@ -412,16 +504,16 @@ public class OrderServiceImpl implements OrderService {
             if (!isValidTransition) {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chuyển trạng thái đơn không hợp lệ từ " + currentStatus + " sang " + nextStatus);
             }
-            if ("COMPLETED".equals(nextStatus) && payment != null && "COD".equals(payment.getGateway())) {
-                payment.setStatus("SUCCESS");
-                payment.setPaidAt(Instant.now());
-                paymentRepository.save(payment);
-            }
+            // COD thanh toán được xác nhận riêng bởi Admin qua confirmCodPayment có audit (không tự động coi DELIVERED là đã thu)
         }
 
         order.setStatus(nextStatus);
         order.setUpdatedAt(Instant.now());
         orderRepository.save(order);
+
+        if (order.getCheckoutOrder() != null) {
+            syncParentCheckoutOrder(order.getCheckoutOrder().getId());
+        }
 
         if ("COMPLETED".equals(nextStatus)) {
             completeRewards(id);
@@ -432,5 +524,84 @@ public class OrderServiceImpl implements OrderService {
                 "Đơn hàng " + id + " đã chuyển sang trạng thái: " + nextStatus,
                 "ORDER",
                 "/orders");
+    }
+
+    private void syncParentCheckoutOrder(UUID checkoutOrderId) {
+        if (checkoutOrderId == null || checkoutOrderRepository == null) return;
+        checkoutOrderRepository.findById(checkoutOrderId).ifPresent(parent -> {
+            List<Order> childOrders = orderRepository.findByCheckoutOrderId(checkoutOrderId);
+            List<CustomOrder> childCustoms = (customOrderRepository != null)
+                    ? customOrderRepository.findByCheckoutOrderId(checkoutOrderId) : Collections.emptyList();
+
+            boolean allOrdersDone = childOrders.stream().allMatch(o -> "COMPLETED".equals(o.getStatus()) || "CANCELLED".equals(o.getStatus()));
+            boolean allCustomsDone = childCustoms.stream().allMatch(c -> "COMPLETED".equals(c.getStatus()) || "CANCELLED".equals(c.getStatus()));
+
+            if (allOrdersDone && allCustomsDone && (!childOrders.isEmpty() || !childCustoms.isEmpty())) {
+                parent.setStatus("COMPLETED");
+            } else {
+                boolean anyShipping = childOrders.stream().anyMatch(o -> "SHIPPING".equals(o.getStatus()))
+                        || childCustoms.stream().anyMatch(c -> "SHIPPING".equals(c.getStatus()));
+                if (anyShipping && !"COMPLETED".equals(parent.getStatus())) {
+                    parent.setStatus("SHIPPING");
+                }
+            }
+            parent.setUpdatedAt(Instant.now());
+            checkoutOrderRepository.save(parent);
+        });
+    }
+
+    @Override
+    @Transactional
+    public RewardCompletionResponseDTO confirmCodPayment(UUID orderId, User adminUser) {
+        if (adminUser.getRole() != UserRole.ADMIN) {
+            throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có quyền xác nhận thu tiền COD");
+        }
+        Order order = orderRepository.findLockedById(orderId)
+                .orElseThrow(() -> new ApiException(OrderErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn hàng"));
+
+        if ("CANCELLED".equals(order.getStatus())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Không thể thu tiền COD cho đơn đã hủy");
+        }
+
+        Payment payment = paymentRepository.findByOrderId(order.getId())
+                .or(() -> order.getCheckoutOrder() != null ? paymentRepository.findByCheckoutOrderIdAndScope(order.getCheckoutOrder().getId(), "MARKETPLACE") : Optional.empty())
+                .orElseThrow(() -> new ApiException(CommonErrorCode.INVALID_INPUT, "Không tìm thấy thông tin thanh toán của đơn hàng"));
+
+        if (!"COD".equalsIgnoreCase(payment.getGateway())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn hàng này không sử dụng hình thức COD");
+        }
+        if ("SUCCESS".equalsIgnoreCase(payment.getStatus())) {
+            log.info("Đơn hàng {} đã được xác nhận thu tiền COD trước đó.", orderId);
+        } else {
+            payment.setStatus("SUCCESS");
+            payment.setPaidAt(Instant.now());
+            payment.setUpdatedAt(Instant.now());
+            paymentRepository.save(payment);
+            log.info("Admin {} đã xác nhận thu tiền COD thành công cho đơn hàng {}", adminUser.getUsername(), orderId);
+
+            if (!"COMPLETED".equals(order.getStatus()) && !"DELIVERED".equals(order.getStatus())) {
+                order.setStatus("PAID");
+                order.setUpdatedAt(Instant.now());
+                orderRepository.save(order);
+            }
+            if (order.getCheckoutOrder() != null && checkoutOrderRepository != null) {
+                CheckoutOrder co = order.getCheckoutOrder();
+                co.setMarketplaceStatus("PAID");
+                co.setUpdatedAt(Instant.now());
+                checkoutOrderRepository.save(co);
+            }
+        }
+
+        if ("COMPLETED".equals(order.getStatus())) {
+            return completeRewards(orderId);
+        }
+        return RewardCompletionResponseDTO.builder()
+                .orderId(order.getId())
+                .customerId(order.getBuyer().getId())
+                .customerName(order.getBuyer().getFullName())
+                .rewardPointsEarned(0)
+                .totalRewardPoints(order.getBuyer().getRewardPoints() != null ? order.getBuyer().getRewardPoints() : 0)
+                .alreadyProcessed(false)
+                .build();
     }
 }

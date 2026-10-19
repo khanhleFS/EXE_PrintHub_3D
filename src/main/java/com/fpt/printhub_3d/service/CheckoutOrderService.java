@@ -17,4 +17,6 @@ public interface CheckoutOrderService {
     List<CheckoutOrderResponseDTO> getMyCheckoutOrders(User user);
 
     CheckoutOrderResponseDTO confirmCheckoutOrder(User user, UUID id, CheckoutOrderConfirmRequestDTO request);
+
+    CheckoutOrderResponseDTO getExistingByIdempotency(User user, String idempotencyKey);
 }

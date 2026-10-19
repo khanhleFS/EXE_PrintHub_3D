@@ -232,8 +232,8 @@ public class ProductServiceImpl implements ProductService {
 
         return ProductResponseDTO.builder()
                 .id(product.getId())
-                .sellerId(product.getSeller().getId())
-                .sellerName(product.getSeller().getFullName())
+                .sellerId(product.getSeller() != null ? product.getSeller().getId() : null)
+                .sellerName(product.getSeller() != null ? product.getSeller().getFullName() : null)
                 .categoryId(product.getCategory().getCategoryId())
                 .categoryName(product.getCategory().getCategoryName())
                 .title(product.getTitle())

@@ -28,6 +28,17 @@ public record SubscriptionPlanRequestDTO(
 
         @Min(value = 0, message = "Điểm quy đổi tối thiểu phải lớn hơn hoặc bằng 0")
         @Schema(description = "Số điểm tối thiểu cần để đổi gói Customer. Gói Maker có thể bỏ trống.", example = "500")
-        Integer requiredPoints
+        Integer requiredPoints,
+
+        @Min(value = 1, message = "Thời hạn gói tối thiểu phải là 1 ngày")
+        @Schema(description = "Thời hạn hiệu lực của kỳ gói (ngày)", example = "30")
+        Integer durationDays,
+
+        @Schema(description = "Áp dụng miễn phí vận chuyển cho gói", example = "true")
+        Boolean freeShipping,
+
+        @DecimalMin(value = "0.0", inclusive = true, message = "Mức giảm phí ship phải lớn hơn hoặc bằng 0")
+        @Schema(description = "Mức giảm phí vận chuyển tối đa (VND)", example = "15000")
+        BigDecimal shippingDiscountAmount
 ) {
 }

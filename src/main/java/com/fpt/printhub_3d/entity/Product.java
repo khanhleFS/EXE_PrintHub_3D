@@ -22,9 +22,8 @@ public class Product {
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
-    @NotNull
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "seller_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "seller_id")
     private User seller;
 
     @NotNull

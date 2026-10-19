@@ -22,6 +22,15 @@ public record CreatePaymentLinkResponseDTO(
         String orderCode,
 
         @Schema(description = "Thời gian hết hạn của link thanh toán")
-        Instant expiredAt
+        Instant expiredAt,
+
+        @Schema(description = "ID của Payment Attempt")
+        java.util.UUID attemptId,
+
+        @Schema(description = "Trạng thái tạo link: READY, INITIALIZING")
+        String status,
+
+        @Schema(description = "Số giây khuyến nghị thử lại (nếu status = INITIALIZING)")
+        Integer retryAfterSeconds
 ) {
 }

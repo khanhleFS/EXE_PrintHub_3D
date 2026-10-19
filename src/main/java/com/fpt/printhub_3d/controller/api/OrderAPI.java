@@ -69,4 +69,12 @@ public interface OrderAPI {
     ResponseEntity<ApiResponse<Void>> updateOrderStatus(
             @PathVariable UUID id,
             @Valid @RequestBody OrderStatusUpdateRequestDTO request);
+
+    @Operation(
+            summary = "Admin confirms COD cash collection",
+            description = "Quản trị viên xác nhận đã nhận tiền thu hộ COD để cập nhật trạng thái thanh toán và tích điểm.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping("/{id}/confirm-cod")
+    ResponseEntity<ApiResponse<RewardCompletionResponseDTO>> confirmCodPayment(@PathVariable UUID id);
 }

@@ -10,8 +10,10 @@ import java.util.List;
 @Builder
 @Schema(description = "Yêu cầu tạo đơn cha từ giỏ hàng")
 public record CheckoutOrderCreateRequestDTO(
-        @NotEmpty(message = "Danh sách sản phẩm được chọn không được để trống")
-        @Schema(description = "Danh sách clientLineId hoặc ID các dòng được chọn từ giỏ hàng")
+        @Schema(description = "Danh sách chi tiết dòng sản phẩm gồm lineId, số lượng và revision")
+        List<CheckoutLineItemRequestDTO> items,
+
+        @Schema(description = "Danh sách clientLineId hoặc ID các dòng được chọn từ giỏ hàng (tương thích ngược)")
         List<String> selectedLineIds,
 
         @Schema(description = "Phương thức giao hàng: COMMON (Giao chung) hoặc SEPARATE (Giao riêng)", example = "COMMON")

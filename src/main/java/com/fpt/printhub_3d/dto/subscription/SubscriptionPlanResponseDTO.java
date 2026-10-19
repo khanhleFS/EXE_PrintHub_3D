@@ -17,6 +17,9 @@ public record SubscriptionPlanResponseDTO(
         BigDecimal price,
         String benefits,
         Integer requiredPoints,
+        Integer durationDays,
+        Boolean freeShipping,
+        BigDecimal shippingDiscountAmount,
         Boolean isActive,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
