@@ -28,6 +28,10 @@ public record SubscriptionPlanRequestDTO(
 
         @Min(value = 0, message = "Điểm quy đổi tối thiểu phải lớn hơn hoặc bằng 0")
         @Schema(description = "Số điểm tối thiểu cần để đổi gói Customer. Gói Maker có thể bỏ trống.", example = "500")
-        Integer requiredPoints
+        Integer requiredPoints,
+
+        @Min(value = 1, message = "Thời hạn gói tối thiểu phải từ 1 ngày")
+        @Schema(description = "Thời hạn hiệu lực của gói (ngày)", example = "30")
+        Integer durationDays
 ) {
 }

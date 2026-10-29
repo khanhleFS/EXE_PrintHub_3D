@@ -43,6 +43,10 @@ public class SubscriptionPlan extends BaseEntity {
     @Column(name = "required_points")
     private Integer requiredPoints;
 
+    @Column(name = "duration_days")
+    @Builder.Default
+    private Integer durationDays = 30;
+
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;

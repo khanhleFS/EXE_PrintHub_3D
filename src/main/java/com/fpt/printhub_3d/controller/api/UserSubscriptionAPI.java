@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.controller.api;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
+import com.fpt.printhub_3d.dto.subscription.RedeemSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPlanResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.UserSubscriptionResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,16 +31,17 @@ public interface UserSubscriptionAPI {
 
     @Operation(
             summary = "Redeem subscription plan with reward points",
-            description = "Người mua hoặc người bán dùng điểm thưởng tích lũy để đổi gói dịch vụ tương ứng.",
+            description = "Người mua hoặc người bán dùng điểm thưởng tích lũy để đổi gói dịch vụ tương ứng. Hỗ trợ idempotencyKey trong body để chống trừ điểm trùng lặp.",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @PostMapping("/api/subscriptions/redeem/{planId}")
     ResponseEntity<ApiResponse<UserSubscriptionResponseDTO>> redeemSubscription(
-            @PathVariable("planId") UUID planId);
+            @PathVariable("planId") UUID planId,
+            @RequestBody(required = false) RedeemSubscriptionRequestDTO request);
 
     @Operation(
             summary = "Admin gifts subscription plan to a user",
-            description = "Admin phát gói quà tặng hoặc đền bù dịch vụ cho một tài khoản bất kỳ.",
+            description = "Admin phát gói quà tặng hoặc đền bù dịch vụ cho một tài khoản bất kỳ. Hỗ trợ requestId chống phát trùng.",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @PostMapping("/api/admin/subscriptions/gift")

@@ -29,17 +29,20 @@ public class SubscriptionPlanServiceImpl implements SubscriptionPlanService {
             throw new ApiException(SubscriptionErrorCode.DUPLICATE_PLAN_NAME);
         }
 
+        int durationDays = (request.durationDays() != null && request.durationDays() > 0) ? request.durationDays() : 30;
+
         SubscriptionPlan plan = SubscriptionPlan.builder()
                 .type(type)
                 .name(request.name())
                 .price(request.price())
                 .benefits(request.benefits())
                 .requiredPoints(type == SubscriptionType.CUSTOMER ? request.requiredPoints() : null)
+                .durationDays(durationDays)
                 .isActive(true)
                 .build();
 
         SubscriptionPlan savedPlan = subscriptionPlanRepository.save(plan);
-        log.info("Tạo gói subscription [{}] loại [{}]", savedPlan.getId(), type);
+        log.info("Tạo gói subscription [{}] loại [{}] thời hạn [{} ngày]", savedPlan.getId(), type, durationDays);
         return toResponse(savedPlan);
     }
 
@@ -57,6 +60,9 @@ public class SubscriptionPlanServiceImpl implements SubscriptionPlanService {
         plan.setPrice(request.price());
         plan.setBenefits(request.benefits());
         plan.setRequiredPoints(type == SubscriptionType.CUSTOMER ? request.requiredPoints() : null);
+        if (request.durationDays() != null && request.durationDays() > 0) {
+            plan.setDurationDays(request.durationDays());
+        }
 
         SubscriptionPlan savedPlan = subscriptionPlanRepository.save(plan);
         log.info("Cập nhật gói subscription [{}] loại [{}]", savedPlan.getId(), type);
@@ -97,6 +103,7 @@ public class SubscriptionPlanServiceImpl implements SubscriptionPlanService {
                 .price(plan.getPrice())
                 .benefits(plan.getBenefits())
                 .requiredPoints(plan.getRequiredPoints())
+                .durationDays(plan.getDurationDays() != null && plan.getDurationDays() > 0 ? plan.getDurationDays() : 30)
                 .isActive(plan.getIsActive())
                 .createdAt(plan.getCreatedAt())
                 .updatedAt(plan.getUpdatedAt())

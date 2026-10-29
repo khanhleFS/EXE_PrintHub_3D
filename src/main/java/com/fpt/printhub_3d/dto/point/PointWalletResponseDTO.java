@@ -14,4 +14,3 @@ public record PointWalletResponseDTO(
         Integer availableToSpend,
         LocalDateTime updatedAt
 ) {}
-

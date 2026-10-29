@@ -16,4 +16,6 @@ public interface SubscriptionPlanRepository extends JpaRepository<SubscriptionPl
     Optional<SubscriptionPlan> findByNameIgnoreCaseAndType(String name, SubscriptionType type);
 
     List<SubscriptionPlan> findByTypeAndIsActiveTrue(SubscriptionType type);
+
+    List<SubscriptionPlan> findByTypeInAndIsActiveTrue(List<SubscriptionType> types);
 }

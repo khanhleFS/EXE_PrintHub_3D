@@ -4,6 +4,7 @@ import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.UserSubscriptionAPI;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
+import com.fpt.printhub_3d.dto.subscription.RedeemSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPlanResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.UserSubscriptionResponseDTO;
 import com.fpt.printhub_3d.service.UserSubscriptionService;
@@ -44,11 +45,13 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
 
     @Override
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<UserSubscriptionResponseDTO>> redeemSubscription(UUID planId) {
+    public ResponseEntity<ApiResponse<UserSubscriptionResponseDTO>> redeemSubscription(
+            UUID planId, RedeemSubscriptionRequestDTO request) {
         UUID userId = SecurityUtils.getCurrentUser().getId();
-        
-        UserSubscriptionResponseDTO response = userSubscriptionService.redeemSubscription(userId, planId);
-        
+        String idempotencyKey = request != null ? request.idempotencyKey() : null;
+
+        UserSubscriptionResponseDTO response = userSubscriptionService.redeemSubscription(userId, planId, idempotencyKey);
+
         return ResponseEntity.ok(
                 ApiResponse.<UserSubscriptionResponseDTO>builder()
                         .code(200)
@@ -62,7 +65,7 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<UserSubscriptionResponseDTO>> giftSubscription(GiftSubscriptionRequestDTO request) {
         UserSubscriptionResponseDTO response = userSubscriptionService.giftSubscription(request);
-        
+
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<UserSubscriptionResponseDTO>builder()
                         .code(201)

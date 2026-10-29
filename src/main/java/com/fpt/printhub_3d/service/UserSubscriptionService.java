@@ -11,6 +11,7 @@ import java.util.UUID;
 public interface UserSubscriptionService {
     List<SubscriptionPlanResponseDTO> getAvailablePlansForUser(UUID userId);
     UserSubscriptionResponseDTO redeemSubscription(UUID userId, UUID planId);
+    UserSubscriptionResponseDTO redeemSubscription(UUID userId, UUID planId, String idempotencyKey);
     UserSubscriptionResponseDTO giftSubscription(GiftSubscriptionRequestDTO request);
     UserSubscriptionSummaryDTO getUserSubscriptionSummary(UUID userId);
 }

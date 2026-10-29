@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.service.impl;
 
 import com.fpt.printhub_3d.common.exception.ApiException;
 import com.fpt.printhub_3d.common.exception.CommonErrorCode;
+import com.fpt.printhub_3d.common.exception.SubscriptionErrorCode;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPlanResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.UserSubscriptionResponseDTO;
@@ -34,6 +35,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final PointWalletRepository pointWalletRepository;
     private final PointTransactionRepository pointTransactionRepository;
+    private final SubscriptionCommandRecordRepository subscriptionCommandRecordRepository;
 
     @Transactional
     @Override
@@ -43,14 +45,11 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
         User user = userRepository.findLockedById(userId)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng."));
 
-        SubscriptionType planType;
-        if (user.getRole() == UserRole.USER || user.getRole() == UserRole.ADMIN) {
-            planType = SubscriptionType.CUSTOMER;
-        } else {
+        if (user.getRole() != UserRole.USER && user.getRole() != UserRole.ADMIN) {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Loại người dùng không hợp lệ.");
         }
 
-        return subscriptionPlanRepository.findByTypeAndIsActiveTrue(planType)
+        return subscriptionPlanRepository.findByTypeInAndIsActiveTrue(List.of(SubscriptionType.CUSTOMER, SubscriptionType.CUSTOMER_VIP))
                 .stream()
                 .map(plan -> SubscriptionPlanResponseDTO.builder()
                         .id(plan.getId())
@@ -59,6 +58,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                         .price(plan.getPrice())
                         .benefits(plan.getBenefits())
                         .requiredPoints(plan.getRequiredPoints())
+                        .durationDays(plan.getDurationDays() != null && plan.getDurationDays() > 0 ? plan.getDurationDays() : 30)
                         .isActive(plan.getIsActive())
                         .createdAt(plan.getCreatedAt())
                         .updatedAt(plan.getUpdatedAt())
@@ -88,27 +88,69 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     @Override
     @Transactional
     public UserSubscriptionResponseDTO redeemSubscription(UUID userId, UUID planId) {
-        log.info("Người dùng [{}] yêu cầu đổi điểm lấy gói [{}]", userId, planId);
+        return redeemSubscription(userId, planId, null);
+    }
 
+    @Override
+    @Transactional
+    public UserSubscriptionResponseDTO redeemSubscription(UUID userId, UUID planId, String idempotencyKey) {
+        log.info("Người dùng [{}] yêu cầu đổi điểm lấy gói [{}], idempotencyKey: [{}]", userId, planId, idempotencyKey);
+
+        // 1. Kiểm tra Idempotency key (nếu có)
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            Optional<SubscriptionCommandRecord> existingRecordOpt =
+                    subscriptionCommandRecordRepository.findByRequestId(idempotencyKey.trim());
+            if (existingRecordOpt.isPresent()) {
+                SubscriptionCommandRecord record = existingRecordOpt.get();
+                if (record.getUserId().equals(userId) && record.getPlanId().equals(planId)) {
+                    log.info("Idempotency key [{}] cho đổi điểm đã được xử lý. Trả về kết quả trước đó.", idempotencyKey);
+                    UserSubscription sub = userSubscriptionRepository.findById(record.getSubscriptionId())
+                            .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy gói đã đổi."));
+                    return toResponseDTO(sub);
+                } else {
+                    throw new ApiException(SubscriptionErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Mã idempotencyKey [" + idempotencyKey + "] đã được sử dụng cho một yêu cầu khác.");
+                }
+            }
+        }
+
+        // 2. Kiểm tra User
         User user = userRepository.findLockedById(userId)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng."));
 
-        SubscriptionPlan plan = subscriptionPlanRepository.findById(planId)
-                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy gói dịch vụ."));
-
-        if (!Boolean.TRUE.equals(plan.getIsActive())) {
-            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói dịch vụ này hiện tại không hoạt động.");
+        if (!Boolean.TRUE.equals(user.getIsActive()) || user.getRole() != UserRole.USER) {
+            throw new ApiException(SubscriptionErrorCode.INVALID_RECIPIENT, "Tài khoản người dùng không hợp lệ hoặc đã bị khóa.");
         }
 
-        if ((plan.getType() != SubscriptionType.CUSTOMER && plan.getType() != SubscriptionType.CUSTOMER_VIP) || user.getRole() != UserRole.USER) {
+        // 3. Kiểm tra Gói dịch vụ
+        SubscriptionPlan plan = subscriptionPlanRepository.findById(planId)
+                .orElseThrow(() -> new ApiException(SubscriptionErrorCode.PLAN_NOT_FOUND, "Không tìm thấy gói dịch vụ."));
+
+        if (!Boolean.TRUE.equals(plan.getIsActive())) {
+            throw new ApiException(SubscriptionErrorCode.PLAN_INACTIVE, "Gói dịch vụ này hiện tại không hoạt động.");
+        }
+
+        if (plan.getType() != SubscriptionType.CUSTOMER && plan.getType() != SubscriptionType.CUSTOMER_VIP) {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói VIP người mua chỉ dành cho tài khoản khách hàng.");
         }
 
         Integer requiredPoints = plan.getRequiredPoints();
         if (requiredPoints == null || requiredPoints <= 0) {
-            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói dịch vụ này không hỗ trợ đổi bằng điểm thưởng.");
+            throw new ApiException(SubscriptionErrorCode.POINT_REDEMPTION_NOT_SUPPORTED, "Gói dịch vụ này không hỗ trợ đổi bằng điểm thưởng.");
         }
 
+        // 4. KIỂM TRA XUNG ĐỘT GÓI TRƯỚC KHI TRỪ ĐIỂM (BẢO VỆ ĐIỂM USER)
+        List<UserSubscription> activeSubs = userSubscriptionRepository.findActiveSubscriptionsByUser(user);
+        for (UserSubscription activeSub : activeSubs) {
+            if (activeSub.getPlan() != null && !activeSub.getPlan().getId().equals(plan.getId())) {
+                log.warn("User [{}] đang có gói [{}] còn hiệu lực, không thể đổi sang gói [{}]",
+                        userId, activeSub.getPlan().getName(), plan.getName());
+                throw new ApiException(SubscriptionErrorCode.ACTIVE_PLAN_CONFLICT,
+                        "ACTIVE_PLAN_CONFLICT: Người dùng đang có gói hội viên khác còn hiệu lực.");
+            }
+        }
+
+        // 5. Khóa ví điểm an toàn và kiểm tra số dư
         PointWallet wallet = pointWalletRepository.findByUserIdForUpdate(userId).or(() -> pointWalletRepository.findById(userId)).orElseGet(() -> {
             PointWallet newWallet = PointWallet.builder()
                     .userId(userId)
@@ -123,13 +165,16 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
         user.setPointWallet(wallet);
 
         if (wallet.getBalance() < requiredPoints) {
-            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Số dư điểm thưởng không đủ. Cần: " + requiredPoints + ", Hiện có: " + wallet.getBalance());
+            throw new ApiException(SubscriptionErrorCode.INSUFFICIENT_POINTS,
+                    "Số dư điểm thưởng không đủ. Cần: " + requiredPoints + ", Hiện có: " + wallet.getBalance());
         }
 
+        // 6. Trừ điểm ví
         wallet.setBalance(wallet.getBalance() - requiredPoints);
         wallet.setUpdatedAt(LocalDateTime.now());
         pointWalletRepository.save(wallet);
 
+        // 7. Ghi sổ cái PointTransaction REDEEM
         PointTransaction transaction = PointTransaction.builder()
                 .pointWallet(wallet)
                 .amount(-requiredPoints)
@@ -139,7 +184,21 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .build();
         pointTransactionRepository.save(transaction);
 
+        // 8. Kích hoạt hoặc gia hạn gói
         UserSubscription userSub = processSubscriptionActivation(user, plan);
+
+        // 9. Lưu Idempotency record nếu có
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            SubscriptionCommandRecord record = SubscriptionCommandRecord.builder()
+                    .requestId(idempotencyKey.trim())
+                    .userId(userId)
+                    .planId(planId)
+                    .subscriptionId(userSub.getId())
+                    .commandType("REDEEM")
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            subscriptionCommandRecordRepository.save(record);
+        }
 
         return toResponseDTO(userSub);
     }
@@ -147,36 +206,88 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     @Override
     @Transactional
     public UserSubscriptionResponseDTO giftSubscription(GiftSubscriptionRequestDTO request) {
-        log.info("Admin thực hiện phát gói [{}] cho người dùng [{}] với lý do: {}", request.planId(), request.userId(), request.reason());
+        log.info("Admin thực hiện phát gói [{}] cho người dùng [{}] với lý do: {}, requestId: [{}]",
+                request.planId(), request.userId(), request.reason(), request.requestId());
 
+        // 1. Kiểm tra Idempotency key (nếu có)
+        if (request.requestId() != null && !request.requestId().isBlank()) {
+            Optional<SubscriptionCommandRecord> existingRecordOpt =
+                    subscriptionCommandRecordRepository.findByRequestId(request.requestId().trim());
+            if (existingRecordOpt.isPresent()) {
+                SubscriptionCommandRecord record = existingRecordOpt.get();
+                if (record.getUserId().equals(request.userId()) && record.getPlanId().equals(request.planId())) {
+                    log.info("RequestId [{}] đã được xử lý trước đó. Trả về kết quả trước đó.", request.requestId());
+                    UserSubscription sub = userSubscriptionRepository.findById(record.getSubscriptionId())
+                            .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy gói đã cấp."));
+                    return toResponseDTO(sub);
+                } else {
+                    throw new ApiException(SubscriptionErrorCode.IDEMPOTENCY_CONFLICT,
+                            "Mã requestId [" + request.requestId() + "] đã được sử dụng cho một yêu cầu khác.");
+                }
+            }
+        }
+
+        // 2. Kiểm tra User
         User user = userRepository.findLockedById(request.userId())
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy người dùng được tặng."));
 
-        SubscriptionPlan plan = subscriptionPlanRepository.findById(request.planId())
-                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy gói dịch vụ."));
-
-        if (!Boolean.TRUE.equals(plan.getIsActive()) || user.getRole() != UserRole.USER
-                || (plan.getType() != SubscriptionType.CUSTOMER && plan.getType() != SubscriptionType.CUSTOMER_VIP)) {
-            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói hoặc tài khoản không hợp lệ.");
+        if (!Boolean.TRUE.equals(user.getIsActive()) || user.getRole() != UserRole.USER) {
+            throw new ApiException(SubscriptionErrorCode.INVALID_RECIPIENT, "Tài khoản người nhận không hợp lệ hoặc đã bị khóa.");
         }
+
+        // 3. Kiểm tra Gói dịch vụ
+        SubscriptionPlan plan = subscriptionPlanRepository.findById(request.planId())
+                .orElseThrow(() -> new ApiException(SubscriptionErrorCode.PLAN_NOT_FOUND, "Không tìm thấy gói dịch vụ."));
+
+        if (!Boolean.TRUE.equals(plan.getIsActive())) {
+            throw new ApiException(SubscriptionErrorCode.PLAN_INACTIVE, "Gói dịch vụ này hiện tại không hoạt động.");
+        }
+
+        if (plan.getType() != SubscriptionType.CUSTOMER && plan.getType() != SubscriptionType.CUSTOMER_VIP) {
+            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói được tặng không thuộc nhóm khách hàng.");
+        }
+
+        // 4. Kích hoạt hoặc gia hạn gói
         UserSubscription userSub = processSubscriptionActivation(user, plan);
+
+        // 5. Lưu Idempotency record nếu có
+        if (request.requestId() != null && !request.requestId().isBlank()) {
+            SubscriptionCommandRecord record = SubscriptionCommandRecord.builder()
+                    .requestId(request.requestId().trim())
+                    .userId(user.getId())
+                    .planId(plan.getId())
+                    .subscriptionId(userSub.getId())
+                    .commandType("GIFT")
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            subscriptionCommandRecordRepository.save(record);
+        }
 
         return toResponseDTO(userSub);
     }
 
     private UserSubscription processSubscriptionActivation(User user, SubscriptionPlan plan) {
         LocalDateTime now = LocalDateTime.now();
-        int durationDays = 30; // Mặc định gói kéo dài 30 ngày
+        int durationDays = (plan.getDurationDays() != null && plan.getDurationDays() > 0) ? plan.getDurationDays() : 30;
 
-        Optional<UserSubscription> activeSubOpt = userSubscriptionRepository
-                .findActiveSubscriptionByUserAndType(user, plan.getType());
+        List<UserSubscription> activeSubs = userSubscriptionRepository.findActiveSubscriptionsByUser(user);
 
         UserSubscription userSub;
-        if (activeSubOpt.isPresent()) {
-            UserSubscription activeSub = activeSubOpt.get();
-            activeSub.setEndDate(activeSub.getEndDate().plusDays(durationDays));
-            userSub = userSubscriptionRepository.save(activeSub);
-            log.info("Đã gia hạn gói dịch vụ [{}] cho người dùng [{}]. Hạn mới: {}", plan.getName(), user.getId(), userSub.getEndDate());
+        if (!activeSubs.isEmpty()) {
+            Optional<UserSubscription> samePlanSubOpt = activeSubs.stream()
+                    .filter(sub -> sub.getPlan() != null && sub.getPlan().getId().equals(plan.getId()))
+                    .findFirst();
+
+            if (samePlanSubOpt.isPresent()) {
+                UserSubscription activeSub = samePlanSubOpt.get();
+                activeSub.setEndDate(activeSub.getEndDate().plusDays(durationDays));
+                userSub = userSubscriptionRepository.save(activeSub);
+                log.info("Đã gia hạn gói dịch vụ [{}] cho người dùng [{}]. Hạn mới: {}", plan.getName(), user.getId(), userSub.getEndDate());
+            } else {
+                log.warn("Xung đột gói: User [{}] đang có gói khác còn hiệu lực, không thể cấp gói [{}]", user.getId(), plan.getName());
+                throw new ApiException(SubscriptionErrorCode.ACTIVE_PLAN_CONFLICT,
+                        "ACTIVE_PLAN_CONFLICT: Người dùng đang có gói hội viên khác còn hiệu lực.");
+            }
         } else {
             userSub = UserSubscription.builder()
                     .user(user)
