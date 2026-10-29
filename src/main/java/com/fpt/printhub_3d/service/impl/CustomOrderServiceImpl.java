@@ -17,6 +17,13 @@ import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.repository.UserRepository;
 import com.fpt.printhub_3d.service.CloudinaryService;
 import com.fpt.printhub_3d.service.CustomOrderService;
+import com.fpt.printhub_3d.dto.order.RewardCompletionResponseDTO;
+import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
+import com.fpt.printhub_3d.entity.PointTransaction;
+import com.fpt.printhub_3d.entity.PointWallet;
+import com.fpt.printhub_3d.repository.PointTransactionRepository;
+import com.fpt.printhub_3d.repository.PointWalletRepository;
+import java.time.LocalDateTime;
 import com.fpt.printhub_3d.service.FileStorageService;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
@@ -45,6 +52,9 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final NotificationService notificationService;
     private final CloudinaryService cloudinaryService;
     private final com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy;
+    private final PointWalletRepository pointWalletRepository;
+    private final PointTransactionRepository pointTransactionRepository;
+    private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
 
     private User getCurrentUserSafely() {
         try {
@@ -266,10 +276,96 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         order.setUpdatedAt(Instant.now());
         customOrderRepository.save(order);
 
+        if ("COMPLETED".equals(resolvedStatus)) {
+            try {
+                completeRewards(id);
+            } catch (Exception e) {
+                log.warn("Lỗi khi tự động thưởng điểm cho custom order {}: {}", id, e.getMessage());
+            }
+        }
+
         notificationService.sendNotification(order.getBuyer(),
                 "Cập nhật tiến trình in",
                 "Yêu cầu in 3D " + id + " đã chuyển sang trạng thái: " + resolvedStatus,
                 "CUSTOM_ORDER",
                 "/quotations");
+    }
+
+    @Override
+    @Transactional
+    public RewardCompletionResponseDTO completeRewards(UUID customOrderId) {
+        CustomOrder order = customOrderRepository.findLockedById(customOrderId)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in ID: " + customOrderId));
+
+        if (!"COMPLETED".equals(order.getStatus())) {
+            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Yêu cầu in chưa ở trạng thái COMPLETED");
+        }
+
+        Payment payment = paymentRepository.findByCustomOrderId(customOrderId).orElse(null);
+        if (payment == null && order.getCheckoutOrder() != null) {
+            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
+        }
+        if (payment == null || !"SUCCESS".equalsIgnoreCase(payment.getStatus())) {
+            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Yêu cầu in chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
+        }
+
+        User buyer = order.getBuyer();
+        if (Boolean.TRUE.equals(order.getRewardProcessed())) {
+            return RewardCompletionResponseDTO.builder()
+                    .orderId(order.getId())
+                    .customerId(buyer.getId())
+                    .customerName(buyer.getFullName())
+                    .rewardPointsEarned(order.getRewardPointsEarned() != null ? order.getRewardPointsEarned() : 0)
+                    .totalRewardPoints(buyer.getRewardPoints() != null ? buyer.getRewardPoints() : 0)
+                    .alreadyProcessed(true)
+                    .build();
+        }
+
+        BigDecimal eligibleNet = order.getQuotedPrice() != null
+                ? order.getQuotedPrice().multiply(BigDecimal.valueOf(order.getQuantity() != null ? order.getQuantity() : 1))
+                : BigDecimal.ZERO;
+        int earnedPoints = eligibleNet.compareTo(BigDecimal.ZERO) > 0
+                ? eligibleNet.divideToIntegralValue(REWARD_POINT_UNIT).intValue()
+                : 0;
+
+        PointWallet wallet = pointWalletRepository.findByUserIdForUpdate(buyer.getId()).orElseGet(() -> {
+            PointWallet newWallet = PointWallet.builder()
+                    .userId(buyer.getId())
+                    .user(buyer)
+                    .balance(0)
+                    .isNew(true)
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            buyer.setPointWallet(newWallet);
+            return pointWalletRepository.save(newWallet);
+        });
+        wallet.setBalance((wallet.getBalance() != null ? wallet.getBalance() : 0) + earnedPoints);
+        wallet.setUpdatedAt(LocalDateTime.now());
+        wallet = pointWalletRepository.save(wallet);
+        buyer.setPointWallet(wallet);
+
+        if (earnedPoints > 0) {
+            pointTransactionRepository.save(PointTransaction.builder()
+                    .pointWallet(wallet)
+                    .amount(earnedPoints)
+                    .type(PointTransactionType.EARN)
+                    .description("Thưởng hoàn thành yêu cầu in 3D #" + order.getId())
+                    .createdAt(LocalDateTime.now())
+                    .build());
+        }
+
+        order.setRewardProcessed(true);
+        order.setRewardPointsEarned(earnedPoints);
+        order.setUpdatedAt(Instant.now());
+        customOrderRepository.save(order);
+
+        return RewardCompletionResponseDTO.builder()
+                .orderId(order.getId())
+                .customerId(buyer.getId())
+                .customerName(buyer.getFullName())
+                .rewardPointsEarned(earnedPoints)
+                .totalRewardPoints(wallet.getBalance())
+                .alreadyProcessed(false)
+                .build();
     }
 }

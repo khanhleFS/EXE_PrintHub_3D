@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.controller.api;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.dto.custom_prints.*;
+import com.fpt.printhub_3d.dto.order.RewardCompletionResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -59,4 +60,12 @@ public interface CustomOrderAPI {
     ResponseEntity<ApiResponse<Void>> updateCustomOrderStatus(
             @PathVariable UUID id,
             @Valid @RequestBody CustomOrderStatusRequestDTO request);
+
+    @Operation(
+            summary = "Xác nhận và cộng điểm thưởng cho yêu cầu in 3D đã hoàn thành",
+            description = "Chỉ áp dụng khi yêu cầu in ở trạng thái COMPLETED và đã thanh toán đủ",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping("/api/custom-orders/{id}/complete-rewards")
+    ResponseEntity<ApiResponse<RewardCompletionResponseDTO>> completeRewards(@PathVariable UUID id);
 }

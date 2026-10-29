@@ -4,6 +4,7 @@ import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.CustomOrderAPI;
 import com.fpt.printhub_3d.dto.custom_prints.*;
+import com.fpt.printhub_3d.dto.order.RewardCompletionResponseDTO;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.service.CustomOrderService;
 import lombok.RequiredArgsConstructor;
@@ -78,6 +79,17 @@ public class CustomOrderController implements CustomOrderAPI {
         return ResponseEntity.ok(ApiResponse.<Void>builder()
                 .code(200)
                 .message("Cập nhật trạng thái thành công")
+                .build());
+    }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN') or hasRole('USER')")
+    public ResponseEntity<ApiResponse<RewardCompletionResponseDTO>> completeRewards(UUID id) {
+        RewardCompletionResponseDTO result = customOrderService.completeRewards(id);
+        return ResponseEntity.ok(ApiResponse.<RewardCompletionResponseDTO>builder()
+                .code(200)
+                .message("Cộng điểm thưởng cho yêu cầu in 3D thành công")
+                .result(result)
                 .build());
     }
 }

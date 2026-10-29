@@ -45,6 +45,7 @@ class InventoryAndCheckoutFlowTest {
     @Mock private PointTransactionRepository pointTransactionRepository;
     @Mock private NotificationService notificationService;
     @Mock private ReviewRepository reviewRepository;
+    @Mock private OrderTransitionPolicy orderTransitionPolicy;
 
     private Product testProduct;
     private UUID testOrderId;
@@ -71,14 +72,15 @@ class InventoryAndCheckoutFlowTest {
                 pointTransactionRepository,
                 notificationService,
                 reviewRepository,
-                inventoryService
+                inventoryService,
+                orderTransitionPolicy
         );
 
         testOrderId = UUID.randomUUID();
 
         testProduct = new Product();
         testProduct.setId(UUID.randomUUID());
-        testProduct.setTitle("Thước Kẻ Kỹ Thuật 20cm Cyber Neon");
+        testProduct.setTitle("ThÆ°á»›c Káº» Ká»¹ Thuáº­t 20cm Cyber Neon");
         testProduct.setStock(10);
         testProduct.setPrice(BigDecimal.valueOf(50000));
         testProduct.setStatus("ACTIVE");
@@ -86,11 +88,11 @@ class InventoryAndCheckoutFlowTest {
         testBuyer = new User();
         testBuyer.setId(UUID.randomUUID());
         testBuyer.setRole(UserRole.USER);
-        testBuyer.setFullName("Nguyễn Văn A");
+        testBuyer.setFullName("Nguyá»…n VÄƒn A");
     }
 
     @Test
-    @DisplayName("1. Giữ chỗ tồn kho (ACTIVE): trừ stock đúng 1 lần và ghi nhận InventoryMovement")
+    @DisplayName("1. Giá»¯ chá»— tá»“n kho (ACTIVE): trá»« stock Ä‘Ãºng 1 láº§n vÃ  ghi nháº­n InventoryMovement")
     void testReserveStockDecrementsProductStockAndCreatesActiveReservation() {
         when(productRepository.findLockedById(testProduct.getId())).thenReturn(Optional.of(testProduct));
         when(inventoryReservationRepository.findByOrderIdAndProductId(testOrderId, testProduct.getId())).thenReturn(Optional.empty());
@@ -101,18 +103,18 @@ class InventoryAndCheckoutFlowTest {
 
         inventoryService.reserveForOrder(testOrderId, requestMap, "OP_TEST_1", expiresAt);
 
-        // Kiểm tra tồn kho khả dụng giảm từ 10 xuống 7
+        // Kiá»ƒm tra tá»“n kho kháº£ dá»¥ng giáº£m tá»« 10 xuá»‘ng 7
         assertEquals(7, testProduct.getStock());
         verify(productRepository, times(1)).save(testProduct);
 
-        // Kiểm tra tạo reservation ở trạng thái ACTIVE
+        // Kiá»ƒm tra táº¡o reservation á»Ÿ tráº¡ng thÃ¡i ACTIVE
         ArgumentCaptor<InventoryReservation> resCaptor = ArgumentCaptor.forClass(InventoryReservation.class);
         verify(inventoryReservationRepository).save(resCaptor.capture());
         InventoryReservation savedRes = resCaptor.getValue();
         assertEquals(ReservationState.ACTIVE, savedRes.getState());
         assertEquals(3, savedRes.getQuantity());
 
-        // Kiểm tra tạo movement loại RESERVE delta = -3, availableAfter = 7
+        // Kiá»ƒm tra táº¡o movement loáº¡i RESERVE delta = -3, availableAfter = 7
         ArgumentCaptor<InventoryMovement> moveCaptor = ArgumentCaptor.forClass(InventoryMovement.class);
         verify(inventoryMovementRepository).save(moveCaptor.capture());
         InventoryMovement savedMove = moveCaptor.getValue();
@@ -122,7 +124,7 @@ class InventoryAndCheckoutFlowTest {
     }
 
     @Test
-    @DisplayName("2. Kiểm tra chặn bán vượt (OUT_OF_STOCK) khi số lượng mua lớn hơn tồn kho")
+    @DisplayName("2. Kiá»ƒm tra cháº·n bÃ¡n vÆ°á»£t (OUT_OF_STOCK) khi sá»‘ lÆ°á»£ng mua lá»›n hÆ¡n tá»“n kho")
     void testReserveStockThrowsOutOfStockWhenRequestedExceedsStock() {
         testProduct.setStock(2);
         when(productRepository.findLockedById(testProduct.getId())).thenReturn(Optional.of(testProduct));
@@ -134,12 +136,12 @@ class InventoryAndCheckoutFlowTest {
                 inventoryService.reserveForOrder(testOrderId, requestMap, "OP_TEST_2", null));
 
         assertEquals(OrderErrorCode.OUT_OF_STOCK, ex.getErrorCode());
-        assertEquals(2, testProduct.getStock(), "Tồn kho không được thay đổi khi bị từ chối");
+        assertEquals(2, testProduct.getStock(), "Tá»“n kho khÃ´ng Ä‘Æ°á»£c thay Ä‘á»•i khi bá»‹ tá»« chá»‘i");
         verify(inventoryReservationRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("3. Xác nhận giữ chỗ (ACTIVE -> CONFIRMED): Không trừ tồn kho lần thứ hai")
+    @DisplayName("3. XÃ¡c nháº­n giá»¯ chá»— (ACTIVE -> CONFIRMED): KhÃ´ng trá»« tá»“n kho láº§n thá»© hai")
     void testConfirmReservationDoesNotDecrementStockAgain() {
         InventoryReservation activeRes = InventoryReservation.builder()
                 .id(UUID.randomUUID())
@@ -152,23 +154,23 @@ class InventoryAndCheckoutFlowTest {
 
         when(inventoryReservationRepository.findLockedByOrderId(testOrderId)).thenReturn(List.of(activeRes));
 
-        // Gọi confirm
+        // Gá»i confirm
         inventoryService.confirmReservation(testOrderId);
 
-        // Reservation chuyển sang CONFIRMED
+        // Reservation chuyá»ƒn sang CONFIRMED
         assertEquals(ReservationState.CONFIRMED, activeRes.getState());
         assertNotNull(activeRes.getConfirmedAt());
         verify(inventoryReservationRepository, times(1)).save(activeRes);
 
-        // Tuyệt đối không gọi sửa Product stock lần 2
+        // Tuyá»‡t Ä‘á»‘i khÃ´ng gá»i sá»­a Product stock láº§n 2
         verify(productRepository, never()).findLockedById(any());
         verify(productRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("4. Giải phóng tồn kho (ACTIVE -> RELEASED): Hoàn lại Product.stock đúng số lượng đã giữ")
+    @DisplayName("4. Giáº£i phÃ³ng tá»“n kho (ACTIVE -> RELEASED): HoÃ n láº¡i Product.stock Ä‘Ãºng sá»‘ lÆ°á»£ng Ä‘Ã£ giá»¯")
     void testReleaseActiveReservationIncrementsProductStockAndCreatesReleasedMovement() {
-        testProduct.setStock(7); // Giả sử trước đó đã bị trừ 3
+        testProduct.setStock(7); // Giáº£ sá»­ trÆ°á»›c Ä‘Ã³ Ä‘Ã£ bá»‹ trá»« 3
         InventoryReservation activeRes = InventoryReservation.builder()
                 .id(UUID.randomUUID())
                 .orderId(testOrderId)
@@ -181,18 +183,18 @@ class InventoryAndCheckoutFlowTest {
         when(inventoryReservationRepository.findLockedByOrderId(testOrderId)).thenReturn(List.of(activeRes));
         when(productRepository.findLockedById(testProduct.getId())).thenReturn(Optional.of(testProduct));
 
-        // Giải phóng giữ chỗ
-        inventoryService.releaseActiveReservations(testOrderId, "Khách hàng hủy đơn PENDING", "OP_CANCEL_1");
+        // Giáº£i phÃ³ng giá»¯ chá»—
+        inventoryService.releaseActiveReservations(testOrderId, "KhÃ¡ch hÃ ng há»§y Ä‘Æ¡n PENDING", "OP_CANCEL_1");
 
-        // Tồn kho được hoàn lại: 7 + 3 = 10
+        // Tá»“n kho Ä‘Æ°á»£c hoÃ n láº¡i: 7 + 3 = 10
         assertEquals(10, testProduct.getStock());
         verify(productRepository, times(1)).save(testProduct);
 
-        // Reservation chuyển sang RELEASED
+        // Reservation chuyá»ƒn sang RELEASED
         assertEquals(ReservationState.RELEASED, activeRes.getState());
-        assertEquals("Khách hàng hủy đơn PENDING", activeRes.getReleaseReason());
+        assertEquals("KhÃ¡ch hÃ ng há»§y Ä‘Æ¡n PENDING", activeRes.getReleaseReason());
 
-        // Ghi nhận InventoryMovement loại RELEASE delta = +3, availableAfter = 10
+        // Ghi nháº­n InventoryMovement loáº¡i RELEASE delta = +3, availableAfter = 10
         ArgumentCaptor<InventoryMovement> moveCaptor = ArgumentCaptor.forClass(InventoryMovement.class);
         verify(inventoryMovementRepository).save(moveCaptor.capture());
         InventoryMovement savedMove = moveCaptor.getValue();
@@ -202,7 +204,7 @@ class InventoryAndCheckoutFlowTest {
     }
 
     @Test
-    @DisplayName("5. Hủy đơn hàng PENDING: Kích hoạt hoàn lại tồn kho trong OrderService")
+    @DisplayName("5. Há»§y Ä‘Æ¡n hÃ ng PENDING: KÃ­ch hoáº¡t hoÃ n láº¡i tá»“n kho trong OrderService")
     void testOrderCancellationReleasesActiveReservation() {
         Order pendingOrder = new Order();
         pendingOrder.setId(testOrderId);
@@ -212,7 +214,7 @@ class InventoryAndCheckoutFlowTest {
         when(orderRepository.findById(testOrderId)).thenReturn(Optional.of(pendingOrder));
         when(paymentRepository.findByOrderId(testOrderId)).thenReturn(Optional.empty());
 
-        // Giả lập reservation active đang có
+        // Giáº£ láº­p reservation active Ä‘ang cÃ³
         InventoryReservation activeRes = InventoryReservation.builder()
                 .id(UUID.randomUUID())
                 .orderId(testOrderId)
@@ -226,14 +228,16 @@ class InventoryAndCheckoutFlowTest {
         when(inventoryReservationRepository.findLockedByOrderId(testOrderId)).thenReturn(List.of(activeRes));
         when(productRepository.findLockedById(testProduct.getId())).thenReturn(Optional.of(testProduct));
 
-        // Người mua thực hiện hủy đơn
+        // NgÆ°á»i mua thá»±c hiá»‡n há»§y Ä‘Æ¡n
+        when(orderTransitionPolicy.validateAndResolveNextStatus(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn("CANCELLED");
         orderService.updateOrderStatus(testOrderId, "CANCELLED", testBuyer);
 
-        // Kiểm tra đơn chuyển sang CANCELLED
+        // Kiá»ƒm tra Ä‘Æ¡n chuyá»ƒn sang CANCELLED
         assertEquals("CANCELLED", pendingOrder.getStatus());
         verify(orderRepository).save(pendingOrder);
 
-        // Kiểm tra stock được hoàn lại từ 8 lên 10
+        // Kiá»ƒm tra stock Ä‘Æ°á»£c hoÃ n láº¡i tá»« 8 lÃªn 10
         assertEquals(10, testProduct.getStock());
         assertEquals(ReservationState.RELEASED, activeRes.getState());
     }

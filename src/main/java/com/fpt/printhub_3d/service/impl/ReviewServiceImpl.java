@@ -5,6 +5,9 @@ import com.fpt.printhub_3d.common.exception.ReviewDisputeErrorCode;
 import com.fpt.printhub_3d.dto.review.*;
 import com.fpt.printhub_3d.entity.*;
 import com.fpt.printhub_3d.repository.*;
+import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
+import com.fpt.printhub_3d.entity.PointTransaction;
+import com.fpt.printhub_3d.repository.PointTransactionRepository;
 import com.fpt.printhub_3d.service.ReviewService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +34,7 @@ public class ReviewServiceImpl implements ReviewService {
     private final OrderItemRepository orderItemRepository;
     private final ProductRepository productRepository;
     private final PointWalletRepository pointWalletRepository;
+    private final PointTransactionRepository pointTransactionRepository;
 
     @Override
     @Transactional
@@ -184,22 +188,33 @@ public class ReviewServiceImpl implements ReviewService {
     }
 
     private void rewardPointsForReview(User reviewer, int points) {
-        try {
-            PointWallet wallet = pointWalletRepository.findById(reviewer.getId()).orElseGet(() -> {
-                PointWallet newWallet = PointWallet.builder()
-                        .user(reviewer)
-                        .balance(0)
-                        .updatedAt(LocalDateTime.now())
-                        .build();
-                return pointWalletRepository.save(newWallet);
-            });
-            wallet.setBalance((wallet.getBalance() != null ? wallet.getBalance() : 0) + points);
-            wallet.setUpdatedAt(LocalDateTime.now());
-            pointWalletRepository.save(wallet);
-            log.info("Thưởng [{}] điểm tích lũy cho người dùng [{}] vì gửi review kèm ảnh", points, reviewer.getId());
-        } catch (Exception e) {
-            log.warn("Không thể cộng điểm thưởng cho user [{}]: {}", reviewer.getId(), e.getMessage());
-        }
+        if (points <= 0) return;
+        PointWallet wallet = pointWalletRepository.findByUserIdForUpdate(reviewer.getId()).orElseGet(() -> {
+            PointWallet newWallet = PointWallet.builder()
+                    .userId(reviewer.getId())
+                    .user(reviewer)
+                    .balance(0)
+                    .isNew(true)
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            reviewer.setPointWallet(newWallet);
+            return pointWalletRepository.save(newWallet);
+        });
+        int currentBalance = wallet.getBalance() != null ? wallet.getBalance() : 0;
+        wallet.setBalance(currentBalance + points);
+        wallet.setUpdatedAt(LocalDateTime.now());
+        wallet = pointWalletRepository.save(wallet);
+        reviewer.setPointWallet(wallet);
+
+        pointTransactionRepository.save(PointTransaction.builder()
+                .pointWallet(wallet)
+                .amount(points)
+                .type(PointTransactionType.EARN)
+                .description("Thưởng điểm đánh giá sản phẩm có hình ảnh")
+                .createdAt(LocalDateTime.now())
+                .build());
+
+        log.info("Thưởng [{}] điểm tích lũy cho người dùng [{}] vì gửi review kèm ảnh", points, reviewer.getId());
     }
 
     private ProductReviewResponseDTO toProductReviewResponse(Review review) {

@@ -109,6 +109,7 @@ class UserSubscriptionServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(subscriptionPlanRepository.findById(planId)).thenReturn(Optional.of(plan));
         when(pointWalletRepository.findById(userId)).thenReturn(Optional.of(wallet));
+        when(pointWalletRepository.findByUserIdForUpdate(userId)).thenReturn(Optional.of(wallet));
         when(userSubscriptionRepository.findActiveSubscriptionByUserAndType(user, SubscriptionType.CUSTOMER_VIP))
                 .thenReturn(Optional.empty());
         when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(i -> {

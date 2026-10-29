@@ -109,7 +109,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói dịch vụ này không hỗ trợ đổi bằng điểm thưởng.");
         }
 
-        PointWallet wallet = pointWalletRepository.findById(userId).orElseGet(() -> {
+        PointWallet wallet = pointWalletRepository.findByUserIdForUpdate(userId).or(() -> pointWalletRepository.findById(userId)).orElseGet(() -> {
             PointWallet newWallet = PointWallet.builder()
                     .userId(userId)
                     .user(user)

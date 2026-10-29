@@ -1,6 +1,7 @@
 package com.fpt.printhub_3d.service;
 
 import com.fpt.printhub_3d.dto.custom_prints.*;
+import com.fpt.printhub_3d.dto.order.RewardCompletionResponseDTO;
 import com.fpt.printhub_3d.entity.User;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -14,4 +15,5 @@ public interface CustomOrderService {
     CustomOrderDetailResponseDTO createCustomOrder(User user, CustomOrderCreateRequestDTO request);
     void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User admin);
     void updateCustomOrderStatus(UUID id, CustomOrderStatusRequestDTO request, User user);
+    RewardCompletionResponseDTO completeRewards(UUID customOrderId);
 }

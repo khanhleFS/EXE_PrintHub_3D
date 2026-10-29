@@ -18,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -222,6 +224,14 @@ public class OrderServiceImpl implements OrderService {
             throw new ApiException(OrderErrorCode.ORDER_NOT_COMPLETED, "Đơn hàng chưa ở trạng thái COMPLETED");
         }
 
+        Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
+        if (payment == null && order.getCheckoutOrder() != null) {
+            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
+        }
+        if (payment == null || !"SUCCESS".equalsIgnoreCase(payment.getStatus())) {
+            throw new ApiException(OrderErrorCode.PAYMENT_REQUIRED, "Đơn hàng chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
+        }
+
         User buyer = order.getBuyer();
         if (Boolean.TRUE.equals(order.getRewardProcessed())) {
             return RewardCompletionResponseDTO.builder()
@@ -234,29 +244,36 @@ public class OrderServiceImpl implements OrderService {
                     .build();
         }
 
-        int earnedPoints = order.getTotalAmount()
-                .divideToIntegralValue(REWARD_POINT_UNIT)
-                .intValue();
+        BigDecimal eligibleNet = order.getTotalAmount() != null ? order.getTotalAmount() : BigDecimal.ZERO;
+        int earnedPoints = eligibleNet.compareTo(BigDecimal.ZERO) > 0
+                ? eligibleNet.divideToIntegralValue(REWARD_POINT_UNIT).intValue()
+                : 0;
 
-        PointWallet wallet = pointWalletRepository.findById(buyer.getId()).orElseGet(() -> {
+        PointWallet wallet = pointWalletRepository.findByUserIdForUpdate(buyer.getId()).orElseGet(() -> {
             PointWallet newWallet = PointWallet.builder()
                     .userId(buyer.getId())
                     .user(buyer)
                     .balance(0)
                     .isNew(true)
+                    .updatedAt(LocalDateTime.now())
                     .build();
             buyer.setPointWallet(newWallet);
-            return newWallet;
+            return pointWalletRepository.save(newWallet);
         });
-        wallet.setBalance(wallet.getBalance() + earnedPoints);
-        wallet.setUpdatedAt(java.time.LocalDateTime.now());
+        wallet.setBalance((wallet.getBalance() != null ? wallet.getBalance() : 0) + earnedPoints);
+        wallet.setUpdatedAt(LocalDateTime.now());
         wallet = pointWalletRepository.save(wallet);
         buyer.setPointWallet(wallet);
 
-        pointTransactionRepository.save(PointTransaction.builder()
-                .pointWallet(wallet).amount(earnedPoints)
-                .type(com.fpt.printhub_3d.entity.Enumeration.PointTransactionType.EARN)
-                .description("Hoàn thành đơn " + order.getId()).createdAt(java.time.LocalDateTime.now()).build());
+        if (earnedPoints > 0) {
+            pointTransactionRepository.save(PointTransaction.builder()
+                    .pointWallet(wallet)
+                    .amount(earnedPoints)
+                    .type(PointTransactionType.EARN)
+                    .description("Hoàn thành đơn #" + order.getId())
+                    .createdAt(LocalDateTime.now())
+                    .build());
+        }
 
         order.setRewardProcessed(true);
         order.setRewardPointsEarned(earnedPoints);
