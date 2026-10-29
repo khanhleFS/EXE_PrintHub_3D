@@ -91,8 +91,14 @@ public class PaymentServiceImpl implements PaymentService {
             if (!checkoutOrder.getUser().getId().equals(userId)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN);
             }
-            if (!"CONFIRMED".equals(checkoutOrder.getStatus()) && !"PENDING_QUOTE".equals(checkoutOrder.getStatus())) {
+            if (!"CONFIRMED".equals(checkoutOrder.getStatus())) {
                 throw bad("Đơn không ở trạng thái có thể thanh toán");
+            }
+            List<CustomOrder> customsList = customs.findByCheckoutOrderId(checkoutOrder.getId());
+            boolean hasUnacceptedCustom = customsList.stream()
+                    .anyMatch(c -> !"ACCEPTED".equals(c.getStatus()) && !"PAID".equals(c.getStatus()));
+            if (hasUnacceptedCustom) {
+                throw bad("Đơn còn sản phẩm custom chưa được duyệt báo giá, không thể tạo liên kết thanh toán");
             }
             total = checkoutOrder.getTotalAmount();
             payment = payments.findByCheckoutOrderId(checkoutOrder.getId()).orElseGet(Payment::new);
@@ -340,15 +346,20 @@ public class PaymentServiceImpl implements PaymentService {
 
             List<Order> childOrders = orders.findByCheckoutOrderId(checkoutOrder.getId());
             for (Order o : childOrders) {
-                o.setStatus("PAID");
-                o.setUpdatedAt(Instant.now());
-                orders.save(o);
+                if (!"CANCELLED".equals(o.getStatus())) {
+                    o.setStatus("PAID");
+                    o.setUpdatedAt(Instant.now());
+                    orders.save(o);
+                }
             }
             List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());
             for (CustomOrder c : childCustoms) {
-                c.setStatus("PAID");
-                c.setUpdatedAt(Instant.now());
-                customs.save(c);
+                // Chỉ đánh dấu PAID cho custom order đã được duyệt báo giá (ACCEPTED)
+                if ("ACCEPTED".equals(c.getStatus()) && c.getQuotedPrice() != null) {
+                    c.setStatus("PAID");
+                    c.setUpdatedAt(Instant.now());
+                    customs.save(c);
+                }
             }
         } else {
             throw bad("Giao dịch không có thông tin đơn hàng");

@@ -100,14 +100,13 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .map(i -> (i.getCustomPrice() != null ? i.getCustomPrice() : BigDecimal.ZERO).multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal finalTotal = marketSubtotal.add(customSubtotal).add(checkoutOrder.getShippingFee());
+        BigDecimal finalTotal = marketSubtotal.add(checkoutOrder.getShippingFee());
         checkoutOrder.setTotalAmount(finalTotal);
 
-        boolean allCustomPriced = !customLines.isEmpty() && customLines.stream().allMatch(i -> i.getCustomPrice() != null && i.getCustomPrice().compareTo(BigDecimal.ZERO) > 0);
-        if (customLines.isEmpty() || allCustomPriced) {
-            checkoutOrder.setStatus("CONFIRMED");
-        } else {
+        if (!customLines.isEmpty()) {
             checkoutOrder.setStatus("PENDING_QUOTE");
+        } else {
+            checkoutOrder.setStatus("CONFIRMED");
         }
 
         checkoutOrder = checkoutOrderRepository.save(checkoutOrder);
@@ -128,12 +127,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             customOrder.setQuantity(cItem.getQuantity() != null ? cItem.getQuantity() : 1);
             customOrder.setShippingAddress(request.shippingAddress());
             customOrder.setPaymentMethod(request.paymentMethod());
-            if (cItem.getCustomPrice() != null && cItem.getCustomPrice().compareTo(BigDecimal.ZERO) > 0) {
-                customOrder.setQuotedPrice(cItem.getCustomPrice());
-                customOrder.setStatus("QUOTED");
-            } else {
-                customOrder.setStatus("REQUESTED");
-            }
+            // An toàn: Không chấp nhận giá do client tự gửi làm báo giá chính thức
+            customOrder.setQuotedPrice(null);
+            customOrder.setStatus("REQUESTED");
             customOrder.setCreatedAt(Instant.now());
             customOrder.setUpdatedAt(Instant.now());
             customOrderRepository.save(customOrder);

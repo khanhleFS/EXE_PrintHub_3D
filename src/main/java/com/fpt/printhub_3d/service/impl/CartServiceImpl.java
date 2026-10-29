@@ -127,7 +127,8 @@ public class CartServiceImpl implements CartService {
                 if (isCustom) {
                     item.setCustomDesign(line.customDesign());
                     item.setCustomName(line.customName());
-                    item.setCustomPrice(line.customPrice());
+                    // Giá custom chỉ do xưởng phát hành sau khi kiểm tra file 3D; không lưu giá từ client
+                    item.setCustomPrice(null);
                     item.setThumbnailUrl(line.thumbnailUrl());
                     if (line.productId() != null) {
                         productRepository.findById(line.productId()).ifPresent(item::setProduct);
