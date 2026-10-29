@@ -9,6 +9,7 @@ import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.repository.*;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderService;
+import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,6 +37,17 @@ public class OrderServiceImpl implements OrderService {
     private final NotificationService notificationService;
     private final ReviewRepository reviewRepository;
     private final com.fpt.printhub_3d.service.InventoryService inventoryService;
+    private final com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy;
+
+    private User getCurrentUserSafely() {
+        try {
+            org.springframework.security.core.Authentication authentication = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+            if (authentication != null && authentication.getPrincipal() instanceof com.fpt.printhub_3d.common.security.CustomUserDetail userDetail) {
+                return userDetail.getUser();
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
 
     private static final BigDecimal COMMISSION_RATE = new BigDecimal("0.05");
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
@@ -263,6 +275,28 @@ public class OrderServiceImpl implements OrderService {
 
     private OrderResponseDTO mapOrderToDTO(Order order, ShippingInfo shippingInfo, List<OrderItem> items) {
         Payment payment = paymentRepository.findByOrderId(order.getId()).orElse(null);
+        if (payment == null && order.getCheckoutOrder() != null) {
+            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
+        }
+
+        String pMethod = payment != null ? payment.getGateway() : "PAYOS";
+        String pStatus = payment != null ? payment.getStatus() : "PENDING";
+
+        User current = getCurrentUserSafely();
+        boolean isAdmin = current != null && current.getRole() == UserRole.ADMIN;
+        boolean isOwner = current != null && order.getBuyer() != null && current.getId().equals(order.getBuyer().getId());
+        if (current == null) {
+            isAdmin = true;
+        }
+
+        OrderTransitionPolicy.TransitionEvaluation eval = orderTransitionPolicy.evaluateActions(
+                OrderTransitionPolicy.OrderType.MARKETPLACE,
+                order.getStatus(),
+                pMethod,
+                pStatus,
+                isAdmin,
+                isOwner
+        );
 
         ShippingInfoResponseDTO shippingDTO = null;
         if (shippingInfo != null) {
@@ -307,14 +341,16 @@ public class OrderServiceImpl implements OrderService {
                 .totalAmount(order.getTotalAmount())
                 .commissionFee(order.getCommissionFee())
                 .status(order.getStatus())
-                .paymentMethod(payment != null ? payment.getGateway() : "PAYOS")
-                .paymentStatus(payment != null ? payment.getStatus() : "PENDING")
+                .paymentMethod(pMethod)
+                .paymentStatus(pStatus)
                 .orderCode(payment != null ? payment.getTransactionId() : null)
                 .shippingInfo(shippingDTO)
                 .items(itemDTOs)
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .paymentDueAt(order.getPaymentDueAt())
+                .allowedActions(eval.allowedActions())
+                .blockedActions(eval.blockedActions())
                 .build();
     }
 
@@ -383,15 +419,25 @@ public class OrderServiceImpl implements OrderService {
 
         String currentStatus = order.getStatus();
         Payment payment = paymentRepository.findByOrderId(id).orElse(null);
+        if (payment == null && order.getCheckoutOrder() != null) {
+            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
+        }
 
-        if ("CANCELLED".equals(nextStatus)) {
-            if (currentUser.getRole() != UserRole.ADMIN && !order.getBuyer().getId().equals(currentUser.getId())) {
-                throw new ApiException(CommonErrorCode.FORBIDDEN, "Bạn không có quyền hủy đơn hàng này");
-            }
-            if (!"PENDING".equals(currentStatus)) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chỉ được hủy đơn khi đơn chưa thanh toán hoặc chưa sản xuất");
-            }
-            if (payment != null && "PAYOS".equals(payment.getGateway()) && payment.getTransactionId() != null) {
+        String paymentMethod = payment != null ? payment.getGateway() : "PAYOS";
+        String paymentStatus = payment != null ? payment.getStatus() : "PENDING";
+
+        String resolvedStatus = orderTransitionPolicy.validateAndResolveNextStatus(
+                OrderTransitionPolicy.OrderType.MARKETPLACE,
+                currentStatus,
+                nextStatus,
+                paymentMethod,
+                paymentStatus,
+                currentUser,
+                order.getBuyer().getId()
+        );
+
+        if ("CANCELLED".equals(resolvedStatus)) {
+            if (payment != null && "PAYOS".equalsIgnoreCase(payment.getGateway()) && payment.getTransactionId() != null) {
                 payment.setStatus("CANCELLED");
                 payment.setUpdatedAt(Instant.now());
                 paymentRepository.save(payment);
@@ -399,41 +445,28 @@ public class OrderServiceImpl implements OrderService {
             // Hoàn lại tồn kho cho đơn hủy PENDING
             inventoryService.releaseActiveReservations(order.getId(), "Hủy đơn hàng PENDING", currentUser.getId().toString());
         } else {
-            if (currentUser.getRole() != UserRole.ADMIN) {
-                throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có thể chuyển tiến trình đơn");
-            }
-            boolean isValidTransition = switch (currentStatus) {
-                case "PAID", "PENDING" -> "PREPARING".equals(nextStatus) || "PRINTING".equals(nextStatus);
-                case "PREPARING" -> "PRINTING".equals(nextStatus);
-                case "PRINTING" -> "SHIPPING".equals(nextStatus);
-                case "SHIPPING" -> "COMPLETED".equals(nextStatus);
-                default -> false;
-            };
-
-            if (!isValidTransition) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chuyển trạng thái đơn không hợp lệ từ " + currentStatus + " sang " + nextStatus);
-            }
-            if ("PREPARING".equals(nextStatus) || "PRINTING".equals(nextStatus)) {
+            if ("PREPARING".equals(resolvedStatus) || "PRINTING".equals(resolvedStatus)) {
                 inventoryService.confirmReservation(order.getId());
             }
-            if ("COMPLETED".equals(nextStatus) && payment != null && "COD".equals(payment.getGateway())) {
+            if ("COMPLETED".equals(resolvedStatus) && payment != null && "COD".equalsIgnoreCase(payment.getGateway())) {
                 payment.setStatus("SUCCESS");
                 payment.setPaidAt(Instant.now());
+                payment.setUpdatedAt(Instant.now());
                 paymentRepository.save(payment);
             }
         }
 
-        order.setStatus(nextStatus);
+        order.setStatus(resolvedStatus);
         order.setUpdatedAt(Instant.now());
         orderRepository.save(order);
 
-        if ("COMPLETED".equals(nextStatus)) {
+        if ("COMPLETED".equals(resolvedStatus)) {
             completeRewards(id);
         }
 
         notificationService.sendNotification(order.getBuyer(),
                 "Cập nhật đơn hàng",
-                "Đơn hàng " + id + " đã chuyển sang trạng thái: " + nextStatus,
+                "Đơn hàng " + id + " đã chuyển sang trạng thái: " + resolvedStatus,
                 "ORDER",
                 "/orders");
     }

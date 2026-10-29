@@ -29,5 +29,7 @@ public record CustomOrderDetailResponseDTO(
         String paymentMethod,
         String paymentStatus,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        java.util.List<String> allowedActions,
+        java.util.List<com.fpt.printhub_3d.dto.order.BlockedActionDTO> blockedActions
 ) {}

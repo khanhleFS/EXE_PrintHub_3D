@@ -57,6 +57,12 @@ public record OrderResponseDTO(
         Instant updatedAt,
 
         @Schema(description = "Hạn thanh toán PAYOS (15 phút)")
-        Instant paymentDueAt
+        Instant paymentDueAt,
+
+        @Schema(description = "Danh sách các hành động chuyển trạng thái được phép")
+        List<String> allowedActions,
+
+        @Schema(description = "Danh sách các hành động bị chặn kèm lý do")
+        List<BlockedActionDTO> blockedActions
 ) {
 }

@@ -19,6 +19,7 @@ import com.fpt.printhub_3d.service.CloudinaryService;
 import com.fpt.printhub_3d.service.CustomOrderService;
 import com.fpt.printhub_3d.service.FileStorageService;
 import com.fpt.printhub_3d.service.NotificationService;
+import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -41,9 +42,19 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final FileAssetRepository fileAssetRepository;
     private final PaymentRepository paymentRepository;
     private final UserRepository userRepository;
-    private final FileStorageService fileStorageService;
     private final NotificationService notificationService;
     private final CloudinaryService cloudinaryService;
+    private final com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy;
+
+    private User getCurrentUserSafely() {
+        try {
+            org.springframework.security.core.Authentication authentication = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+            if (authentication != null && authentication.getPrincipal() instanceof com.fpt.printhub_3d.common.security.CustomUserDetail userDetail) {
+                return userDetail.getUser();
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
 
     @Override
     public CustomOrderResponseDTO createRequest(String requirements, MultipartFile file, User buyer) {
@@ -80,6 +91,29 @@ public class CustomOrderServiceImpl implements CustomOrderService {
 
     private CustomOrderDetailResponseDTO toDTO(CustomOrder o) {
         Payment p = paymentRepository.findByCustomOrderId(o.getId()).orElse(null);
+        if (p == null && o.getCheckoutOrder() != null) {
+            p = paymentRepository.findByCheckoutOrderId(o.getCheckoutOrder().getId()).orElse(null);
+        }
+
+        String pMethod = o.getPaymentMethod() != null ? o.getPaymentMethod() : (p != null ? p.getGateway() : "PAYOS");
+        String pStatus = p != null ? p.getStatus() : "PENDING";
+
+        User current = getCurrentUserSafely();
+        boolean isAdmin = current != null && current.getRole() == UserRole.ADMIN;
+        boolean isOwner = current != null && o.getBuyer() != null && current.getId().equals(o.getBuyer().getId());
+        if (current == null) {
+            isAdmin = true;
+        }
+
+        OrderTransitionPolicy.TransitionEvaluation eval = orderTransitionPolicy.evaluateActions(
+                OrderTransitionPolicy.OrderType.CUSTOM,
+                o.getStatus(),
+                pMethod,
+                pStatus,
+                isAdmin,
+                isOwner
+        );
+
         return CustomOrderDetailResponseDTO.builder()
                 .id(o.getId())
                 .buyerId(o.getBuyer().getId())
@@ -97,10 +131,12 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .customStudentId(o.getCustomStudentId())
                 .color(o.getColor())
                 .fontStyle(o.getFontStyle())
-                .paymentMethod(o.getPaymentMethod())
-                .paymentStatus(p != null ? p.getStatus() : "PENDING")
+                .paymentMethod(pMethod)
+                .paymentStatus(pStatus)
                 .createdAt(o.getCreatedAt())
                 .updatedAt(o.getUpdatedAt())
+                .allowedActions(eval.allowedActions())
+                .blockedActions(eval.blockedActions())
                 .build();
     }
 
@@ -186,62 +222,53 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         CustomOrder order = customOrderRepository.findLockedById(id)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in"));
 
-        String current = order.getStatus();
-        String next = request.status();
+        Payment p = paymentRepository.findByCustomOrderId(id).orElse(null);
+        if (p == null && order.getCheckoutOrder() != null) {
+            p = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
+        }
 
-        if ("ACCEPTED".equals(next)) {
-            if (!order.getBuyer().getId().equals(user.getId())) {
-                throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ người đặt mới có quyền duyệt báo giá");
-            }
-            if (!"QUOTED".equals(current)) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Yêu cầu in chưa có báo giá từ xưởng/hệ thống");
-            }
+        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : (p != null ? p.getGateway() : "PAYOS");
+        String paymentStatus = p != null ? p.getStatus() : "PENDING";
+
+        String target = request.getEffectiveTarget();
+        String resolvedStatus = orderTransitionPolicy.validateAndResolveNextStatus(
+                OrderTransitionPolicy.OrderType.CUSTOM,
+                order.getStatus(),
+                target,
+                paymentMethod,
+                paymentStatus,
+                user,
+                order.getBuyer().getId()
+        );
+
+        if ("ACCEPTED".equals(resolvedStatus)) {
             String method = request.paymentMethod();
             if (method == null || !Set.of("COD", "PAYOS").contains(method.toUpperCase())) {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Vui lòng chọn phương thức thanh toán COD hoặc PAYOS");
             }
             order.setPaymentMethod(method.toUpperCase());
-        } else if ("CANCELLED".equals(next)) {
-            if (!order.getBuyer().getId().equals(user.getId()) && user.getRole() != UserRole.ADMIN) {
-                throw new ApiException(CommonErrorCode.FORBIDDEN, "Bạn không có quyền hủy yêu cầu này");
-            }
-            if (!Set.of("REQUESTED", "QUOTED").contains(current)) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chỉ có thể hủy yêu cầu khi chưa bước vào sản xuất");
-            }
-        } else {
-            if (user.getRole() != UserRole.ADMIN) {
-                throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có thể chuyển trạng thái sản xuất");
-            }
-            boolean isValidTransition = switch (current) {
-                case "ACCEPTED", "PAID" -> "PREPARING".equals(next) || "PRINTING".equals(next);
-                case "PREPARING" -> "PRINTING".equals(next);
-                case "PRINTING" -> "SHIPPING".equals(next);
-                case "SHIPPING" -> "COMPLETED".equals(next);
-                default -> false;
-            };
-            if (!isValidTransition) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chuyển trạng thái không hợp lệ từ " + current + " sang " + next);
-            }
-            if ("COMPLETED".equals(next) && "COD".equals(order.getPaymentMethod())) {
-                Payment p = paymentRepository.findByCustomOrderId(id).orElseGet(Payment::new);
-                p.setCustomOrder(order);
-                p.setAmount(order.getQuotedPrice());
-                p.setGateway("COD");
-                p.setStatus("SUCCESS");
-                p.setPaidAt(Instant.now());
-                p.setCreatedAt(Instant.now());
-                p.setUpdatedAt(Instant.now());
-                paymentRepository.save(p);
-            }
+        } else if ("COMPLETED".equals(resolvedStatus) && "COD".equalsIgnoreCase(paymentMethod)) {
+            Payment codPay = p != null ? p : new Payment();
+            codPay.setCustomOrder(order);
+            BigDecimal total = order.getQuotedPrice() != null
+                    ? order.getQuotedPrice().multiply(BigDecimal.valueOf(order.getQuantity() != null ? order.getQuantity() : 1))
+                    : BigDecimal.ZERO;
+            codPay.setAmount(total);
+            codPay.setGateway("COD");
+            codPay.setStatus("SUCCESS");
+            codPay.setPaidAt(Instant.now());
+            if (codPay.getCreatedAt() == null) codPay.setCreatedAt(Instant.now());
+            codPay.setUpdatedAt(Instant.now());
+            paymentRepository.save(codPay);
         }
 
-        order.setStatus(next);
+        order.setStatus(resolvedStatus);
         order.setUpdatedAt(Instant.now());
         customOrderRepository.save(order);
 
         notificationService.sendNotification(order.getBuyer(),
                 "Cập nhật tiến trình in",
-                "Yêu cầu in 3D " + id + " đã chuyển sang trạng thái: " + next,
+                "Yêu cầu in 3D " + id + " đã chuyển sang trạng thái: " + resolvedStatus,
                 "CUSTOM_ORDER",
                 "/quotations");
     }

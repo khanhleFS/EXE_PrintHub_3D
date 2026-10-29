@@ -55,7 +55,7 @@ public interface CustomOrderAPI {
             description = "Cập nhật trạng thái yêu cầu in (chấp nhận báo giá, hủy, in, giao hàng).",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
-    @PutMapping("/api/custom-orders/{id}/status")
+    @PutMapping({"/api/custom-orders/{id}/status", "/api/admin/custom-orders/{id}/status", "/api/admin/custom-orders/{id}/transitions"})
     ResponseEntity<ApiResponse<Void>> updateCustomOrderStatus(
             @PathVariable UUID id,
             @Valid @RequestBody CustomOrderStatusRequestDTO request);

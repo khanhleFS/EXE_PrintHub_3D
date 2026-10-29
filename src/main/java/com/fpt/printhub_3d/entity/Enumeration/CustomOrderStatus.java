@@ -4,7 +4,10 @@ public enum CustomOrderStatus {
     REQUESTED,
     QUOTED,
     ACCEPTED,
+    PREPARING,
     PRINTING,
+    SHIPPING,
     COMPLETED,
-    CANCELLED
+    CANCELLED,
+    EXPIRED
 }

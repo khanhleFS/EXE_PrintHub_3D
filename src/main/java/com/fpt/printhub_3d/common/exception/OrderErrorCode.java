@@ -13,7 +13,10 @@ public enum OrderErrorCode implements ErrorCode {
     SELLER_INACTIVE(20003, "Cửa hàng/Người bán của sản phẩm hiện không hoạt động", HttpStatus.BAD_REQUEST, "order.seller_inactive"),
     INVALID_ORDER_ITEMS(20004, "Danh sách sản phẩm mua hàng trống hoặc không hợp lệ", HttpStatus.BAD_REQUEST, "order.invalid_items"),
     ORDER_NOT_FOUND(20005, "Đơn hàng không tồn tại", HttpStatus.NOT_FOUND, "order.not_found"),
-    ORDER_NOT_COMPLETED(20006, "Đơn hàng chưa ở trạng thái COMPLETED nên chưa thể cộng điểm thưởng", HttpStatus.BAD_REQUEST, "order.not_completed");
+    ORDER_NOT_COMPLETED(20006, "Đơn hàng chưa ở trạng thái COMPLETED nên chưa thể cộng điểm thưởng", HttpStatus.BAD_REQUEST, "order.not_completed"),
+    PAYMENT_REQUIRED(20007, "Đơn hàng chưa đủ điều kiện thanh toán để đưa vào xử lý sản xuất", HttpStatus.CONFLICT, "order.payment_required"),
+    INVALID_ORDER_TRANSITION(20008, "Chuyển trạng thái đơn không hợp lệ", HttpStatus.BAD_REQUEST, "order.invalid_transition"),
+    ORDER_ALREADY_CANCELLED(20009, "Đơn hàng đã bị hủy, không thể thay đổi tiến trình", HttpStatus.BAD_REQUEST, "order.already_cancelled");
 
     private final int code;
     private final String message;

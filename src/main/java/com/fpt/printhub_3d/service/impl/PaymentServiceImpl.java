@@ -15,6 +15,7 @@ import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.PaymentService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -319,49 +321,69 @@ public class PaymentServiceImpl implements PaymentService {
         User buyer;
         if (payment.getOrder() != null) {
             Order order = payment.getOrder();
-            if ("CANCELLED".equals(order.getStatus())) {
-                throw bad("Đơn đã hủy, cần đối soát thanh toán");
+            if ("CANCELLED".equals(order.getStatus()) || "EXPIRED".equals(order.getStatus())) {
+                log.warn("Đơn hàng {} đã ở trạng thái {}, giao dịch PayOS {} ghi nhận thanh toán muộn cần đối soát",
+                        order.getId(), order.getStatus(), payment.getTransactionId());
+                buyer = order.getBuyer();
+            } else {
+                // Không kéo lùi tiến trình nếu đơn đã bước vào sản xuất / giao hàng
+                if ("PENDING".equals(order.getStatus())) {
+                    order.setStatus("PAID");
+                    order.setUpdatedAt(Instant.now());
+                    orders.save(order);
+                }
+                inventoryService.confirmReservation(order.getId());
+                buyer = order.getBuyer();
             }
-            order.setStatus("PAID");
-            order.setUpdatedAt(Instant.now());
-            orders.save(order);
-            inventoryService.confirmReservation(order.getId());
-            buyer = order.getBuyer();
         } else if (payment.getCustomOrder() != null) {
             CustomOrder customOrder = payment.getCustomOrder();
-            if ("CANCELLED".equals(customOrder.getStatus())) {
-                throw bad("Yêu cầu đã hủy");
+            if ("CANCELLED".equals(customOrder.getStatus()) || "EXPIRED".equals(customOrder.getStatus())) {
+                log.warn("Yêu cầu in 3D {} đã ở trạng thái {}, giao dịch PayOS {} ghi nhận thanh toán muộn cần đối soát",
+                        customOrder.getId(), customOrder.getStatus(), payment.getTransactionId());
+                buyer = customOrder.getBuyer();
+            } else {
+                // Không kéo lùi tiến trình nếu đơn custom đã chuẩn bị hoặc in
+                if ("ACCEPTED".equals(customOrder.getStatus()) || "QUOTED".equals(customOrder.getStatus())) {
+                    customOrder.setStatus("PAID");
+                    customOrder.setUpdatedAt(Instant.now());
+                    customs.save(customOrder);
+                }
+                buyer = customOrder.getBuyer();
             }
-            customOrder.setStatus("PAID");
-            customOrder.setUpdatedAt(Instant.now());
-            customs.save(customOrder);
-            buyer = customOrder.getBuyer();
         } else if (payment.getCheckoutOrder() != null) {
             CheckoutOrder checkoutOrder = payment.getCheckoutOrder();
-            if ("CANCELLED".equals(checkoutOrder.getStatus())) {
-                throw bad("Đơn đã hủy");
-            }
-            checkoutOrder.setStatus("PAID");
-            checkoutOrder.setUpdatedAt(Instant.now());
-            checkoutOrders.save(checkoutOrder);
-            buyer = checkoutOrder.getUser();
-
-            List<Order> childOrders = orders.findByCheckoutOrderId(checkoutOrder.getId());
-            for (Order o : childOrders) {
-                if (!"CANCELLED".equals(o.getStatus())) {
-                    o.setStatus("PAID");
-                    o.setUpdatedAt(Instant.now());
-                    orders.save(o);
-                    inventoryService.confirmReservation(o.getId());
+            if ("CANCELLED".equals(checkoutOrder.getStatus()) || "EXPIRED".equals(checkoutOrder.getStatus())) {
+                log.warn("Đơn checkout {} đã ở trạng thái {}, giao dịch PayOS {} ghi nhận thanh toán muộn cần đối soát",
+                        checkoutOrder.getId(), checkoutOrder.getStatus(), payment.getTransactionId());
+                buyer = checkoutOrder.getUser();
+            } else {
+                if ("PENDING_QUOTE".equals(checkoutOrder.getStatus()) || "CONFIRMED".equals(checkoutOrder.getStatus())) {
+                    checkoutOrder.setStatus("PAID");
+                    checkoutOrder.setUpdatedAt(Instant.now());
+                    checkoutOrders.save(checkoutOrder);
                 }
-            }
-            List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());
-            for (CustomOrder c : childCustoms) {
-                // Chỉ đánh dấu PAID cho custom order đã được duyệt báo giá (ACCEPTED)
-                if ("ACCEPTED".equals(c.getStatus()) && c.getQuotedPrice() != null) {
-                    c.setStatus("PAID");
-                    c.setUpdatedAt(Instant.now());
-                    customs.save(c);
+                buyer = checkoutOrder.getUser();
+
+                List<Order> childOrders = orders.findByCheckoutOrderId(checkoutOrder.getId());
+                for (Order o : childOrders) {
+                    if (!"CANCELLED".equals(o.getStatus()) && !"EXPIRED".equals(o.getStatus())) {
+                        if ("PENDING".equals(o.getStatus())) {
+                            o.setStatus("PAID");
+                            o.setUpdatedAt(Instant.now());
+                            orders.save(o);
+                        }
+                        inventoryService.confirmReservation(o.getId());
+                    }
+                }
+                List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());
+                for (CustomOrder c : childCustoms) {
+                    if (!"CANCELLED".equals(c.getStatus()) && !"EXPIRED".equals(c.getStatus())) {
+                        if (("ACCEPTED".equals(c.getStatus()) || "QUOTED".equals(c.getStatus())) && c.getQuotedPrice() != null) {
+                            c.setStatus("PAID");
+                            c.setUpdatedAt(Instant.now());
+                            customs.save(c);
+                        }
+                    }
                 }
             }
         } else {

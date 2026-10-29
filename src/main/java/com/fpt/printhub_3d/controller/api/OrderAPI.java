@@ -65,7 +65,7 @@ public interface OrderAPI {
             description = "Cập nhật trạng thái đơn hàng (ví dụ: người mua hủy đơn, admin đổi tiến độ).",
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
-    @PutMapping("/{id}/status")
+    @PutMapping({"/{id}/status", "/{id}/transitions"})
     ResponseEntity<ApiResponse<Void>> updateOrderStatus(
             @PathVariable UUID id,
             @Valid @RequestBody OrderStatusUpdateRequestDTO request);
