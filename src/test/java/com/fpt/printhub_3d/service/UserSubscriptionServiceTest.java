@@ -59,7 +59,7 @@ class UserSubscriptionServiceTest {
 
         SubscriptionPlan plan = SubscriptionPlan.builder()
                 .name("VIP Gói")
-                .type(SubscriptionType.CUSTOMER_VIP)
+                .type(SubscriptionType.CUSTOMER)
                 .price(BigDecimal.TEN)
                 .benefits("Free ship")
                 .requiredPoints(100)
@@ -67,8 +67,8 @@ class UserSubscriptionServiceTest {
                 .build();
         plan.setId(UUID.randomUUID());
 
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
-        when(subscriptionPlanRepository.findByTypeAndIsActiveTrue(SubscriptionType.CUSTOMER_VIP))
+        when(userRepository.findLockedById(userId)).thenReturn(Optional.of(user));
+        when(subscriptionPlanRepository.findByTypeAndIsActiveTrue(SubscriptionType.CUSTOMER))
                 .thenReturn(List.of(plan));
 
         List<SubscriptionPlanResponseDTO> plans = userSubscriptionService.getAvailablePlansForUser(userId);
@@ -105,6 +105,7 @@ class UserSubscriptionServiceTest {
                 .balance(500)
                 .build();
 
+        when(userRepository.findLockedById(userId)).thenReturn(Optional.of(user));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(subscriptionPlanRepository.findById(planId)).thenReturn(Optional.of(plan));
         when(pointWalletRepository.findById(userId)).thenReturn(Optional.of(wallet));
@@ -149,6 +150,7 @@ class UserSubscriptionServiceTest {
 
         GiftSubscriptionRequestDTO request = new GiftSubscriptionRequestDTO(userId, planId, "Event");
 
+        when(userRepository.findLockedById(userId)).thenReturn(Optional.of(user));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(subscriptionPlanRepository.findById(planId)).thenReturn(Optional.of(plan));
         when(userSubscriptionRepository.findActiveSubscriptionByUserAndType(user, SubscriptionType.CUSTOMER_VIP))
