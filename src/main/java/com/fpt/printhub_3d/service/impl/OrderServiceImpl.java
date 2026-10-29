@@ -35,6 +35,7 @@ public class OrderServiceImpl implements OrderService {
     private final PointTransactionRepository pointTransactionRepository;
     private final NotificationService notificationService;
     private final ReviewRepository reviewRepository;
+    private final com.fpt.printhub_3d.service.InventoryService inventoryService;
 
     private static final BigDecimal COMMISSION_RATE = new BigDecimal("0.05");
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
@@ -83,20 +84,6 @@ public class OrderServiceImpl implements OrderService {
             validatedItems.add(new ItemWithProduct(itemRequest, product));
         }
 
-        for (Map.Entry<UUID, Integer> entry : totalRequestedStock.entrySet()) {
-            Product p = productRepository.findById(entry.getKey()).orElseThrow();
-            if (p.getStock() < entry.getValue()) {
-                throw new ApiException(OrderErrorCode.OUT_OF_STOCK,
-                        "Sản phẩm '" + p.getTitle() + "' không đủ số lượng tồn kho (còn: " + p.getStock() + ", yêu cầu: " + entry.getValue() + ")");
-            }
-        }
-
-        for (Map.Entry<UUID, Integer> entry : totalRequestedStock.entrySet()) {
-            Product p = productRepository.findById(entry.getKey()).orElseThrow();
-            p.setStock(p.getStock() - entry.getValue());
-            productRepository.save(p);
-        }
-
         Map<UUID, List<ItemWithProduct>> itemsBySeller = validatedItems.stream()
                 .collect(Collectors.groupingBy(iwp -> iwp.product().getSeller().getId()));
 
@@ -135,7 +122,9 @@ public class OrderServiceImpl implements OrderService {
             shippingInfoRepository.save(shippingInfo);
 
             List<OrderItemResponseDTO> itemResponses = new ArrayList<>();
+            Map<UUID, Integer> sellerProductQuantities = new HashMap<>();
             for (ItemWithProduct iwp : sellerItems) {
+                sellerProductQuantities.merge(iwp.product().getId(), iwp.item().quantity(), Integer::sum);
                 OrderItem orderItem = new OrderItem();
                 orderItem.setOrder(savedOrder);
                 orderItem.setProduct(iwp.product());
@@ -174,6 +163,14 @@ public class OrderServiceImpl implements OrderService {
                 paymentRepository.save(payment);
             }
 
+            // Quản lý giữ chỗ tồn kho (ACTIVE) và lưu hạn thanh toán
+            Instant expiresAt = "PAYOS".equals(paymentMethod) ? Instant.now().plus(15, java.time.temporal.ChronoUnit.MINUTES) : null;
+            inventoryService.reserveForOrder(savedOrder.getId(), sellerProductQuantities, "ORDER_" + savedOrder.getId(), expiresAt);
+            if (expiresAt != null) {
+                savedOrder.setPaymentDueAt(expiresAt);
+                orderRepository.save(savedOrder);
+            }
+
             createdOrders.add(OrderResponseDTO.builder()
                     .id(savedOrder.getId())
                     .buyerId(buyer.getId())
@@ -196,6 +193,7 @@ public class OrderServiceImpl implements OrderService {
                     .items(itemResponses)
                     .createdAt(savedOrder.getCreatedAt())
                     .updatedAt(savedOrder.getUpdatedAt())
+                    .paymentDueAt(savedOrder.getPaymentDueAt())
                     .build());
         }
 
@@ -316,6 +314,7 @@ public class OrderServiceImpl implements OrderService {
                 .items(itemDTOs)
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
+                .paymentDueAt(order.getPaymentDueAt())
                 .build();
     }
 
@@ -397,6 +396,8 @@ public class OrderServiceImpl implements OrderService {
                 payment.setUpdatedAt(Instant.now());
                 paymentRepository.save(payment);
             }
+            // Hoàn lại tồn kho cho đơn hủy PENDING
+            inventoryService.releaseActiveReservations(order.getId(), "Hủy đơn hàng PENDING", currentUser.getId().toString());
         } else {
             if (currentUser.getRole() != UserRole.ADMIN) {
                 throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ quản trị viên mới có thể chuyển tiến trình đơn");
@@ -411,6 +412,9 @@ public class OrderServiceImpl implements OrderService {
 
             if (!isValidTransition) {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chuyển trạng thái đơn không hợp lệ từ " + currentStatus + " sang " + nextStatus);
+            }
+            if ("PREPARING".equals(nextStatus) || "PRINTING".equals(nextStatus)) {
+                inventoryService.confirmReservation(order.getId());
             }
             if ("COMPLETED".equals(nextStatus) && payment != null && "COD".equals(payment.getGateway())) {
                 payment.setStatus("SUCCESS");

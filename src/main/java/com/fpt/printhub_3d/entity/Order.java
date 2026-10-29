@@ -68,4 +68,7 @@ public class Order {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "checkout_order_id")
     private CheckoutOrder checkoutOrder;
+
+    @Column(name = "payment_due_at")
+    private Instant paymentDueAt;
 }

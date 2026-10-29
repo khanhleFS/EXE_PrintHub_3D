@@ -54,6 +54,9 @@ public record OrderResponseDTO(
         Instant createdAt,
 
         @Schema(description = "Thời gian cập nhật")
-        Instant updatedAt
+        Instant updatedAt,
+
+        @Schema(description = "Hạn thanh toán PAYOS (15 phút)")
+        Instant paymentDueAt
 ) {
 }

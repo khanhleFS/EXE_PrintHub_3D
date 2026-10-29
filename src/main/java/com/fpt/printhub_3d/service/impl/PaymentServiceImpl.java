@@ -42,6 +42,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentRepository payments;
     private final PayOS payOS;
     private final NotificationService notifications;
+    private final com.fpt.printhub_3d.service.InventoryService inventoryService;
 
     @Value("${payos.return-url:http://localhost:5173/payment-result}")
     private String returnUrl;
@@ -324,6 +325,7 @@ public class PaymentServiceImpl implements PaymentService {
             order.setStatus("PAID");
             order.setUpdatedAt(Instant.now());
             orders.save(order);
+            inventoryService.confirmReservation(order.getId());
             buyer = order.getBuyer();
         } else if (payment.getCustomOrder() != null) {
             CustomOrder customOrder = payment.getCustomOrder();
@@ -350,6 +352,7 @@ public class PaymentServiceImpl implements PaymentService {
                     o.setStatus("PAID");
                     o.setUpdatedAt(Instant.now());
                     orders.save(o);
+                    inventoryService.confirmReservation(o.getId());
                 }
             }
             List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());

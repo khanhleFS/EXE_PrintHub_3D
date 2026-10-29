@@ -40,6 +40,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private final OrderItemRepository orderItemRepository;
     private final CustomOrderRepository customOrderRepository;
     private final PaymentService paymentService;
+    private final com.fpt.printhub_3d.service.InventoryService inventoryService;
 
     @Override
     public CheckoutOrderResponseDTO createCheckoutOrder(User user, CheckoutOrderCreateRequestDTO request) {
@@ -165,6 +166,18 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     orderItem.setUnitPrice(ci.getProduct().getPrice());
                     orderItemRepository.save(orderItem);
                 }
+
+                // Giữ chỗ tồn kho cho đơn marketplace (ACTIVE)
+                Map<UUID, Integer> sellerProductQuantities = new HashMap<>();
+                for (CartItem ci : entry.getValue()) {
+                    sellerProductQuantities.merge(ci.getProduct().getId(), ci.getQuantity(), Integer::sum);
+                }
+                Instant expiresAt = "PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod()) ? Instant.now().plus(15, java.time.temporal.ChronoUnit.MINUTES) : null;
+                inventoryService.reserveForOrder(order.getId(), sellerProductQuantities, "CHECKOUT_ORDER_" + checkoutOrder.getId(), expiresAt);
+                if (expiresAt != null) {
+                    order.setPaymentDueAt(expiresAt);
+                    orderRepository.save(order);
+                }
             }
         }
 
@@ -252,14 +265,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             }
         }
 
-        // Khấu trừ tồn kho marketplace trong transaction
+        // Xác nhận giữ chỗ tồn kho (ACTIVE -> CONFIRMED, không trừ thêm)
         for (Order o : orderList) {
-            List<OrderItem> items = orderItemRepository.findByOrderId(o.getId());
-            for (OrderItem oi : items) {
-                Product p = productRepository.findById(oi.getProduct().getId()).orElseThrow();
-                p.setStock(p.getStock() - oi.getQuantity());
-                productRepository.save(p);
-            }
+            inventoryService.confirmReservation(o.getId());
         }
 
         // Tính tổng tiền sau báo giá
