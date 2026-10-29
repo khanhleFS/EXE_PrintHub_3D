@@ -1,10 +1,13 @@
 package com.fpt.printhub_3d.controller.api;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
+import com.fpt.printhub_3d.dto.subscription.CreateSubscriptionPurchaseRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.RedeemSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPlanResponseDTO;
+import com.fpt.printhub_3d.dto.subscription.SubscriptionPurchaseResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.UserSubscriptionResponseDTO;
+import com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -54,5 +57,31 @@ public interface UserSubscriptionAPI {
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @GetMapping("/api/subscriptions/me")
-    ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO>> getMySubscriptionSummary();
+    ResponseEntity<ApiResponse<UserSubscriptionSummaryDTO>> getMySubscriptionSummary();
+
+    @Operation(
+            summary = "Create subscription cash purchase order",
+            description = "Tạo đơn mua gói hội viên bằng tiền mặt trước khi tạo link thanh toán PayOS.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping("/api/subscriptions/purchases")
+    ResponseEntity<ApiResponse<SubscriptionPurchaseResponseDTO>> createPurchase(
+            @Valid @RequestBody CreateSubscriptionPurchaseRequestDTO request);
+
+    @Operation(
+            summary = "Get subscription purchase by ID",
+            description = "Xem chi tiết đơn mua gói hội viên theo ID.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/api/subscriptions/purchases/{id}")
+    ResponseEntity<ApiResponse<SubscriptionPurchaseResponseDTO>> getPurchaseById(
+            @PathVariable("id") UUID id);
+
+    @Operation(
+            summary = "Get current user subscription purchases history",
+            description = "Lấy danh sách lịch sử các lần mua gói hội viên bằng tiền mặt của người dùng.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/api/subscriptions/purchases/me")
+    ResponseEntity<ApiResponse<List<SubscriptionPurchaseResponseDTO>>> getMyPurchases();
 }

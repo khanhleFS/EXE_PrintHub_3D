@@ -5,10 +5,10 @@ import com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO;
 import com.fpt.printhub_3d.dto.finance.RevenueAnalyticsResponseDTO;
 import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.Payment;
-import com.fpt.printhub_3d.entity.PointWallet;
 import com.fpt.printhub_3d.repository.OrderRepository;
 import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.repository.PointWalletRepository;
+import com.fpt.printhub_3d.repository.SubscriptionPurchaseRepository;
 import com.fpt.printhub_3d.service.FinanceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -29,6 +29,7 @@ public class FinanceServiceImpl implements FinanceService {
     private final OrderRepository orderRepository;
     private final PaymentRepository paymentRepository;
     private final PointWalletRepository pointWalletRepository;
+    private final SubscriptionPurchaseRepository subscriptionPurchaseRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -48,15 +49,21 @@ public class FinanceServiceImpl implements FinanceService {
     @Transactional(readOnly = true)
     public RevenueAnalyticsResponseDTO getRevenueAnalytics(Instant from, Instant to) {
         BigDecimal orderCommissionRevenue = orderRepository.sumCommissionFeeBetween(from, to);
-        BigDecimal customerSubscriptionRevenue = BigDecimal.ZERO;
+        if (orderCommissionRevenue == null) {
+            orderCommissionRevenue = BigDecimal.ZERO;
+        }
+
+        BigDecimal customerSubscriptionRevenue = subscriptionPurchaseRepository.sumSettledRevenueBetween(from, to);
+        if (customerSubscriptionRevenue == null) {
+            customerSubscriptionRevenue = BigDecimal.ZERO;
+        }
 
         return RevenueAnalyticsResponseDTO.builder()
                 .from(from)
                 .to(to)
                 .orderCommissionRevenue(orderCommissionRevenue)
                 .customerSubscriptionRevenue(customerSubscriptionRevenue)
-                .totalRevenue(orderCommissionRevenue
-                        .add(customerSubscriptionRevenue))
+                .totalRevenue(orderCommissionRevenue.add(customerSubscriptionRevenue))
                 .build();
     }
 
@@ -110,6 +117,9 @@ public class FinanceServiceImpl implements FinanceService {
             } else if (p.getCustomOrder() != null && p.getCustomOrder().getBuyer() != null) {
                 userName = p.getCustomOrder().getBuyer().getFullName();
                 type = "Đơn custom #" + p.getCustomOrder().getId().toString().substring(0, 8);
+            } else if (p.getSubscriptionPurchase() != null && p.getSubscriptionPurchase().getUser() != null) {
+                userName = p.getSubscriptionPurchase().getUser().getFullName();
+                type = "Gói hội viên " + p.getSubscriptionPurchase().getPlan().getName();
             }
 
             txList.add(FinanceSummaryResponseDTO.FinancialTransactionDTO.builder()

@@ -42,6 +42,8 @@ class UserSubscriptionServiceTest {
     private PointTransactionRepository pointTransactionRepository;
     @Mock
     private SubscriptionCommandRecordRepository subscriptionCommandRecordRepository;
+    @Mock
+    private SubscriptionPurchaseRepository subscriptionPurchaseRepository;
 
     @BeforeEach
     void setUp() {
@@ -52,7 +54,8 @@ class UserSubscriptionServiceTest {
                 userSubscriptionRepository,
                 pointWalletRepository,
                 pointTransactionRepository,
-                subscriptionCommandRecordRepository
+                subscriptionCommandRecordRepository,
+                subscriptionPurchaseRepository
         );
     }
 

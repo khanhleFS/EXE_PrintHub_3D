@@ -15,7 +15,10 @@ public enum SubscriptionErrorCode implements ErrorCode {
     POINT_REDEMPTION_NOT_SUPPORTED(40005, "Gói dịch vụ không hỗ trợ đổi bằng điểm thưởng", HttpStatus.BAD_REQUEST, "subscription.point_redemption_not_supported"),
     INSUFFICIENT_POINTS(40006, "Số dư điểm thưởng không đủ", HttpStatus.CONFLICT, "subscription.insufficient_points"),
     INVALID_RECIPIENT(40007, "Tài khoản người nhận không hợp lệ", HttpStatus.BAD_REQUEST, "subscription.invalid_recipient"),
-    IDEMPOTENCY_CONFLICT(40008, "Mã yêu cầu (requestId) đã được sử dụng với nội dung khác", HttpStatus.CONFLICT, "subscription.idempotency_conflict");
+    IDEMPOTENCY_CONFLICT(40008, "Mã yêu cầu (requestId) đã được sử dụng với nội dung khác", HttpStatus.CONFLICT, "subscription.idempotency_conflict"),
+    MONEY_PURCHASE_NOT_SUPPORTED(40009, "Gói dịch vụ không hỗ trợ mua bằng tiền", HttpStatus.BAD_REQUEST, "subscription.money_purchase_not_supported"),
+    PURCHASE_NOT_FOUND(40010, "Không tìm thấy giao dịch mua gói hội viên", HttpStatus.NOT_FOUND, "subscription.purchase_not_found"),
+    PURCHASE_NOT_PAYABLE(40011, "Giao dịch mua gói không ở trạng thái có thể thanh toán", HttpStatus.BAD_REQUEST, "subscription.purchase_not_payable");
 
     private final int code;
     private final String message;

@@ -3,10 +3,13 @@ package com.fpt.printhub_3d.controller;
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.UserSubscriptionAPI;
+import com.fpt.printhub_3d.dto.subscription.CreateSubscriptionPurchaseRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.RedeemSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPlanResponseDTO;
+import com.fpt.printhub_3d.dto.subscription.SubscriptionPurchaseResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.UserSubscriptionResponseDTO;
+import com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO;
 import com.fpt.printhub_3d.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -77,16 +80,62 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
 
     @Override
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO>> getMySubscriptionSummary() {
+    public ResponseEntity<ApiResponse<UserSubscriptionSummaryDTO>> getMySubscriptionSummary() {
         UUID userId = SecurityUtils.getCurrentUser().getId();
-        com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO summary =
+        UserSubscriptionSummaryDTO summary =
                 userSubscriptionService.getUserSubscriptionSummary(userId);
 
         return ResponseEntity.ok(
-                ApiResponse.<com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO>builder()
+                ApiResponse.<UserSubscriptionSummaryDTO>builder()
                         .code(200)
                         .message("Lấy thông tin gói hội viên thành công.")
                         .result(summary)
+                        .build()
+        );
+    }
+
+    @Override
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<SubscriptionPurchaseResponseDTO>> createPurchase(
+            CreateSubscriptionPurchaseRequestDTO request) {
+        UUID userId = SecurityUtils.getCurrentUser().getId();
+        SubscriptionPurchaseResponseDTO response = userSubscriptionService.createPurchase(userId, request);
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<SubscriptionPurchaseResponseDTO>builder()
+                        .code(201)
+                        .message("Tạo đơn mua gói hội viên thành công.")
+                        .result(response)
+                        .build()
+        );
+    }
+
+    @Override
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<SubscriptionPurchaseResponseDTO>> getPurchaseById(UUID id) {
+        UUID userId = SecurityUtils.getCurrentUser().getId();
+        SubscriptionPurchaseResponseDTO response = userSubscriptionService.getPurchaseById(id, userId);
+
+        return ResponseEntity.ok(
+                ApiResponse.<SubscriptionPurchaseResponseDTO>builder()
+                        .code(200)
+                        .message("Lấy chi tiết đơn mua gói thành công.")
+                        .result(response)
+                        .build()
+        );
+    }
+
+    @Override
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<SubscriptionPurchaseResponseDTO>>> getMyPurchases() {
+        UUID userId = SecurityUtils.getCurrentUser().getId();
+        List<SubscriptionPurchaseResponseDTO> response = userSubscriptionService.getMyPurchases(userId);
+
+        return ResponseEntity.ok(
+                ApiResponse.<List<SubscriptionPurchaseResponseDTO>>builder()
+                        .code(200)
+                        .message("Lấy lịch sử mua gói hội viên thành công.")
+                        .result(response)
                         .build()
         );
     }

@@ -28,10 +28,9 @@ import static org.mockito.Mockito.*;
 
 class CustomPricingAndPaymentFlowTest {
 
-    // Services under test
-    private CartServiceImpl cartService;
-    private CheckoutOrderServiceImpl checkoutOrderService;
-    private PaymentServiceImpl paymentService;
+    private CartService cartService;
+    private CheckoutOrderService checkoutOrderService;
+    private PaymentService paymentService;
 
     // Repositories & Mocks for CartService
     @Mock private CartRepository cartRepository;
@@ -48,6 +47,8 @@ class CustomPricingAndPaymentFlowTest {
 
     // Repositories & Mocks for PaymentService
     @Mock private PaymentRepository paymentRepository;
+    @Mock private SubscriptionPurchaseRepository subscriptionPurchaseRepository;
+    @Mock private UserSubscriptionService userSubscriptionService;
     @Mock private PayOS payOS;
     @Mock private NotificationService notificationService;
     @Mock private InventoryService mockInventoryService;
@@ -78,6 +79,8 @@ class CustomPricingAndPaymentFlowTest {
                 customOrderRepository,
                 checkoutOrderRepository,
                 paymentRepository,
+                subscriptionPurchaseRepository,
+                userSubscriptionService,
                 payOS,
                 notificationService,
                 mockInventoryService

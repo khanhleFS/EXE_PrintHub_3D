@@ -14,15 +14,15 @@ import java.util.UUID;
 @Schema(description = "Yêu cầu tạo link thanh toán PayOS")
 public record CreatePaymentLinkRequestDTO(
         @NotNull(message = "ID đơn hàng không được để trống.")
-        @Schema(description = "ID của đơn hàng cần thanh toán", example = "550e8400-e29b-41d4-a716-446655440000")
+        @Schema(description = "ID của đơn hàng hoặc giao dịch mua gói cần thanh toán", example = "550e8400-e29b-41d4-a716-446655440000")
         UUID orderId,
 
         @NotBlank(message = "Loại đơn hàng không được để trống.")
-        @Pattern(regexp = "^(ORDER|CUSTOM_ORDER|CHECKOUT_ORDER)$", message = "Loại đơn hàng phải là ORDER, CUSTOM_ORDER hoặc CHECKOUT_ORDER.")
-        @Schema(description = "Loại đơn hàng: ORDER, CUSTOM_ORDER hoặc CHECKOUT_ORDER", example = "ORDER")
+        @Pattern(regexp = "^(ORDER|CUSTOM_ORDER|CHECKOUT_ORDER|SUBSCRIPTION_PURCHASE|SUBSCRIPTION)$", message = "Loại đơn hàng phải là ORDER, CUSTOM_ORDER, CHECKOUT_ORDER hoặc SUBSCRIPTION_PURCHASE.")
+        @Schema(description = "Loại đơn hàng: ORDER, CUSTOM_ORDER, CHECKOUT_ORDER hoặc SUBSCRIPTION_PURCHASE", example = "SUBSCRIPTION_PURCHASE")
         String orderType,
 
-        @Schema(description = "Mô tả bổ sung cho giao dịch thanh toán", example = "Thanh toán đơn hàng in 3D")
+        @Schema(description = "Mô tả bổ sung cho giao dịch thanh toán", example = "Thanh toán gói hội viên")
         String description,
 
         @Schema(description = "Số tiền cọc/thanh toán tùy chọn từ FE (VND)", example = "67500")
@@ -38,4 +38,3 @@ public record CreatePaymentLinkRequestDTO(
         String cancelUrl
 ) {
 }
-

@@ -7,13 +7,17 @@ import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.Payment;
+import com.fpt.printhub_3d.entity.SubscriptionPurchase;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.repository.CheckoutOrderRepository;
 import com.fpt.printhub_3d.repository.CustomOrderRepository;
 import com.fpt.printhub_3d.repository.OrderRepository;
 import com.fpt.printhub_3d.repository.PaymentRepository;
+import com.fpt.printhub_3d.repository.SubscriptionPurchaseRepository;
+import com.fpt.printhub_3d.service.InventoryService;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.PaymentService;
+import com.fpt.printhub_3d.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,9 +46,11 @@ public class PaymentServiceImpl implements PaymentService {
     private final CustomOrderRepository customs;
     private final CheckoutOrderRepository checkoutOrders;
     private final PaymentRepository payments;
+    private final SubscriptionPurchaseRepository subscriptionPurchases;
+    private final UserSubscriptionService userSubscriptionService;
     private final PayOS payOS;
     private final NotificationService notifications;
-    private final com.fpt.printhub_3d.service.InventoryService inventoryService;
+    private final InventoryService inventoryService;
 
     @Value("${payos.return-url:http://localhost:5173/payment-result}")
     private String returnUrl;
@@ -61,6 +67,7 @@ public class PaymentServiceImpl implements PaymentService {
         Order order = null;
         CustomOrder custom = null;
         CheckoutOrder checkoutOrder = null;
+        SubscriptionPurchase subscriptionPurchase = null;
         BigDecimal total;
         Payment payment;
 
@@ -105,6 +112,18 @@ public class PaymentServiceImpl implements PaymentService {
             }
             total = checkoutOrder.getTotalAmount();
             payment = payments.findByCheckoutOrderId(checkoutOrder.getId()).orElseGet(Payment::new);
+
+        } else if ("SUBSCRIPTION_PURCHASE".equals(request.orderType()) || "SUBSCRIPTION".equals(request.orderType())) {
+            subscriptionPurchase = subscriptionPurchases.findLockedById(request.orderId())
+                    .orElseThrow(() -> bad("Không tìm thấy giao dịch mua gói hội viên"));
+            if (!subscriptionPurchase.getUser().getId().equals(userId)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+            }
+            if (!"PENDING".equals(subscriptionPurchase.getStatus())) {
+                throw bad("Giao dịch mua gói không ở trạng thái chờ thanh toán");
+            }
+            total = subscriptionPurchase.getAmount();
+            payment = payments.findBySubscriptionPurchaseId(subscriptionPurchase.getId()).orElseGet(Payment::new);
 
         } else {
             throw bad("Loại đơn hàng không hợp lệ");
@@ -160,13 +179,13 @@ public class PaymentServiceImpl implements PaymentService {
         Instant expiry = Instant.now().plusSeconds(900);
 
         String finalReturnUrl = (request.returnUrl() != null && !request.returnUrl().isBlank())
-                ? request.returnUrl() : returnUrl;
+                ? request.returnUrl() : (returnUrl != null ? returnUrl : "http://localhost:5173/payment-result");
         String finalCancelUrl = (request.cancelUrl() != null && !request.cancelUrl().isBlank())
-                ? request.cancelUrl() : cancelUrl;
+                ? request.cancelUrl() : (cancelUrl != null ? cancelUrl : "http://localhost:5173/payment-result?cancel=true");
 
         String description = (request.description() != null && !request.description().isBlank())
                 ? request.description()
-                : "PrintHub " + code;
+                : (subscriptionPurchase != null ? "SUB " + code : "PrintHub " + code);
         if (description.length() > 25) {
             description = description.substring(0, 25);
         }
@@ -183,6 +202,7 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setOrder(order);
         payment.setCustomOrder(custom);
         payment.setCheckoutOrder(checkoutOrder);
+        payment.setSubscriptionPurchase(subscriptionPurchase);
         payment.setAmount(total);
         payment.setGateway("PAYOS");
         payment.setStatus("PENDING");
@@ -290,6 +310,8 @@ public class PaymentServiceImpl implements PaymentService {
             customs.findLockedById(payment.getCustomOrder().getId()).orElseThrow();
         } else if (payment.getCheckoutOrder() != null) {
             checkoutOrders.findLockedById(payment.getCheckoutOrder().getId()).orElseThrow();
+        } else if (payment.getSubscriptionPurchase() != null) {
+            subscriptionPurchases.findLockedById(payment.getSubscriptionPurchase().getId()).orElseThrow();
         }
 
         return payments.findByTransactionId(code).orElseThrow();
@@ -302,6 +324,8 @@ public class PaymentServiceImpl implements PaymentService {
             return payment.getCustomOrder().getBuyer().getId();
         } else if (payment.getCheckoutOrder() != null) {
             return payment.getCheckoutOrder().getUser().getId();
+        } else if (payment.getSubscriptionPurchase() != null) {
+            return payment.getSubscriptionPurchase().getUser().getId();
         }
         throw bad("Giao dịch không có thông tin người sở hữu");
     }
@@ -319,6 +343,9 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setUpdatedAt(Instant.now());
 
         User buyer;
+        String notificationMessage = "Giao dịch " + payment.getTransactionId() + " đã thanh toán thành công.";
+        String notificationLink = "/orders";
+
         if (payment.getOrder() != null) {
             Order order = payment.getOrder();
             if ("CANCELLED".equals(order.getStatus()) || "EXPIRED".equals(order.getStatus())) {
@@ -386,6 +413,18 @@ public class PaymentServiceImpl implements PaymentService {
                     }
                 }
             }
+        } else if (payment.getSubscriptionPurchase() != null) {
+            SubscriptionPurchase purchase = payment.getSubscriptionPurchase();
+            buyer = purchase.getUser();
+            if ("CANCELLED".equals(purchase.getStatus()) || "EXPIRED".equals(purchase.getStatus())) {
+                log.warn("Giao dịch mua gói {} đã ở trạng thái {}, giao dịch PayOS {} ghi nhận thanh toán muộn cần đối soát",
+                        purchase.getId(), purchase.getStatus(), payment.getTransactionId());
+            } else {
+                userSubscriptionService.activateSubscriptionFromPurchase(purchase);
+                notificationMessage = "Gói hội viên " + purchase.getPlan().getName() + " đã được kích hoạt thành công.";
+                notificationLink = "/profile";
+            }
+            // QUAN TRỌNG: Mua gói hội viên bằng tiền TUYỆT ĐỐI KHÔNG CỘNG ĐIỂM THƯỞNG để tránh loop tiền -> điểm -> đổi gói
         } else {
             throw bad("Giao dịch không có thông tin đơn hàng");
         }
@@ -394,9 +433,9 @@ public class PaymentServiceImpl implements PaymentService {
         notifications.sendNotification(
                 buyer,
                 "Đã nhận thanh toán",
-                "Giao dịch " + payment.getTransactionId() + " đã thanh toán thành công.",
+                notificationMessage,
                 "PAYMENT",
-                "/orders"
+                notificationLink
         );
     }
 

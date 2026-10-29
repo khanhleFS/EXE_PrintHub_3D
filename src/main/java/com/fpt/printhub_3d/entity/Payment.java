@@ -37,6 +37,10 @@ public class Payment {
     @JoinColumn(name = "checkout_order_id", unique = true)
     private CheckoutOrder checkoutOrder;
 
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "subscription_purchase_id", unique = true)
+    private SubscriptionPurchase subscriptionPurchase;
+
     @Column(length = 1000)
     private String checkoutUrl;
     private Instant expiresAt;
