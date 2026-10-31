@@ -38,8 +38,8 @@ public class DisputeServiceImpl implements DisputeService {
         Order order = orderRepository.findById(request.orderId())
                 .orElseThrow(() -> new ApiException(ReviewDisputeErrorCode.ORDER_NOT_FOUND));
 
-        boolean isBuyer = order.getBuyer().getId().equals(filedBy.getId());
-        boolean isSeller = order.getSeller().getId().equals(filedBy.getId());
+        boolean isBuyer = order.getBuyer() != null && order.getBuyer().getId().equals(filedBy.getId());
+        boolean isSeller = order.getSeller() != null && order.getSeller().getId().equals(filedBy.getId());
         if (!isBuyer && !isSeller) {
             throw new ApiException(ReviewDisputeErrorCode.NOT_ORDER_PARTICIPANT);
         }

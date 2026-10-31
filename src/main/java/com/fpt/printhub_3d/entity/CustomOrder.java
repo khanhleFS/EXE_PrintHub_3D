@@ -79,7 +79,7 @@ public class CustomOrder {
     private String status;
 
     @NotNull
-    @ColumnDefault("0")
+    @ColumnDefault("false")
     @Column(name = "reward_processed", nullable = false)
     private Boolean rewardProcessed = false;
 
