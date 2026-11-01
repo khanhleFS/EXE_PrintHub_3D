@@ -287,11 +287,28 @@ public class PaymentServiceImpl implements PaymentService {
             }
         }
 
-        return Map.of(
-                "orderCode", code,
-                "status", "SUCCESS".equals(payment.getStatus()) ? "PAID" : payment.getStatus(),
-                "amount", payment.getAmount()
-        );
+        String targetType = "ORDER";
+        String planName = null;
+        if (payment.getSubscriptionPurchase() != null) {
+            targetType = "SUBSCRIPTION_PURCHASE";
+            if (payment.getSubscriptionPurchase().getPlan() != null) {
+                planName = payment.getSubscriptionPurchase().getPlan().getName();
+            }
+        } else if (payment.getCustomOrder() != null) {
+            targetType = "CUSTOM_ORDER";
+        } else if (payment.getCheckoutOrder() != null) {
+            targetType = "CHECKOUT_ORDER";
+        }
+
+        Map<String, Object> responseMap = new java.util.HashMap<>();
+        responseMap.put("orderCode", code);
+        responseMap.put("status", "SUCCESS".equals(payment.getStatus()) ? "PAID" : payment.getStatus());
+        responseMap.put("amount", payment.getAmount());
+        responseMap.put("targetType", targetType);
+        if (planName != null) {
+            responseMap.put("planName", planName);
+        }
+        return responseMap;
     }
 
     // --- Private Helper Methods ---
