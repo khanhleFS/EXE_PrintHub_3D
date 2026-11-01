@@ -140,8 +140,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói VIP người mua chỉ dành cho tài khoản khách hàng.");
         }
 
-        Integer requiredPoints = plan.getRequiredPoints();
-        if (requiredPoints == null || requiredPoints <= 0) {
+        if (Boolean.FALSE.equals(plan.getAllowPointRedemption()) || plan.getRequiredPoints() == null || plan.getRequiredPoints() <= 0) {
             throw new ApiException(SubscriptionErrorCode.POINT_REDEMPTION_NOT_SUPPORTED, "Gói dịch vụ này không hỗ trợ đổi bằng điểm thưởng.");
         }
 
@@ -168,26 +167,26 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             return pointWalletRepository.save(newWallet);
         });
 
-        if (wallet.getBalance() == null || wallet.getBalance() < requiredPoints) {
+        if (wallet.getBalance() == null || wallet.getBalance() < plan.getRequiredPoints()) {
             throw new ApiException(SubscriptionErrorCode.INSUFFICIENT_POINTS,
                     "Số dư điểm thưởng (" + (wallet.getBalance() != null ? wallet.getBalance() : 0) +
-                            " pts) không đủ để đổi gói " + plan.getName() + " (" + requiredPoints + " pts).");
+                            " pts) không đủ để đổi gói " + plan.getName() + " (" + plan.getRequiredPoints() + " pts).");
         }
 
         // 6. Trừ điểm và ghi nhận lịch sử giao dịch (Ledger audit)
-        wallet.setBalance(wallet.getBalance() - requiredPoints);
+        wallet.setBalance(wallet.getBalance() - plan.getRequiredPoints());
         wallet.setUpdatedAt(LocalDateTime.now());
         pointWalletRepository.save(wallet);
 
         PointTransaction tx = PointTransaction.builder()
                 .pointWallet(wallet)
-                .amount(-requiredPoints)
+                .amount(-plan.getRequiredPoints())
                 .type(PointTransactionType.REDEEM)
                 .description("Đổi điểm lấy gói hội viên: " + plan.getName())
                 .createdAt(LocalDateTime.now())
                 .build();
         pointTransactionRepository.save(tx);
-        log.info("Đã trừ [{}] điểm của User [{}]. Số dư mới: [{}] pts", requiredPoints, userId, wallet.getBalance());
+        log.info("Đã trừ [{}] điểm của User [{}]. Số dư mới: [{}] pts", plan.getRequiredPoints(), userId, wallet.getBalance());
 
         // 7. Kích hoạt hoặc gia hạn gói dịch vụ
         UserSubscription userSub = processSubscriptionActivation(user, plan);
@@ -252,6 +251,10 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói được tặng không thuộc nhóm khách hàng.");
         }
 
+        if (Boolean.FALSE.equals(plan.getAllowAdminGift())) {
+            throw new ApiException(SubscriptionErrorCode.GIFT_NOT_SUPPORTED, "Gói dịch vụ này không hỗ trợ tặng.");
+        }
+
         // 4. Kích hoạt hoặc gia hạn gói
         UserSubscription userSub = processSubscriptionActivation(user, plan);
 
@@ -313,7 +316,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Gói dịch vụ không thuộc nhóm khách hàng.");
         }
 
-        if (plan.getPrice() == null || plan.getPrice().signum() <= 0) {
+        if (Boolean.FALSE.equals(plan.getAllowMoneyPurchase()) || plan.getPrice() == null || plan.getPrice().signum() <= 0) {
             throw new ApiException(SubscriptionErrorCode.MONEY_PURCHASE_NOT_SUPPORTED, "Gói dịch vụ này không hỗ trợ mua bằng tiền.");
         }
 
@@ -449,6 +452,8 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .planType(userSub.getPlan().getType())
                 .startDate(userSub.getStartDate())
                 .endDate(userSub.getEndDate())
+                .benefits(userSub.getPlan() != null ? userSub.getPlan().getBenefits() : null)
+                .structuredBenefits(userSub.getPlan() != null ? userSub.getPlan().getStructuredBenefits() : null)
                 .isActive(userSub.getIsActive())
                 .build();
     }

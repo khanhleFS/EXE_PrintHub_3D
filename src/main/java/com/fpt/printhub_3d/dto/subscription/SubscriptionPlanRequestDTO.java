@@ -16,7 +16,6 @@ public record SubscriptionPlanRequestDTO(
         @Schema(description = "Tên gói", example = "Customer VIP Silver")
         String name,
 
-        @NotNull(message = "Giá gói không được để trống")
         @DecimalMin(value = "0.0", inclusive = true, message = "Giá gói phải lớn hơn hoặc bằng 0")
         @Schema(description = "Giá mua gói", example = "99000")
         BigDecimal price,
@@ -26,12 +25,31 @@ public record SubscriptionPlanRequestDTO(
         @Schema(description = "Mô tả đặc quyền ưu đãi/marketing", example = "Giảm 10% đơn hàng, miễn phí ship 2 đơn/tháng")
         String benefits,
 
+        @Size(max = 2000, message = "Mô tả tối đa 2000 ký tự")
+        @Schema(description = "Mô tả thêm về gói")
+        String description,
+
         @Min(value = 0, message = "Điểm quy đổi tối thiểu phải lớn hơn hoặc bằng 0")
         @Schema(description = "Số điểm tối thiểu cần để đổi gói Customer. Gói Maker có thể bỏ trống.", example = "500")
         Integer requiredPoints,
 
         @Min(value = 1, message = "Thời hạn gói tối thiểu phải từ 1 ngày")
         @Schema(description = "Thời hạn hiệu lực của gói (ngày)", example = "30")
-        Integer durationDays
+        Integer durationDays,
+
+        @Schema(description = "Cho phép mua bằng tiền mặt PayOS", example = "true")
+        Boolean allowMoneyPurchase,
+
+        @Schema(description = "Cho phép đổi bằng điểm thưởng", example = "true")
+        Boolean allowPointRedemption,
+
+        @Schema(description = "Cho phép Admin tặng", example = "true")
+        Boolean allowAdminGift,
+
+        @Schema(description = "Phiên bản cấu hình gói (dùng cho cập nhật chống xung đột)", example = "1")
+        Integer planVersion,
+
+        @Schema(description = "Cấu hình quyền lợi máy đọc được (JSON String)")
+        String structuredBenefits
 ) {
 }

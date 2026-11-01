@@ -17,6 +17,8 @@ public record UserSubscriptionResponseDTO(
         SubscriptionType planType,
         LocalDateTime startDate,
         LocalDateTime endDate,
+        String benefits,
+        String structuredBenefits,
         Boolean isActive
 ) {
 }

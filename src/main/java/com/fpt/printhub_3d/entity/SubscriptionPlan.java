@@ -34,11 +34,14 @@ public class SubscriptionPlan extends BaseEntity {
     @Column(name = "name", nullable = false, length = 255)
     private String name;
 
-    @Column(name = "price", nullable = false, precision = 18, scale = 2)
+    @Column(name = "price", precision = 18, scale = 2)
     private BigDecimal price;
 
     @Column(name = "benefits", nullable = false, length = 2000)
     private String benefits;
+
+    @Column(name = "description", length = 2000)
+    private String description;
 
     @Column(name = "required_points")
     private Integer requiredPoints;
@@ -46,6 +49,25 @@ public class SubscriptionPlan extends BaseEntity {
     @Column(name = "duration_days")
     @Builder.Default
     private Integer durationDays = 30;
+
+    @Column(name = "plan_version")
+    @Builder.Default
+    private Integer planVersion = 1;
+
+    @Column(name = "allow_money_purchase")
+    @Builder.Default
+    private Boolean allowMoneyPurchase = true;
+
+    @Column(name = "allow_point_redemption")
+    @Builder.Default
+    private Boolean allowPointRedemption = true;
+
+    @Column(name = "allow_admin_gift")
+    @Builder.Default
+    private Boolean allowAdminGift = true;
+
+    @Column(name = "structured_benefits", length = 4000)
+    private String structuredBenefits;
 
     @Column(name = "is_active", nullable = false)
     @Builder.Default

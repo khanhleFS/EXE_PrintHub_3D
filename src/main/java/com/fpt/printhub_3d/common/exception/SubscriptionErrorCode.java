@@ -18,7 +18,12 @@ public enum SubscriptionErrorCode implements ErrorCode {
     IDEMPOTENCY_CONFLICT(40008, "Mã yêu cầu (requestId) đã được sử dụng với nội dung khác", HttpStatus.CONFLICT, "subscription.idempotency_conflict"),
     MONEY_PURCHASE_NOT_SUPPORTED(40009, "Gói dịch vụ không hỗ trợ mua bằng tiền", HttpStatus.BAD_REQUEST, "subscription.money_purchase_not_supported"),
     PURCHASE_NOT_FOUND(40010, "Không tìm thấy giao dịch mua gói hội viên", HttpStatus.NOT_FOUND, "subscription.purchase_not_found"),
-    PURCHASE_NOT_PAYABLE(40011, "Giao dịch mua gói không ở trạng thái có thể thanh toán", HttpStatus.BAD_REQUEST, "subscription.purchase_not_payable");
+    PURCHASE_NOT_PAYABLE(40011, "Giao dịch mua gói không ở trạng thái có thể thanh toán", HttpStatus.BAD_REQUEST, "subscription.purchase_not_payable"),
+    GIFT_NOT_SUPPORTED(40012, "Gói dịch vụ không hỗ trợ tặng quà", HttpStatus.BAD_REQUEST, "subscription.gift_not_supported"),
+    PLAN_VERSION_CONFLICT(40013, "Phiên bản gói đã thay đổi, vui lòng tải lại trước khi cập nhật", HttpStatus.CONFLICT, "subscription.plan_version_conflict"),
+    NO_ACQUISITION_METHOD(40014, "Gói dịch vụ phải bật ít nhất một phương thức nhận (tiền, điểm hoặc tặng)", HttpStatus.BAD_REQUEST, "subscription.no_acquisition_method"),
+    INVALID_PRICE(40015, "Giá tiền gói không hợp lệ khi bật mua bằng tiền", HttpStatus.BAD_REQUEST, "subscription.invalid_price"),
+    INVALID_REQUIRED_POINTS(40016, "Điểm đổi gói không hợp lệ khi bật đổi bằng điểm", HttpStatus.BAD_REQUEST, "subscription.invalid_required_points");
 
     private final int code;
     private final String message;
