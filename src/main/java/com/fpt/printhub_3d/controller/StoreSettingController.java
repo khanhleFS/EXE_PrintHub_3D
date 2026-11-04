@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -19,6 +20,7 @@ import java.util.Map;
 public class StoreSettingController implements StoreSettingAPI {
 
     private final StoreSettingService storeSettingService;
+
 
     @Override
     @PreAuthorize("hasRole('ADMIN')")

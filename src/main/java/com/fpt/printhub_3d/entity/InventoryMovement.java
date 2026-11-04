@@ -38,7 +38,7 @@ public class InventoryMovement {
     private Integer delta;
 
     @NotNull
-    @Column(name = "availableAfter", nullable = false)
+    @Column(name = "available_after", nullable = false)
     private Integer availableAfter;
 
     @Column(name = "actor_or_operation_id", length = 100)

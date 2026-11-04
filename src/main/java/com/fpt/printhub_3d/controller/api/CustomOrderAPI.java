@@ -68,4 +68,12 @@ public interface CustomOrderAPI {
     )
     @PostMapping("/api/custom-orders/{id}/complete-rewards")
     ResponseEntity<ApiResponse<RewardCompletionResponseDTO>> completeRewards(@PathVariable UUID id);
+
+    @Operation(
+            summary = "Download 3D model file for custom order",
+            description = "Tải tệp thiết kế 3D gốc với tên tệp và phần mở rộng chuẩn xác.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping({"/api/custom-orders/{id}/file", "/api/admin/custom-orders/{id}/file"})
+    ResponseEntity<byte[]> downloadCustomOrderFile(@PathVariable UUID id);
 }

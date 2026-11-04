@@ -8,6 +8,7 @@ import org.springframework.data.jpa.domain.Specification;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public class ProductSpecification {
 
@@ -27,11 +28,31 @@ public class ProductSpecification {
             // Chỉ hiển thị sản phẩm của người bán đang hoạt động (isActive = true)
             predicates.add(cb.isTrue(root.get("seller").get("isActive")));
 
-            // Tìm kiếm theo tiêu đề sản phẩm (title)
+            // Tìm kiếm theo tiêu đề sản phẩm (title) hoặc mã ID/SKU
             if (filter.keyword() != null && !filter.keyword().isBlank()) {
-                String pattern = "%" + filter.keyword().trim().toLowerCase() + "%";
+                String rawKeyword = filter.keyword().trim();
+                while (rawKeyword.startsWith("#")) {
+                    rawKeyword = rawKeyword.substring(1).trim();
+                }
+                String pattern = "%" + rawKeyword.toLowerCase() + "%";
                 Predicate titleLike = cb.like(cb.lower(root.get("title")), pattern);
-                predicates.add(titleLike);
+
+                Predicate idMatch = null;
+                try {
+                    UUID parsedUuid = UUID.fromString(rawKeyword);
+                    idMatch = cb.equal(root.get("id"), parsedUuid);
+                } catch (IllegalArgumentException e) {
+                    try {
+                        idMatch = cb.like(cb.lower(root.get("id").as(String.class)), pattern);
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                if (idMatch != null) {
+                    predicates.add(cb.or(titleLike, idMatch));
+                } else {
+                    predicates.add(titleLike);
+                }
             }
 
             // Lọc theo danh mục

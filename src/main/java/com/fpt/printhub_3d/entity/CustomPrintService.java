@@ -33,9 +33,7 @@ public class CustomPrintService extends BaseEntity {
     @Column(name = "service_name", nullable = false, length = 200)
     private String serviceName;
 
-    @Nationalized
-    @Lob
-    @Column(name = "description")
+    @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
     @ElementCollection

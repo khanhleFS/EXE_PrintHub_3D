@@ -50,7 +50,13 @@ public class AddressServiceImpl implements AddressService {
         Address address = new Address();
         address.setUser(user);
         address.setRecipientName(request.resolveRecipientName());
-        address.setPhone(request.getPhone());
+        String rawPhone = request.getPhone() != null ? request.getPhone().replaceAll("[\\s.-]", "") : "";
+        if (rawPhone.startsWith("+84")) {
+            rawPhone = "0" + rawPhone.substring(3);
+        } else if (rawPhone.startsWith("84") && rawPhone.length() == 11) {
+            rawPhone = "0" + rawPhone.substring(2);
+        }
+        address.setPhone(rawPhone);
         address.setStreet(request.getAddressLine());
         address.setProvince(request.getProvince());
 

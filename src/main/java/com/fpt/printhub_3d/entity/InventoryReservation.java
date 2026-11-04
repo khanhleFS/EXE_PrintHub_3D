@@ -32,6 +32,9 @@ public class InventoryReservation {
     @Column(name = "order_id", nullable = false)
     private UUID orderId;
 
+    @Column(name = "checkout_order_id")
+    private UUID checkoutOrderId;
+
     @NotNull
     @Column(name = "product_id", nullable = false)
     private UUID productId;
@@ -66,4 +69,12 @@ public class InventoryReservation {
 
     @Column(name = "operation_id", length = 100)
     private String operationId;
+
+    @Column(name = "created_at")
+    @Builder.Default
+    private Instant createdAt = Instant.now();
+
+    @Column(name = "updated_at")
+    @Builder.Default
+    private Instant updatedAt = Instant.now();
 }

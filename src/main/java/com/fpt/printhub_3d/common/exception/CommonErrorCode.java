@@ -36,6 +36,7 @@ public enum CommonErrorCode implements ErrorCode {
     FORBIDDEN(2005, "Access forbidden", HttpStatus.FORBIDDEN, "common.forbidden"),
     CONFLICT(2006, "Resource conflict", HttpStatus.CONFLICT, "common.conflict"),
     TOO_MANY_REQUESTS(2007, "Too many requests", HttpStatus.TOO_MANY_REQUESTS, "common.too_many_requests"),
+    PAYLOAD_TOO_LARGE(2008, "Payload too large", HttpStatus.PAYLOAD_TOO_LARGE, "common.payload_too_large"),
 
     // 3xxx - Common Server Errors
     INTERNAL_ERROR(3000, "Internal server error", HttpStatus.INTERNAL_SERVER_ERROR, "common.internal_error"),

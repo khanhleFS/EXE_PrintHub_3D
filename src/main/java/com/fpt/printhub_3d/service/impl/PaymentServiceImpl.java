@@ -281,6 +281,58 @@ public class PaymentServiceImpl implements PaymentService {
                     payment.setStatus("CANCELLED");
                     payment.setUpdatedAt(Instant.now());
                     payments.save(payment);
+
+                    // Đồng bộ hủy SubscriptionPurchase nguyên tử
+                    if (payment.getSubscriptionPurchase() != null) {
+                        SubscriptionPurchase purchase = payment.getSubscriptionPurchase();
+                        if (!"PAID".equals(purchase.getStatus())) {
+                            purchase.setStatus("CANCELLED");
+                            purchase.setSettledAt(Instant.now());
+                            subscriptionPurchases.save(purchase);
+                            log.info("Đã đồng bộ hủy SubscriptionPurchase [{}] theo cổng PayOS", purchase.getId());
+                        }
+                    }
+
+                    // Đồng bộ hủy Order đơn lẻ và trả kho
+                    if (payment.getOrder() != null) {
+                        Order order = payment.getOrder();
+                        if ("PENDING".equals(order.getStatus())) {
+                            order.setStatus("CANCELLED");
+                            order.setUpdatedAt(Instant.now());
+                            orders.save(order);
+                            inventoryService.releaseReservation(order.getId());
+                            log.info("Đã đồng bộ hủy Order [{}] và giải phóng kho theo cổng PayOS", order.getId());
+                        }
+                    }
+
+                    // Đồng bộ hủy CheckoutOrder và các đơn con
+                    if (payment.getCheckoutOrder() != null) {
+                        CheckoutOrder checkoutOrder = payment.getCheckoutOrder();
+                        if ("PENDING_QUOTE".equals(checkoutOrder.getStatus()) || "CONFIRMED".equals(checkoutOrder.getStatus())) {
+                            checkoutOrder.setStatus("CANCELLED");
+                            checkoutOrder.setUpdatedAt(Instant.now());
+                            checkoutOrders.save(checkoutOrder);
+
+                            List<Order> childOrders = orders.findByCheckoutOrderId(checkoutOrder.getId());
+                            for (Order o : childOrders) {
+                                if ("PENDING".equals(o.getStatus())) {
+                                    o.setStatus("CANCELLED");
+                                    o.setUpdatedAt(Instant.now());
+                                    orders.save(o);
+                                    inventoryService.releaseReservation(o.getId());
+                                }
+                            }
+                            List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());
+                            for (CustomOrder c : childCustoms) {
+                                if ("REQUESTED".equals(c.getStatus()) || "ACCEPTED".equals(c.getStatus())) {
+                                    c.setStatus("CANCELLED");
+                                    c.setUpdatedAt(Instant.now());
+                                    customs.save(c);
+                                }
+                            }
+                            log.info("Đã đồng bộ hủy CheckoutOrder [{}] và đơn con theo cổng PayOS", checkoutOrder.getId());
+                        }
+                    }
                 }
             } catch (Exception ignored) {
                 // Tránh lỗi 500 nếu PayOS gặp gián đoạn tạm thời
@@ -305,9 +357,14 @@ public class PaymentServiceImpl implements PaymentService {
         responseMap.put("status", "SUCCESS".equals(payment.getStatus()) ? "PAID" : payment.getStatus());
         responseMap.put("amount", payment.getAmount());
         responseMap.put("targetType", targetType);
+        if (payment.getSubscriptionPurchase() != null) {
+            responseMap.put("purchaseId", payment.getSubscriptionPurchase().getId());
+            responseMap.put("purchaseStatus", payment.getSubscriptionPurchase().getStatus());
+        }
         if (planName != null) {
             responseMap.put("planName", planName);
         }
+        responseMap.put("verifiedAt", Instant.now().toString());
         return responseMap;
     }
 

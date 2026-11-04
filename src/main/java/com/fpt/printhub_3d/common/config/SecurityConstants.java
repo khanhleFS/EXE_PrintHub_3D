@@ -8,6 +8,7 @@ public class SecurityConstants {
             "/v3/api-docs/**",
             "/v3/api-docs.yaml",
             "/api/auth/**",
+            "/api/public/**",
             "/api/payments/payos-webhook",
 
             "/",

@@ -22,8 +22,12 @@ public class StoreSettingServiceImpl implements StoreSettingService {
 
     private final StoreSettingRepository storeSettingRepository;
     private static final Set<String> ALLOWED_KEYS = Set.of(
-            "storeName", "supportEmail", "supportPhone",
+            "storeName", "supportEmail", "supportPhone", "supportHours", "storeAddress",
             "shippingFee", "commissionRate", "bannerText", "warrantyMonths"
+    );
+
+    private static final Set<String> PUBLIC_KEYS = Set.of(
+            "storeName", "supportEmail", "supportPhone", "supportHours", "storeAddress", "bannerText"
     );
 
     @Override
@@ -31,6 +35,26 @@ public class StoreSettingServiceImpl implements StoreSettingService {
     public Map<String, String> getSettings() {
         Map<String, String> result = new LinkedHashMap<>();
         storeSettingRepository.findAll().forEach(s -> result.put(s.getKey(), s.getValue()));
+        return result;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, String> getPublicSettings() {
+        Map<String, String> result = new LinkedHashMap<>();
+        // Default values
+        result.put("storeName", "PrintHub 3D");
+        result.put("supportEmail", "support@printhub3d.com");
+        result.put("supportPhone", "0786954657");
+        result.put("supportHours", "8:00 - 22:00 (Tiếp nhận in online 24/7)");
+        result.put("storeAddress", "Làng đại học, Đại học Quốc Gia TP. Hồ Chí Minh");
+        result.put("bannerText", "Xưởng In 3D & Thước Đo Kỹ Thuật Sinh Viên Chuyên Nghiệp");
+
+        storeSettingRepository.findAll().forEach(s -> {
+            if (PUBLIC_KEYS.contains(s.getKey()) && s.getValue() != null && !s.getValue().isBlank()) {
+                result.put(s.getKey(), s.getValue());
+            }
+        });
         return result;
     }
 

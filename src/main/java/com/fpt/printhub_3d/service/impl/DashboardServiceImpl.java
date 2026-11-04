@@ -63,20 +63,33 @@ public class DashboardServiceImpl implements DashboardService {
             }
         }
 
+        int customRequested = 0;
+        int customQuoted = 0;
+        int customInProduction = 0;
+
         for (CustomOrderDetailResponseDTO c : customOrders) {
-            if ("PAID".equals(c.status()) || "COMPLETED".equals(c.status())) {
+            String st = c.status();
+            if ("REQUESTED".equals(st) || "PENDING".equals(st)) {
+                customRequested++;
+            } else if ("QUOTED".equals(st)) {
+                customQuoted++;
+            } else if ("ACCEPTED".equals(st) || "PAID".equals(st) || "PREPARING".equals(st) || "PRINTING".equals(st) || "SHIPPING".equals(st)) {
+                customInProduction++;
+            }
+
+            if ("PAID".equals(st) || "COMPLETED".equals(st)) {
                 if (c.quotedPrice() != null) {
                     paid = paid.add(c.quotedPrice());
                 }
             }
-            if ("COMPLETED".equals(c.status())) {
+            if ("COMPLETED".equals(st)) {
                 completed++;
             }
-            if ("PREPARING".equals(c.status()) || "PRINTING".equals(c.status())) {
+            if ("PREPARING".equals(st) || "PRINTING".equals(st)) {
                 activePrinting++;
             }
 
-            if (recentJobs.size() < 6 && ("PREPARING".equals(c.status()) || "PRINTING".equals(c.status()) || "PAID".equals(c.status()) || "ACCEPTED".equals(c.status()))) {
+            if (recentJobs.size() < 6 && ("PREPARING".equals(st) || "PRINTING".equals(st) || "PAID".equals(st) || "ACCEPTED".equals(st))) {
                 String itemDesc = (c.rulerModel() != null && !c.rulerModel().isBlank()) ? c.rulerModel() : "Thước 3D Custom";
                 if (c.customName() != null && !c.customName().isBlank()) {
                     itemDesc += " (Khắc tên: " + c.customName() + ")";
@@ -85,7 +98,7 @@ public class DashboardServiceImpl implements DashboardService {
                         .id(c.id() != null ? c.id().toString().substring(0, 8) : "CUS")
                         .item(itemDesc)
                         .factory("Xưởng Chế Tác Thước Sinh Viên")
-                        .status("PRINTING".equals(c.status()) ? "Đang in 3D" : "PREPARING".equals(c.status()) ? "Chuẩn bị phôi & file" : "Chờ in")
+                        .status("PRINTING".equals(st) ? "Đang in 3D" : "PREPARING".equals(st) ? "Chuẩn bị phôi & file" : "Chờ in")
                         .type("CUSTOM")
                         .price(c.quotedPrice())
                         .build());
@@ -100,6 +113,9 @@ public class DashboardServiceImpl implements DashboardService {
                 .completedCount(completed)
                 .paidAmount(paid)
                 .customCount(customOrders.size())
+                .customRequestedCount(customRequested)
+                .customQuotedCount(customQuoted)
+                .customInProductionCount(customInProduction)
                 .totalRevenue(paid)
                 .activePrintingOrders(activePrinting)
                 .pendingDisputesCount(pendingDisputes)

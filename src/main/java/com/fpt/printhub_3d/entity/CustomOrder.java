@@ -59,9 +59,7 @@ public class CustomOrder {
     @Column(name = "quantity")
     private Integer quantity = 1;
 
-    @Nationalized
-    @Lob
-    @Column(name = "requirements")
+    @Column(name = "requirements", columnDefinition = "TEXT")
     private String requirements;
 
     @Size(max = 500)

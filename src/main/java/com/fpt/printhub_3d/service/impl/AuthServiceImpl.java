@@ -385,15 +385,28 @@ public class AuthServiceImpl implements AuthService {
                 throw new ApiException(CommonErrorCode.CONFLICT, "Email đã tồn tại");
             }
         });
-        userRepository.findByPhone(profile.phone()).ifPresent(existingUser -> {
-            if (!existingUser.getId().equals(id)) {
-                throw new ApiException(CommonErrorCode.CONFLICT, "Số điện thoại đã tồn tại");
+        String normalizedPhone = profile.phone();
+        if (normalizedPhone != null) {
+            normalizedPhone = normalizedPhone.trim().replaceAll("\\s+", "");
+            if (normalizedPhone.startsWith("+84")) {
+                normalizedPhone = "0" + normalizedPhone.substring(3);
+            } else if (normalizedPhone.startsWith("84") && normalizedPhone.length() == 11) {
+                normalizedPhone = "0" + normalizedPhone.substring(2);
             }
-        });
+        }
+
+        if (normalizedPhone != null && !normalizedPhone.isBlank()) {
+            final String phoneToCheck = normalizedPhone;
+            userRepository.findByPhone(phoneToCheck).ifPresent(existingUser -> {
+                if (!existingUser.getId().equals(id)) {
+                    throw new ApiException(CommonErrorCode.CONFLICT, "Số điện thoại đã tồn tại");
+                }
+            });
+        }
 
         user.setFullName(profile.fullName());
         user.setEmail(profile.email());
-        user.setPhone(profile.phone());
+        user.setPhone(normalizedPhone);
         user.setAddress(profile.address());
         user.setStudentId(profile.studentId());
         user.setUniversity(profile.university());

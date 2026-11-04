@@ -38,9 +38,7 @@ public class PrintProof {
     @Column(name = "video_url", length = 500)
     private String videoUrl;
 
-    @Nationalized
-    @Lob
-    @Column(name = "note")
+    @Column(name = "note", columnDefinition = "TEXT")
     private String note;
 
     @NotNull

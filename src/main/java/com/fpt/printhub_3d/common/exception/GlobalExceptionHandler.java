@@ -5,9 +5,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.time.Instant;
@@ -35,8 +38,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     // Handle cho lỗi ở phía input param/path/query, (ConstraintViolationException),
     // trả 400 + map field -> message.
     @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<ApiResponse<Object>> handleConstraintViolationException(ConstraintViolationException ex,
-                                                                                  HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Object>> handleConstraintViolationException(ConstraintViolationException ex, HttpServletRequest request) {
         Map<String, String> errors = new LinkedHashMap<>();
         ex.getConstraintViolations().forEach(v -> errors.put(v.getPropertyPath().toString(), v.getMessage()));
 
@@ -87,14 +89,25 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(buildError(ec, ec.getMessage(), request.getRequestURI(), null));
     }
 
-    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
-    public ResponseEntity<?> handleStatus(org.springframework.web.server.ResponseStatusException ex) {
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<?> handleStatus(ResponseStatusException ex) {
         return ResponseEntity.status(ex.getStatusCode()).body(Map.of("code", ex.getStatusCode().value(),
                 "message", ex.getReason() == null ? "Yêu cầu không hợp lệ" : ex.getReason()));
     }
 
-    @ExceptionHandler(org.springframework.security.core.AuthenticationException.class)
-    public ResponseEntity<?> handleAuthentication(org.springframework.security.core.AuthenticationException ex) {
+    @Override
+    protected ResponseEntity<Object> handleMaxUploadSizeExceededException(
+            MaxUploadSizeExceededException ex,
+            HttpHeaders headers,
+            HttpStatusCode statusCode,
+            WebRequest request) {
+        ErrorCode ec = CommonErrorCode.PAYLOAD_TOO_LARGE;
+        ApiResponse<Object> body = buildError(ec, "Dung lượng tệp tải lên vượt quá giới hạn cho phép (tối đa 20MB)", extractPath(request), null);
+        return new ResponseEntity<>(body, ec.getStatus());
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<?> handleAuthentication(AuthenticationException ex) {
         return ResponseEntity.status(401).body(Map.of("message", "Tài khoản, mật khẩu hoặc trạng thái kích hoạt không hợp lệ"));
     }
 

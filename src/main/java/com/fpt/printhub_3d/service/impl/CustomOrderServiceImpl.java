@@ -368,4 +368,61 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .alreadyProcessed(false)
                 .build();
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CustomOrderFileDTO getCustomOrderFile(UUID id, User currentUser) {
+        CustomOrder order = customOrderRepository.findById(id)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in tùy chỉnh."));
+
+        if (currentUser.getRole() != UserRole.ADMIN && !order.getBuyer().getId().equals(currentUser.getId())) {
+            throw new ApiException(CommonErrorCode.FORBIDDEN, "Bạn không có quyền tải tệp thiết kế của đơn hàng này.");
+        }
+
+        String url = order.getAttachmentUrl();
+        if (url == null || url.isBlank() || "custom-model".equalsIgnoreCase(url.trim())) {
+            throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Đơn hàng này không có tệp 3D đính kèm.");
+        }
+
+        try {
+            java.net.URL fileUrl = new java.net.URI(url).toURL();
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) fileUrl.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(20000);
+            if (conn.getResponseCode() >= 400) {
+                throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Không thể tải tệp từ kho lưu trữ đám mây (HTTP " + conn.getResponseCode() + ").");
+            }
+            byte[] bytes = conn.getInputStream().readAllBytes();
+
+            String ext = "stl";
+            String lowerUrl = url.toLowerCase();
+            if (lowerUrl.contains(".obj")) ext = "obj";
+            else if (lowerUrl.contains(".step")) ext = "step";
+            else if (lowerUrl.contains(".stp")) ext = "stp";
+            else if (lowerUrl.contains(".3mf")) ext = "3mf";
+            else if (lowerUrl.contains(".png")) ext = "png";
+            else if (lowerUrl.contains(".jpg") || lowerUrl.contains(".jpeg")) ext = "jpg";
+
+            String modelName = order.getRulerModel() != null && !order.getRulerModel().isBlank()
+                    ? order.getRulerModel().replaceAll("[^a-zA-Z0-9_-]", "_")
+                    : "model";
+            String filename = "PrintHub3D_" + modelName + "_" + id.toString().substring(0, 8) + "." + ext;
+            String contentType = "application/octet-stream";
+            if ("stl".equals(ext)) contentType = "model/stl";
+            else if ("png".equals(ext)) contentType = "image/png";
+            else if ("jpg".equals(ext)) contentType = "image/jpeg";
+
+            return CustomOrderFileDTO.builder()
+                    .data(bytes)
+                    .filename(filename)
+                    .contentType(contentType)
+                    .build();
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Lỗi khi tải stream tệp từ Cloudinary: {}", url, e);
+            throw new ApiException(CommonErrorCode.INTERNAL_ERROR, "Lỗi khi xử lý tải tệp: " + e.getMessage());
+        }
+    }
 }

@@ -34,9 +34,7 @@ public class WarrantyClaim {
     @Column(name = "image_proof_url", length = 500)
     private String imageProofUrl;
 
-    @Nationalized
-    @Lob
-    @Column(name = "reason")
+    @Column(name = "reason", columnDefinition = "TEXT")
     private String reason;
 
     @Size(max = 20)

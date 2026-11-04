@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.dto.address;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -23,6 +24,10 @@ public class AddressRequestDTO {
     private String recipientName;
 
     @NotBlank(message = "Số điện thoại không được để trống")
+    @Pattern(
+            regexp = "^(0|\\+84|84)(3|5|7|8|9)[0-9]{8}$",
+            message = "Số điện thoại không đúng định dạng di động Việt Nam (10 chữ số, đầu 03, 05, 07, 08, 09)"
+    )
     @Size(max = 20)
     private String phone;
 

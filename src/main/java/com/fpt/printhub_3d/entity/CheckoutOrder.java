@@ -55,6 +55,15 @@ public class CheckoutOrder {
     @Column(name = "summary_version", nullable = false)
     private Long summaryVersion = 1L;
 
+    @Column(name = "idempotency_key", length = 100)
+    private String idempotencyKey;
+
+    @Column(name = "payment_expires_at")
+    private Instant paymentExpiresAt;
+
+    @Column(name = "reservation_expires_at")
+    private Instant reservationExpiresAt;
+
     @NotNull
     @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false, updatable = false)

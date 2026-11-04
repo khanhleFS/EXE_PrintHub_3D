@@ -41,10 +41,19 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private final CustomOrderRepository customOrderRepository;
     private final PaymentService paymentService;
     private final com.fpt.printhub_3d.service.InventoryService inventoryService;
+    private final UserRepository userRepository;
 
     @Override
     public CheckoutOrderResponseDTO createCheckoutOrder(User user, CheckoutOrderCreateRequestDTO request) {
         log.info("Tạo CheckoutOrder cho user: {}", user.getId());
+
+        if (request.idempotencyKey() != null && !request.idempotencyKey().isBlank()) {
+            Optional<CheckoutOrder> existing = checkoutOrderRepository.findByIdempotencyKey(request.idempotencyKey().trim());
+            if (existing.isPresent()) {
+                log.info("Request idempotent: Đơn hàng với idempotencyKey [{}] đã tồn tại, trả lại đơn cũ", request.idempotencyKey());
+                return toDTO(existing.get(), null);
+            }
+        }
 
         Cart cart = cartRepository.findByUserId(user.getId())
                 .orElseThrow(() -> new ApiException(CheckoutOrderErrorCode.EMPTY_SELECTION));
@@ -90,6 +99,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         checkoutOrder.setShippingFee(BigDecimal.valueOf(30000));
         checkoutOrder.setPaymentMethod(request.paymentMethod() != null ? request.paymentMethod().toUpperCase() : "PAYOS");
         checkoutOrder.setSummaryVersion(1L);
+        checkoutOrder.setIdempotencyKey(request.idempotencyKey() != null ? request.idempotencyKey().trim() : null);
         checkoutOrder.setCreatedAt(Instant.now());
         checkoutOrder.setUpdatedAt(Instant.now());
 
@@ -138,13 +148,27 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
         // Tạo Order cho các dòng sản phẩm Marketplace
         if (!marketplaceLines.isEmpty()) {
+            User fallbackSeller = userRepository.findAll().stream()
+                    .filter(u -> u.getRole() == com.fpt.printhub_3d.entity.Enumeration.UserRole.ADMIN)
+                    .findFirst()
+                    .orElse(user);
+
             Map<UUID, List<CartItem>> itemsBySeller = marketplaceLines.stream()
-                    .collect(Collectors.groupingBy(i -> i.getProduct().getSeller().getId()));
+                    .collect(Collectors.groupingBy(i -> {
+                        if (i.getProduct() != null && i.getProduct().getSeller() != null && i.getProduct().getSeller().getId() != null) {
+                            return i.getProduct().getSeller().getId();
+                        }
+                        return fallbackSeller.getId();
+                    }));
 
             for (Map.Entry<UUID, List<CartItem>> entry : itemsBySeller.entrySet()) {
-                User seller = entry.getValue().getFirst().getProduct().getSeller();
+                CartItem firstItem = entry.getValue().getFirst();
+                User seller = (firstItem.getProduct() != null && firstItem.getProduct().getSeller() != null)
+                        ? firstItem.getProduct().getSeller()
+                        : fallbackSeller;
                 BigDecimal sellerTotal = entry.getValue().stream()
-                        .map(i -> i.getProduct().getPrice().multiply(BigDecimal.valueOf(i.getQuantity())))
+                        .map(i -> (i.getProduct() != null && i.getProduct().getPrice() != null ? i.getProduct().getPrice() : BigDecimal.ZERO)
+                                .multiply(BigDecimal.valueOf(i.getQuantity())))
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
 
                 Order order = new Order();
@@ -342,21 +366,21 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             List<OrderItem> oItems = orderItemRepository.findByOrderId(o.getId());
             List<OrderItemResponseDTO> itemDTOs = oItems.stream().map(oi -> OrderItemResponseDTO.builder()
                     .id(oi.getId())
-                    .productId(oi.getProduct().getId())
-                    .productTitle(oi.getProduct().getTitle())
+                    .productId(oi.getProduct() != null ? oi.getProduct().getId() : null)
+                    .productTitle(oi.getProduct() != null ? oi.getProduct().getTitle() : "Sản phẩm")
                     .quantity(oi.getQuantity())
                     .unitPrice(oi.getUnitPrice())
-                    .subTotal(oi.getUnitPrice().multiply(BigDecimal.valueOf(oi.getQuantity())))
+                    .subTotal(oi.getUnitPrice() != null ? oi.getUnitPrice().multiply(BigDecimal.valueOf(oi.getQuantity())) : BigDecimal.ZERO)
                     .color(oi.getColor())
                     .engravingText(oi.getEngravingText())
                     .build()).toList();
 
             return OrderResponseDTO.builder()
                     .id(o.getId())
-                    .buyerId(o.getBuyer().getId())
-                    .buyerName(o.getBuyer().getFullName())
-                    .sellerId(o.getSeller().getId())
-                    .sellerName(o.getSeller().getFullName())
+                    .buyerId(o.getBuyer() != null ? o.getBuyer().getId() : null)
+                    .buyerName(o.getBuyer() != null ? o.getBuyer().getFullName() : "Khách hàng")
+                    .sellerId(o.getSeller() != null ? o.getSeller().getId() : null)
+                    .sellerName(o.getSeller() != null ? o.getSeller().getFullName() : "PrintHub 3D Platform")
                     .totalAmount(o.getTotalAmount())
                     .commissionFee(o.getCommissionFee())
                     .status(o.getStatus())

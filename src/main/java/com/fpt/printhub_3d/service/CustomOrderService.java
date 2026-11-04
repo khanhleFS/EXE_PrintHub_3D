@@ -16,4 +16,5 @@ public interface CustomOrderService {
     void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User admin);
     void updateCustomOrderStatus(UUID id, CustomOrderStatusRequestDTO request, User user);
     RewardCompletionResponseDTO completeRewards(UUID customOrderId);
+    CustomOrderFileDTO getCustomOrderFile(UUID id, User currentUser);
 }
