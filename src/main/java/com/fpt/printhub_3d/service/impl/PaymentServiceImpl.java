@@ -300,7 +300,7 @@ public class PaymentServiceImpl implements PaymentService {
                             order.setStatus("CANCELLED");
                             order.setUpdatedAt(Instant.now());
                             orders.save(order);
-                            inventoryService.releaseReservation(order.getId());
+                            inventoryService.releaseActiveReservations(order.getId(), "Hủy giao dịch cổng PayOS", "PAYOS_CANCEL_" + payment.getId());
                             log.info("Đã đồng bộ hủy Order [{}] và giải phóng kho theo cổng PayOS", order.getId());
                         }
                     }
@@ -319,7 +319,7 @@ public class PaymentServiceImpl implements PaymentService {
                                     o.setStatus("CANCELLED");
                                     o.setUpdatedAt(Instant.now());
                                     orders.save(o);
-                                    inventoryService.releaseReservation(o.getId());
+                                    inventoryService.releaseActiveReservations(o.getId(), "Hủy giao dịch cổng PayOS", "PAYOS_CANCEL_" + payment.getId());
                                 }
                             }
                             List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());

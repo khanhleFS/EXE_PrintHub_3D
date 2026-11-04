@@ -39,6 +39,7 @@ public class AddressRequestDTO {
     @Size(max = 100)
     private String province;
 
+    @Builder.Default
     private Boolean isDefault = false;
 
     public String resolveRecipientName() {
