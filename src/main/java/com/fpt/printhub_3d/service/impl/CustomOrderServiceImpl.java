@@ -196,7 +196,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         order.setCustomStudentId(request.customStudentId());
         order.setColor(request.color());
         order.setFontStyle(request.fontStyle());
-        order.setPaymentMethod(request.paymentMethod());
+        // Đơn hàng in tùy chỉnh bắt buộc sử dụng thanh toán trực tuyến PayOS
+        order.setPaymentMethod("PAYOS");
         order.setStatus("REQUESTED");
         order.setCreatedAt(Instant.now());
         order.setUpdatedAt(Instant.now());
@@ -253,10 +254,10 @@ public class CustomOrderServiceImpl implements CustomOrderService {
 
         if ("ACCEPTED".equals(resolvedStatus)) {
             String method = request.paymentMethod();
-            if (method == null || !Set.of("COD", "PAYOS").contains(method.toUpperCase())) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Vui lòng chọn phương thức thanh toán COD hoặc PAYOS");
+            if (method == null || !"PAYOS".equalsIgnoreCase(method)) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn in 3D cá nhân hóa chỉ hỗ trợ thanh toán trực tuyến PayOS.");
             }
-            order.setPaymentMethod(method.toUpperCase());
+            order.setPaymentMethod("PAYOS");
         } else if ("COMPLETED".equals(resolvedStatus) && "COD".equalsIgnoreCase(paymentMethod)) {
             Payment codPay = p != null ? p : new Payment();
             codPay.setCustomOrder(order);
@@ -401,6 +402,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             else if (lowerUrl.contains(".step")) ext = "step";
             else if (lowerUrl.contains(".stp")) ext = "stp";
             else if (lowerUrl.contains(".3mf")) ext = "3mf";
+            else if (lowerUrl.contains(".glb")) ext = "glb";
+            else if (lowerUrl.contains(".gltf")) ext = "gltf";
             else if (lowerUrl.contains(".png")) ext = "png";
             else if (lowerUrl.contains(".jpg") || lowerUrl.contains(".jpeg")) ext = "jpg";
 
@@ -410,6 +413,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             String filename = "PrintHub3D_" + modelName + "_" + id.toString().substring(0, 8) + "." + ext;
             String contentType = "application/octet-stream";
             if ("stl".equals(ext)) contentType = "model/stl";
+            else if ("glb".equals(ext)) contentType = "model/gltf-binary";
+            else if ("gltf".equals(ext)) contentType = "model/gltf+json";
             else if ("png".equals(ext)) contentType = "image/png";
             else if ("jpg".equals(ext)) contentType = "image/jpeg";
 
