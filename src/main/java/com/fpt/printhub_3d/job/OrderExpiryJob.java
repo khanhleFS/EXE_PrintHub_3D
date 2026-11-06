@@ -39,10 +39,16 @@ public class OrderExpiryJob {
             List<Order> pendingOrders = orderRepository.findAll().stream()
                     .filter(o -> "PENDING".equals(o.getStatus()))
                     .filter(o -> {
+                        String pMethod = o.getPaymentMethod() != null ? o.getPaymentMethod()
+                                : (o.getCheckoutOrder() != null ? o.getCheckoutOrder().getPaymentMethod() : null);
+                        // Đơn COD không có hạn thanh toán online trước, không tự động expire theo cổng thanh toán
+                        if ("COD".equalsIgnoreCase(pMethod)) {
+                            return false;
+                        }
                         if (o.getPaymentDueAt() != null) {
                             return o.getPaymentDueAt().isBefore(now);
                         }
-                        // Fallback: nếu paymentDueAt null thì tính quá 15 phút kể từ lúc tạo
+                        // Fallback: nếu paymentDueAt null thì tính quá 15 phút kể từ lúc tạo cho đơn PAYOS
                         return o.getCreatedAt() != null && o.getCreatedAt().isBefore(now.minus(15, ChronoUnit.MINUTES));
                     })
                     .toList();
