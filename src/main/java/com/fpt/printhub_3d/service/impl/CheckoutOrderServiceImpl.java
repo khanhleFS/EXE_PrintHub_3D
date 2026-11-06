@@ -175,6 +175,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 order.setBuyer(user);
                 order.setSeller(seller);
                 order.setCheckoutOrder(checkoutOrder);
+                order.setPaymentMethod(checkoutOrder.getPaymentMethod());
                 order.setStatus("PENDING");
                 order.setTotalAmount(sellerTotal);
                 order.setCommissionFee(BigDecimal.ZERO);

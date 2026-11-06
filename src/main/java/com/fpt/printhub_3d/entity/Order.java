@@ -69,6 +69,10 @@ public class Order {
     @JoinColumn(name = "checkout_order_id")
     private CheckoutOrder checkoutOrder;
 
+    @Size(max = 20)
+    @Column(name = "payment_method", length = 20)
+    private String paymentMethod;
+
     @Column(name = "payment_due_at")
     private Instant paymentDueAt;
 }

@@ -12,6 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -38,7 +39,7 @@ public class CloudinaryServiceImpl implements CloudinaryService {
     }
 
     private static final long MAX_RAW_FILE_SIZE = 20L * 1024 * 1024; // 20MB = 20,971,520 bytes
-    private static final java.util.Set<String> ALLOWED_EXTENSIONS = java.util.Set.of("stl", "obj", "step", "stp");
+    private static final Set<String> ALLOWED_EXTENSIONS = Set.of("stl", "obj", "step", "stp", "glb", "gltf", "3mf");
 
     @Override
     public String uploadRawFile(MultipartFile file, String folder) {
@@ -54,7 +55,7 @@ public class CloudinaryServiceImpl implements CloudinaryService {
         }
         String ext = originalFilename.substring(originalFilename.lastIndexOf(".") + 1).toLowerCase();
         if (!ALLOWED_EXTENSIONS.contains(ext)) {
-            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Định dạng tệp ." + ext + " không được hỗ trợ. Hệ thống chỉ chấp nhận: .stl, .obj, .step, .stp");
+            throw new ApiException(CommonErrorCode.BAD_REQUEST, "Định dạng tệp ." + ext + " không được hỗ trợ. Hệ thống chỉ chấp nhận: .stl, .obj, .step, .stp, .glb, .gltf, .3mf");
         }
 
         try {

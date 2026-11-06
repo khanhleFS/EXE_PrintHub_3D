@@ -120,6 +120,7 @@ public class OrderServiceImpl implements OrderService {
             order.setSeller(seller);
             order.setTotalAmount(totalAmount);
             order.setCommissionFee(commissionFee);
+            order.setPaymentMethod(request.paymentMethod() != null ? request.paymentMethod().toUpperCase() : "PAYOS");
             order.setStatus("PENDING");
             order.setRewardProcessed(false);
             order.setCreatedAt(Instant.now());
@@ -296,8 +297,11 @@ public class OrderServiceImpl implements OrderService {
             payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
         }
 
-        String pMethod = payment != null ? payment.getGateway() : "PAYOS";
-        String pStatus = payment != null ? payment.getStatus() : "PENDING";
+        String pMethod = order.getPaymentMethod() != null ? order.getPaymentMethod()
+                : (order.getCheckoutOrder() != null && order.getCheckoutOrder().getPaymentMethod() != null
+                        ? order.getCheckoutOrder().getPaymentMethod()
+                        : (payment != null ? payment.getGateway() : "PAYOS"));
+        String pStatus = payment != null ? payment.getStatus() : ("COD".equalsIgnoreCase(pMethod) ? "UNPAID" : "PENDING");
 
         User current = getCurrentUserSafely();
         boolean isAdmin = current != null && current.getRole() == UserRole.ADMIN;
@@ -440,8 +444,11 @@ public class OrderServiceImpl implements OrderService {
             payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
         }
 
-        String paymentMethod = payment != null ? payment.getGateway() : "PAYOS";
-        String paymentStatus = payment != null ? payment.getStatus() : "PENDING";
+        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod()
+                : (order.getCheckoutOrder() != null && order.getCheckoutOrder().getPaymentMethod() != null
+                        ? order.getCheckoutOrder().getPaymentMethod()
+                        : (payment != null ? payment.getGateway() : "PAYOS"));
+        String paymentStatus = payment != null ? payment.getStatus() : ("COD".equalsIgnoreCase(paymentMethod) ? "UNPAID" : "PENDING");
 
         String resolvedStatus = orderTransitionPolicy.validateAndResolveNextStatus(
                 OrderTransitionPolicy.OrderType.MARKETPLACE,
@@ -465,11 +472,16 @@ public class OrderServiceImpl implements OrderService {
             if ("PREPARING".equals(resolvedStatus) || "PRINTING".equals(resolvedStatus)) {
                 inventoryService.confirmReservation(order.getId());
             }
-            if ("COMPLETED".equals(resolvedStatus) && payment != null && "COD".equalsIgnoreCase(payment.getGateway())) {
-                payment.setStatus("SUCCESS");
-                payment.setPaidAt(Instant.now());
-                payment.setUpdatedAt(Instant.now());
-                paymentRepository.save(payment);
+            if ("COMPLETED".equals(resolvedStatus) && "COD".equalsIgnoreCase(paymentMethod)) {
+                Payment codPayment = payment != null ? payment : new Payment();
+                codPayment.setOrder(order);
+                codPayment.setAmount(order.getTotalAmount() != null ? order.getTotalAmount() : BigDecimal.ZERO);
+                codPayment.setGateway("COD");
+                codPayment.setStatus("SUCCESS");
+                codPayment.setPaidAt(Instant.now());
+                if (codPayment.getCreatedAt() == null) codPayment.setCreatedAt(Instant.now());
+                codPayment.setUpdatedAt(Instant.now());
+                paymentRepository.save(codPayment);
             }
         }
 
