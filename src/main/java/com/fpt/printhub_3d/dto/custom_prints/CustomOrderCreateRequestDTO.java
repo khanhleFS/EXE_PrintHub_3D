@@ -19,7 +19,7 @@ public record CustomOrderCreateRequestDTO(
         String attachmentUrl,
 
         @NotBlank(message = "Mô tả yêu cầu không được để trống")
-        @Size(max = 4000, message = "Yêu cầu tối đa 4000 ký tự")
+        @Size(max = 10000, message = "Yêu cầu tối đa 10000 ký tự")
         @Schema(description = "Yêu cầu in chi tiết (vật liệu, màu, infill...)")
         String requirements,
 
