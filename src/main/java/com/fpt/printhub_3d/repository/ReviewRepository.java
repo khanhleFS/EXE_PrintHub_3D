@@ -27,6 +27,22 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
 
     Page<Review> findByProductId(UUID productId, Pageable pageable);
 
+    @Query("""
+            SELECT r FROM Review r
+            JOIN FETCH r.reviewer
+            JOIN FETCH r.product p
+            WHERE r.rating = 5
+              AND p.status = 'ACTIVE'
+              AND UPPER(r.order.status) = 'COMPLETED'
+              AND EXISTS (
+                  SELECT 1 FROM Review withPhoto JOIN withPhoto.imageUrls url
+                  WHERE withPhoto.id = r.id
+                    AND (url LIKE 'https://%' OR url LIKE 'http://%')
+              )
+            ORDER BY r.createdAt DESC, r.id DESC
+            """)
+    List<Review> findFeaturedPhotoReviews(Pageable pageable);
+
     List<Review> findByProductId(UUID productId);
 
     long countByProductId(UUID productId);

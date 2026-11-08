@@ -11,6 +11,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RequestMapping("/api/reviews")
@@ -34,6 +35,10 @@ public interface ReviewAPI {
     ResponseEntity<ApiResponse<Page<ProductReviewResponseDTO>>> getProductReviews(
             @PathVariable UUID productId,
             Pageable pageable);
+
+    @Operation(summary = "Get recent five-star reviews with customer photos")
+    @GetMapping("/featured")
+    ResponseEntity<ApiResponse<List<FeaturedProductReviewDTO>>> getFeaturedPhotoReviews();
 
     @Operation(
             summary = "Get product review summary",

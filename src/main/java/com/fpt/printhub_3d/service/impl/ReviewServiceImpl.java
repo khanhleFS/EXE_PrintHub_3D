@@ -12,6 +12,7 @@ import com.fpt.printhub_3d.service.ReviewService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -110,6 +111,26 @@ public class ReviewServiceImpl implements ReviewService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<FeaturedProductReviewDTO> getFeaturedPhotoReviews() {
+        return reviewRepository.findFeaturedPhotoReviews(PageRequest.of(0, 3)).stream()
+                .map(review -> new FeaturedProductReviewDTO(
+                        review.getId(),
+                        review.getProduct().getTitle(),
+                        firstNameForFeaturedReview(review.getReviewer().getFullName()),
+                        review.getRating(),
+                        review.getComment(),
+                        review.getImageUrls().stream()
+                                .filter(url -> url != null && (url.startsWith("https://") || url.startsWith("http://")))
+                                .distinct()
+                                .limit(5)
+                                .toList(),
+                        review.getCreatedAt()))
+                .filter(review -> !review.imageUrls().isEmpty())
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public ProductReviewSummaryDTO getProductReviewSummary(UUID productId) {
         Double avg = reviewRepository.calculateAverageRatingByProductId(productId);
         double roundedAvg = (avg != null) ? Math.round(avg * 10.0) / 10.0 : 0.0;
@@ -175,6 +196,14 @@ public class ReviewServiceImpl implements ReviewService {
     }
 
     // ──────────────────────────── Private Helpers ────────────────────────────
+    private String firstNameForFeaturedReview(String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return "Khách hàng PrintHub";
+        }
+        String[] names = fullName.strip().split("\\s+");
+        return names[names.length - 1];
+    }
+
 
     private void recalculateProductRating(Product product) {
         Double avg = reviewRepository.calculateAverageRatingByProductId(product.getId());

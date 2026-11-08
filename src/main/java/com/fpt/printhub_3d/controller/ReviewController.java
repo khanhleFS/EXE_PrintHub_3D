@@ -16,6 +16,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -48,6 +49,15 @@ public class ReviewController implements ReviewAPI {
                 .code(200)
                 .message("Lấy danh sách đánh giá sản phẩm thành công")
                 .result(page)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<ApiResponse<List<FeaturedProductReviewDTO>>> getFeaturedPhotoReviews() {
+        return ResponseEntity.ok(ApiResponse.<List<FeaturedProductReviewDTO>>builder()
+                .code(200)
+                .message("Lấy đánh giá 5 sao kèm ảnh thành công")
+                .result(reviewService.getFeaturedPhotoReviews())
                 .build());
     }
 
