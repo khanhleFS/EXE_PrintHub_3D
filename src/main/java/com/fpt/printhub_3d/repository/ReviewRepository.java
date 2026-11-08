@@ -3,6 +3,7 @@ package com.fpt.printhub_3d.repository;
 import com.fpt.printhub_3d.entity.Review;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -26,6 +27,12 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     List<Review> findByOrderIdIn(Collection<UUID> orderIds);
 
     Page<Review> findByProductId(UUID productId, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"reviewer", "product", "orderItem"})
+    Page<Review> findAllBy(Pageable pageable);
+
+    @EntityGraph(attributePaths = {"reviewer", "product", "orderItem"})
+    Page<Review> findByRating(Short rating, Pageable pageable);
 
     @Query("""
             SELECT r FROM Review r

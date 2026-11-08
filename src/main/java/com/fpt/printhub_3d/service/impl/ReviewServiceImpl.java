@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -106,6 +107,19 @@ public class ReviewServiceImpl implements ReviewService {
     @Transactional(readOnly = true)
     public Page<ProductReviewResponseDTO> getProductReviews(UUID productId, Pageable pageable) {
         Page<Review> reviews = reviewRepository.findByProductId(productId, pageable);
+        return reviews.map(this::toProductReviewResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<ProductReviewResponseDTO> getAdminReviews(Short rating, Pageable pageable) {
+        Pageable newestFirst = PageRequest.of(
+                pageable.getPageNumber(),
+                Math.min(pageable.getPageSize(), 50),
+                Sort.by(Sort.Direction.DESC, "createdAt", "id"));
+        Page<Review> reviews = rating == null
+                ? reviewRepository.findAllBy(newestFirst)
+                : reviewRepository.findByRating(rating, newestFirst);
         return reviews.map(this::toProductReviewResponse);
     }
 

@@ -17,6 +17,7 @@ public interface ReviewService {
     ProductReviewResponseDTO createOrUpdateProductReview(ProductReviewCreateRequestDTO request, User reviewer);
 
     Page<ProductReviewResponseDTO> getProductReviews(UUID productId, Pageable pageable);
+    Page<ProductReviewResponseDTO> getAdminReviews(Short rating, Pageable pageable);
     List<FeaturedProductReviewDTO> getFeaturedPhotoReviews();
 
     ProductReviewSummaryDTO getProductReviewSummary(UUID productId);
