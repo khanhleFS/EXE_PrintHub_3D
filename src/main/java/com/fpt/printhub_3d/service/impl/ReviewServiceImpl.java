@@ -125,8 +125,8 @@ public class ReviewServiceImpl implements ReviewService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<FeaturedProductReviewDTO> getFeaturedPhotoReviews() {
-        return reviewRepository.findFeaturedPhotoReviews(PageRequest.of(0, 3)).stream()
+    public List<FeaturedProductReviewDTO> getFeaturedReviews() {
+        return reviewRepository.findFeaturedReviews(PageRequest.of(0, 3)).stream()
                 .map(review -> new FeaturedProductReviewDTO(
                         review.getId(),
                         review.getProduct().getTitle(),
@@ -139,7 +139,6 @@ public class ReviewServiceImpl implements ReviewService {
                                 .limit(5)
                                 .toList(),
                         review.getCreatedAt()))
-                .filter(review -> !review.imageUrls().isEmpty())
                 .toList();
     }
 

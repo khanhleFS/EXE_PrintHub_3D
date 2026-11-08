@@ -37,18 +37,16 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     @Query("""
             SELECT r FROM Review r
             JOIN FETCH r.reviewer
-            JOIN FETCH r.product p
+            JOIN FETCH r.product
             WHERE r.rating = 5
-              AND p.status = 'ACTIVE'
               AND UPPER(r.order.status) = 'COMPLETED'
-              AND EXISTS (
-                  SELECT 1 FROM Review withPhoto JOIN withPhoto.imageUrls url
-                  WHERE withPhoto.id = r.id
-                    AND (url LIKE 'https://%' OR url LIKE 'http://%')
-              )
-            ORDER BY r.createdAt DESC, r.id DESC
+            ORDER BY CASE WHEN EXISTS (
+                SELECT 1 FROM Review withPhoto JOIN withPhoto.imageUrls url
+                WHERE withPhoto.id = r.id
+                  AND (url LIKE 'https://%' OR url LIKE 'http://%')
+            ) THEN 0 ELSE 1 END, r.createdAt DESC, r.id DESC
             """)
-    List<Review> findFeaturedPhotoReviews(Pageable pageable);
+    List<Review> findFeaturedReviews(Pageable pageable);
 
     List<Review> findByProductId(UUID productId);
 

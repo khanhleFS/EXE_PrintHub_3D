@@ -36,9 +36,9 @@ public interface ReviewAPI {
             @PathVariable UUID productId,
             Pageable pageable);
 
-    @Operation(summary = "Get recent five-star reviews with customer photos")
+    @Operation(summary = "Get recent five-star reviews, prioritizing customer photos")
     @GetMapping("/featured")
-    ResponseEntity<ApiResponse<List<FeaturedProductReviewDTO>>> getFeaturedPhotoReviews();
+    ResponseEntity<ApiResponse<List<FeaturedProductReviewDTO>>> getFeaturedReviews();
 
     @Operation(
             summary = "Get product review summary",

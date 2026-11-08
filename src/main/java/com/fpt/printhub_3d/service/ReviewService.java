@@ -18,7 +18,7 @@ public interface ReviewService {
 
     Page<ProductReviewResponseDTO> getProductReviews(UUID productId, Pageable pageable);
     Page<ProductReviewResponseDTO> getAdminReviews(Short rating, Pageable pageable);
-    List<FeaturedProductReviewDTO> getFeaturedPhotoReviews();
+    List<FeaturedProductReviewDTO> getFeaturedReviews();
 
     ProductReviewSummaryDTO getProductReviewSummary(UUID productId);
 

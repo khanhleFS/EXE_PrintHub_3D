@@ -53,11 +53,11 @@ public class ReviewController implements ReviewAPI {
     }
 
     @Override
-    public ResponseEntity<ApiResponse<List<FeaturedProductReviewDTO>>> getFeaturedPhotoReviews() {
+    public ResponseEntity<ApiResponse<List<FeaturedProductReviewDTO>>> getFeaturedReviews() {
         return ResponseEntity.ok(ApiResponse.<List<FeaturedProductReviewDTO>>builder()
                 .code(200)
-                .message("Lấy đánh giá 5 sao kèm ảnh thành công")
-                .result(reviewService.getFeaturedPhotoReviews())
+                .message("Lấy đánh giá 5 sao nổi bật thành công")
+                .result(reviewService.getFeaturedReviews())
                 .build());
     }
 
