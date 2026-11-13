@@ -1,10 +1,12 @@
 package com.fpt.printhub_3d.repository;
 
 import com.fpt.printhub_3d.entity.Review;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -34,17 +36,37 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     @EntityGraph(attributePaths = {"reviewer", "product", "orderItem"})
     Page<Review> findByRating(Short rating, Pageable pageable);
 
+    @EntityGraph(attributePaths = {"reviewer", "product", "orderItem"})
+    Page<Review> findByIsPublicTrue(Pageable pageable);
+
+    @EntityGraph(attributePaths = {"reviewer", "product", "orderItem"})
+    @Query("SELECT r FROM Review r WHERE (r.isPublic = false OR r.isPublic IS NULL)")
+    Page<Review> findHiddenReviews(Pageable pageable);
+
+    @EntityGraph(attributePaths = {"reviewer", "product", "orderItem"})
+    Page<Review> findByRatingAndIsPublicTrue(Short rating, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"reviewer", "product", "orderItem"})
+    @Query("SELECT r FROM Review r WHERE r.rating = :rating AND (r.isPublic = false OR r.isPublic IS NULL)")
+    Page<Review> findHiddenReviewsByRating(@Param("rating") Short rating, Pageable pageable);
+
+    long countByIsPublicTrue();
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM Review r WHERE r.id = :id")
+    Optional<Review> findByIdLocked(@Param("id") Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM Review r WHERE r.isPublic = true")
+    List<Review> findAllPublicLocked();
+
     @Query("""
             SELECT r FROM Review r
             JOIN FETCH r.reviewer
-            JOIN FETCH r.product
-            WHERE r.rating = 5
+            LEFT JOIN FETCH r.product
+            WHERE r.isPublic = true
               AND UPPER(r.order.status) = 'COMPLETED'
-            ORDER BY CASE WHEN EXISTS (
-                SELECT 1 FROM Review withPhoto JOIN withPhoto.imageUrls url
-                WHERE withPhoto.id = r.id
-                  AND (url LIKE 'https://%' OR url LIKE 'http://%')
-            ) THEN 0 ELSE 1 END, r.createdAt DESC, r.id DESC
+            ORDER BY COALESCE(r.publicUpdatedAt, r.createdAt) DESC, r.id DESC
             """)
     List<Review> findFeaturedReviews(Pageable pageable);
 

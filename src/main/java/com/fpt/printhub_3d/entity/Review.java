@@ -52,6 +52,12 @@ public class Review {
     @Column(name = "image_url", length = 500)
     private List<String> imageUrls = new ArrayList<>();
 
+    @Column(name = "is_public")
+    private Boolean isPublic = false;
+
+    @Column(name = "public_updated_at")
+    private Instant publicUpdatedAt;
+
     @NotNull
     @ColumnDefault("CURRENT_TIMESTAMP")
     @Column(name = "created_at", nullable = false)

@@ -49,6 +49,12 @@ public record ProductReviewResponseDTO(
         @Schema(description = "Khắc tên MSSV đã đặt")
         String engravingText,
 
+        @Schema(description = "Trạng thái công khai trên trang chủ")
+        Boolean isPublic,
+
+        @Schema(description = "Thời điểm cập nhật trạng thái công khai")
+        Instant publicUpdatedAt,
+
         @Schema(description = "Thời gian gửi đánh giá")
         Instant createdAt,
 

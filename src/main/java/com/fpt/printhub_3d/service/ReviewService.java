@@ -1,11 +1,13 @@
 package com.fpt.printhub_3d.service;
 
+import com.fpt.printhub_3d.dto.review.AdminReviewSummaryDTO;
 import com.fpt.printhub_3d.dto.review.FeaturedProductReviewDTO;
 import com.fpt.printhub_3d.dto.review.ProductReviewCreateRequestDTO;
 import com.fpt.printhub_3d.dto.review.ProductReviewResponseDTO;
 import com.fpt.printhub_3d.dto.review.ProductReviewSummaryDTO;
 import com.fpt.printhub_3d.dto.review.ReviewCreateRequestDTO;
 import com.fpt.printhub_3d.dto.review.ReviewResponseDTO;
+import com.fpt.printhub_3d.dto.review.ReviewVisibilityResponseDTO;
 import com.fpt.printhub_3d.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -17,7 +19,9 @@ public interface ReviewService {
     ProductReviewResponseDTO createOrUpdateProductReview(ProductReviewCreateRequestDTO request, User reviewer);
 
     Page<ProductReviewResponseDTO> getProductReviews(UUID productId, Pageable pageable);
-    Page<ProductReviewResponseDTO> getAdminReviews(Short rating, Pageable pageable);
+    Page<ProductReviewResponseDTO> getAdminReviews(Short rating, Boolean isPublic, Pageable pageable);
+    AdminReviewSummaryDTO getAdminReviewSummary();
+    ReviewVisibilityResponseDTO updateReviewVisibility(Long reviewId, boolean isPublic);
     List<FeaturedProductReviewDTO> getFeaturedReviews();
 
     ProductReviewSummaryDTO getProductReviewSummary(UUID productId);

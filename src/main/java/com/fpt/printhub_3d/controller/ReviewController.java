@@ -56,7 +56,7 @@ public class ReviewController implements ReviewAPI {
     public ResponseEntity<ApiResponse<List<FeaturedProductReviewDTO>>> getFeaturedReviews() {
         return ResponseEntity.ok(ApiResponse.<List<FeaturedProductReviewDTO>>builder()
                 .code(200)
-                .message("Lấy đánh giá 5 sao nổi bật thành công")
+                .message("Lấy đánh giá nổi bật thành công")
                 .result(reviewService.getFeaturedReviews())
                 .build());
     }

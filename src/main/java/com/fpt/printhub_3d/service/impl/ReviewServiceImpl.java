@@ -31,6 +31,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ReviewServiceImpl implements ReviewService {
 
+    public static final int MAX_PUBLIC_REVIEWS = 10;
+
     private final ReviewRepository reviewRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
@@ -86,6 +88,7 @@ public class ReviewServiceImpl implements ReviewService {
             if (request.imageUrls() != null) {
                 review.setImageUrls(new ArrayList<>(request.imageUrls()));
             }
+            review.setIsPublic(false);
             review.setCreatedAt(Instant.now());
             savedReview = reviewRepository.save(review);
             log.info("Tạo đánh giá mới [{}] cho sản phẩm [{}] từ orderItem [{}]",
@@ -112,24 +115,83 @@ public class ReviewServiceImpl implements ReviewService {
 
     @Override
     @Transactional(readOnly = true)
-    public Page<ProductReviewResponseDTO> getAdminReviews(Short rating, Pageable pageable) {
+    public Page<ProductReviewResponseDTO> getAdminReviews(Short rating, Boolean isPublic, Pageable pageable) {
         Pageable newestFirst = PageRequest.of(
                 pageable.getPageNumber(),
                 Math.min(pageable.getPageSize(), 50),
                 Sort.by(Sort.Direction.DESC, "createdAt", "id"));
-        Page<Review> reviews = rating == null
-                ? reviewRepository.findAllBy(newestFirst)
-                : reviewRepository.findByRating(rating, newestFirst);
+        Page<Review> reviews;
+        if (rating == null && isPublic == null) {
+            reviews = reviewRepository.findAllBy(newestFirst);
+        } else if (rating != null && isPublic == null) {
+            reviews = reviewRepository.findByRating(rating, newestFirst);
+        } else if (rating == null) {
+            reviews = Boolean.TRUE.equals(isPublic)
+                    ? reviewRepository.findByIsPublicTrue(newestFirst)
+                    : reviewRepository.findHiddenReviews(newestFirst);
+        } else {
+            reviews = Boolean.TRUE.equals(isPublic)
+                    ? reviewRepository.findByRatingAndIsPublicTrue(rating, newestFirst)
+                    : reviewRepository.findHiddenReviewsByRating(rating, newestFirst);
+        }
         return reviews.map(this::toProductReviewResponse);
     }
 
     @Override
     @Transactional(readOnly = true)
+    public AdminReviewSummaryDTO getAdminReviewSummary() {
+        long total = reviewRepository.count();
+        long publicCount = reviewRepository.countByIsPublicTrue();
+        long hiddenCount = Math.max(0L, total - publicCount);
+        return AdminReviewSummaryDTO.builder()
+                .totalReviews(total)
+                .publicCount(publicCount)
+                .hiddenCount(hiddenCount)
+                .maxPublicLimit(MAX_PUBLIC_REVIEWS)
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public ReviewVisibilityResponseDTO updateReviewVisibility(Long reviewId, boolean isPublic) {
+        List<Review> currentPublicReviews = reviewRepository.findAllPublicLocked();
+        Review review = reviewRepository.findByIdLocked(reviewId)
+                .orElseThrow(() -> new ApiException(ReviewDisputeErrorCode.REVIEW_NOT_FOUND));
+
+        boolean alreadyPublic = Boolean.TRUE.equals(review.getIsPublic());
+        long nextPublicCount = currentPublicReviews.size();
+
+        if (isPublic && !alreadyPublic) {
+            if (currentPublicReviews.size() >= MAX_PUBLIC_REVIEWS) {
+                throw new ApiException(ReviewDisputeErrorCode.REVIEW_PUBLIC_LIMIT_REACHED);
+            }
+            review.setIsPublic(true);
+            review.setPublicUpdatedAt(Instant.now());
+            review = reviewRepository.save(review);
+            nextPublicCount = currentPublicReviews.size() + 1L;
+            log.info("Admin bật công khai đánh giá [{}], tổng công khai: {}/{}", reviewId, nextPublicCount, MAX_PUBLIC_REVIEWS);
+        } else if (!isPublic && alreadyPublic) {
+            review.setIsPublic(false);
+            review.setPublicUpdatedAt(Instant.now());
+            review = reviewRepository.save(review);
+            nextPublicCount = Math.max(0L, currentPublicReviews.size() - 1L);
+            log.info("Admin ẩn đánh giá [{}] khỏi trang chủ, tổng công khai: {}/{}", reviewId, nextPublicCount, MAX_PUBLIC_REVIEWS);
+        }
+
+        return ReviewVisibilityResponseDTO.builder()
+                .review(toProductReviewResponse(review))
+                .publicCount(nextPublicCount)
+                .maxPublicLimit(MAX_PUBLIC_REVIEWS)
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<FeaturedProductReviewDTO> getFeaturedReviews() {
-        return reviewRepository.findFeaturedReviews(PageRequest.of(0, 3)).stream()
+        return reviewRepository.findFeaturedReviews(PageRequest.of(0, MAX_PUBLIC_REVIEWS)).stream()
                 .map(review -> new FeaturedProductReviewDTO(
                         review.getId(),
-                        review.getProduct().getTitle(),
+                        review.getProduct() != null ? review.getProduct().getTitle() : "Sản phẩm PrintHub 3D",
                         firstNameForFeaturedReview(review.getReviewer().getFullName()),
                         review.getRating(),
                         review.getComment(),
@@ -190,6 +252,7 @@ public class ReviewServiceImpl implements ReviewService {
         review.setOrder(order);
         review.setRating(request.rating());
         review.setComment(request.comment());
+        review.setIsPublic(false);
         review.setCreatedAt(Instant.now());
 
         // Lấy sản phẩm đầu tiên của đơn nếu có để liên kết
@@ -278,6 +341,8 @@ public class ReviewServiceImpl implements ReviewService {
                 .imageUrls(review.getImageUrls() != null ? new ArrayList<>(review.getImageUrls()) : new ArrayList<>())
                 .color(color)
                 .engravingText(engraving)
+                .isPublic(Boolean.TRUE.equals(review.getIsPublic()))
+                .publicUpdatedAt(review.getPublicUpdatedAt())
                 .createdAt(review.getCreatedAt())
                 .updatedAt(review.getUpdatedAt())
                 .build();
