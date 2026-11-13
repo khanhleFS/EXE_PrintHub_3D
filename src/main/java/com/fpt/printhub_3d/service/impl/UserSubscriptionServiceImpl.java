@@ -14,9 +14,12 @@ import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
 import com.fpt.printhub_3d.entity.Enumeration.SubscriptionType;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.repository.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import com.fpt.printhub_3d.service.UserSubscriptionService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,9 +32,10 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class UserSubscriptionServiceImpl implements UserSubscriptionService {
+
+    private static final ObjectMapper FALLBACK_MAPPER = new ObjectMapper();
 
     private final UserRepository userRepository;
     private final SubscriptionPlanRepository subscriptionPlanRepository;
@@ -40,6 +44,49 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     private final PointTransactionRepository pointTransactionRepository;
     private final SubscriptionCommandRecordRepository subscriptionCommandRecordRepository;
     private final SubscriptionPurchaseRepository subscriptionPurchaseRepository;
+    private final SubscriptionBenefitService subscriptionBenefitService;
+
+    @Autowired
+    public UserSubscriptionServiceImpl(
+            UserRepository userRepository,
+            SubscriptionPlanRepository subscriptionPlanRepository,
+            UserSubscriptionRepository userSubscriptionRepository,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository,
+            SubscriptionCommandRecordRepository subscriptionCommandRecordRepository,
+            SubscriptionPurchaseRepository subscriptionPurchaseRepository,
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
+    ) {
+        this.userRepository = userRepository;
+        this.subscriptionPlanRepository = subscriptionPlanRepository;
+        this.userSubscriptionRepository = userSubscriptionRepository;
+        this.pointWalletRepository = pointWalletRepository;
+        this.pointTransactionRepository = pointTransactionRepository;
+        this.subscriptionCommandRecordRepository = subscriptionCommandRecordRepository;
+        this.subscriptionPurchaseRepository = subscriptionPurchaseRepository;
+        this.subscriptionBenefitService = subscriptionBenefitService;
+    }
+
+    public UserSubscriptionServiceImpl(
+            UserRepository userRepository,
+            SubscriptionPlanRepository subscriptionPlanRepository,
+            UserSubscriptionRepository userSubscriptionRepository,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository,
+            SubscriptionCommandRecordRepository subscriptionCommandRecordRepository,
+            SubscriptionPurchaseRepository subscriptionPurchaseRepository
+    ) {
+        this(
+                userRepository,
+                subscriptionPlanRepository,
+                userSubscriptionRepository,
+                pointWalletRepository,
+                pointTransactionRepository,
+                subscriptionCommandRecordRepository,
+                subscriptionPurchaseRepository,
+                null
+        );
+    }
 
     @Transactional
     @Override
@@ -443,19 +490,44 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     }
 
     private UserSubscriptionResponseDTO toResponseDTO(UserSubscription userSub) {
+        SubscriptionPlan plan = userSub.getPlan();
+        Integer freeShipLimit = subscriptionBenefitService != null
+                ? subscriptionBenefitService.extractFreeShippingUsesLimit(plan)
+                : extractFreeShippingLimitFallback(plan);
+        int freeShipUsed = userSub.getFreeShippingUsesUsed() != null ? userSub.getFreeShippingUsesUsed() : 0;
+        Integer remainingFreeShip = freeShipLimit != null ? Math.max(0, freeShipLimit - freeShipUsed) : null;
+
         return UserSubscriptionResponseDTO.builder()
                 .subscriptionId(userSub.getId())
                 .userId(userSub.getUser().getId())
                 .username(userSub.getUser().getUsername())
-                .planId(userSub.getPlan().getId())
-                .planName(userSub.getPlan().getName())
-                .planType(userSub.getPlan().getType())
+                .planId(plan.getId())
+                .planName(plan.getName())
+                .planType(plan.getType())
                 .startDate(userSub.getStartDate())
                 .endDate(userSub.getEndDate())
-                .benefits(userSub.getPlan() != null ? userSub.getPlan().getBenefits() : null)
-                .structuredBenefits(userSub.getPlan() != null ? userSub.getPlan().getStructuredBenefits() : null)
+                .benefits(plan.getBenefits())
+                .structuredBenefits(plan.getStructuredBenefits())
                 .isActive(userSub.getIsActive())
+                .freeShippingUsesLimit(freeShipLimit)
+                .freeShippingUsesUsed(freeShipUsed)
+                .remainingFreeShippingUses(remainingFreeShip)
                 .build();
+    }
+
+    private Integer extractFreeShippingLimitFallback(SubscriptionPlan plan) {
+        if (plan == null || plan.getStructuredBenefits() == null || plan.getStructuredBenefits().isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode root = FALLBACK_MAPPER.readTree(plan.getStructuredBenefits());
+            JsonNode shipping = root != null ? root.get("shipping") : null;
+            if (shipping != null && shipping.hasNonNull("freeUsesPerTerm")) {
+                return shipping.get("freeUsesPerTerm").asInt();
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     private SubscriptionPurchaseResponseDTO toPurchaseResponseDTO(SubscriptionPurchase purchase) {

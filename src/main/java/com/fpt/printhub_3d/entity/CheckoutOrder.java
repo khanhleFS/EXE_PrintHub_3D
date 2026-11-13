@@ -69,6 +69,23 @@ public class CheckoutOrder {
     @Column(name = "shipping_fee", precision = 18, scale = 2)
     private BigDecimal shippingFee;
 
+    @Column(name = "discount_amount", precision = 18, scale = 2)
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
+    @Column(name = "shipping_discount_amount", precision = 18, scale = 2)
+    private BigDecimal shippingDiscountAmount = BigDecimal.ZERO;
+
+    @Column(name = "applied_subscription_id")
+    private UUID appliedSubscriptionId;
+
+    @Size(max = 200)
+    @Nationalized
+    @Column(name = "applied_subscription_name", length = 200)
+    private String appliedSubscriptionName;
+
+    @Column(name = "priority_production")
+    private Boolean priorityProduction = false;
+
     @Column(name = "payment_method", length = 20)
     private String paymentMethod; // PAYOS hoặc COD
 

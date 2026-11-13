@@ -32,6 +32,7 @@ import com.fpt.printhub_3d.repository.PointWalletRepository;
 import java.time.LocalDateTime;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
+import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -62,6 +63,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final CheckoutOrderRepository checkoutOrderRepository;
     private final OrderRepository orderRepository;
     private final StoreSettingRepository storeSettingRepository;
+    private final SubscriptionBenefitService subscriptionBenefitService;
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
@@ -78,7 +80,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             PointTransactionRepository pointTransactionRepository,
             CheckoutOrderRepository checkoutOrderRepository,
             OrderRepository orderRepository,
-            StoreSettingRepository storeSettingRepository
+            StoreSettingRepository storeSettingRepository,
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
     ) {
         this.customOrderRepository = customOrderRepository;
         this.fileAssetRepository = fileAssetRepository;
@@ -92,6 +95,38 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         this.checkoutOrderRepository = checkoutOrderRepository;
         this.orderRepository = orderRepository;
         this.storeSettingRepository = storeSettingRepository;
+        this.subscriptionBenefitService = subscriptionBenefitService;
+    }
+
+    public CustomOrderServiceImpl(
+            CustomOrderRepository customOrderRepository,
+            FileAssetRepository fileAssetRepository,
+            PaymentRepository paymentRepository,
+            UserRepository userRepository,
+            NotificationService notificationService,
+            CloudinaryService cloudinaryService,
+            com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository,
+            CheckoutOrderRepository checkoutOrderRepository,
+            OrderRepository orderRepository,
+            StoreSettingRepository storeSettingRepository
+    ) {
+        this(
+                customOrderRepository,
+                fileAssetRepository,
+                paymentRepository,
+                userRepository,
+                notificationService,
+                cloudinaryService,
+                orderTransitionPolicy,
+                pointWalletRepository,
+                pointTransactionRepository,
+                checkoutOrderRepository,
+                orderRepository,
+                storeSettingRepository,
+                null
+        );
     }
 
     public CustomOrderServiceImpl(
@@ -243,6 +278,13 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .updatedAt(o.getUpdatedAt())
                 .allowedActions(eval.allowedActions())
                 .blockedActions(eval.blockedActions())
+                .subtotalAmount(o.getSubtotalAmount())
+                .shippingFee(o.getShippingFee())
+                .discountAmount(o.getDiscountAmount())
+                .shippingDiscountAmount(o.getShippingDiscountAmount())
+                .appliedSubscriptionId(o.getAppliedSubscriptionId())
+                .appliedSubscriptionName(o.getAppliedSubscriptionName())
+                .priorityProduction(o.getPriorityProduction())
                 .build();
     }
 
@@ -428,6 +470,38 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn in 3D cá nhân hóa chỉ hỗ trợ thanh toán trực tuyến PayOS.");
             }
             order.setPaymentMethod("PAYOS");
+            if (order.getCheckoutOrder() == null) {
+                BigDecimal lineSub = resolveLineTotal(order);
+                BigDecimal baseShip = order.getShippingFee() != null ? order.getShippingFee() : resolveDefaultShippingFee();
+                if (subscriptionBenefitService != null) {
+                    SubscriptionBenefitService.AppliedBenefitSnapshot snap = subscriptionBenefitService.reserveAndApplyBenefits(
+                            order.getBuyer(),
+                            SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER,
+                            order.getId(),
+                            SubscriptionBenefitService.BenefitScope.CUSTOM,
+                            lineSub,
+                            baseShip
+                    );
+                    order.setSubtotalAmount(snap.itemsSubtotal());
+                    order.setShippingFee(snap.baseShippingFee());
+                    order.setDiscountAmount(snap.discountAmount());
+                    order.setShippingDiscountAmount(snap.shippingDiscountAmount());
+                    order.setAppliedSubscriptionId(snap.appliedSubscriptionId());
+                    order.setAppliedSubscriptionName(snap.appliedSubscriptionName());
+                    order.setPriorityProduction(snap.priorityProduction());
+                } else {
+                    order.setSubtotalAmount(lineSub);
+                    order.setShippingFee(BigDecimal.ZERO);
+                    order.setDiscountAmount(BigDecimal.ZERO);
+                    order.setShippingDiscountAmount(BigDecimal.ZERO);
+                    order.setPriorityProduction(false);
+                }
+            }
+        } else if ("CANCELLED".equals(resolvedStatus)) {
+            if (order.getCheckoutOrder() == null && subscriptionBenefitService != null) {
+                subscriptionBenefitService.releaseReservedBenefits(
+                        SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, order.getId());
+            }
         } else if ("COMPLETED".equals(resolvedStatus) && "COD".equalsIgnoreCase(paymentMethod)) {
             Payment codPay = p != null ? p : new Payment();
             codPay.setCustomOrder(order);
@@ -490,7 +564,9 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                     .build();
         }
 
-        BigDecimal eligibleNet = resolveLineTotal(order);
+        BigDecimal baseSub = order.getSubtotalAmount() != null ? order.getSubtotalAmount() : resolveLineTotal(order);
+        BigDecimal disc = order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO;
+        BigDecimal eligibleNet = baseSub.subtract(disc).max(BigDecimal.ZERO);
         int earnedPoints = eligibleNet.compareTo(BigDecimal.ZERO) > 0
                 ? eligibleNet.divideToIntegralValue(REWARD_POINT_UNIT).intValue()
                 : 0;

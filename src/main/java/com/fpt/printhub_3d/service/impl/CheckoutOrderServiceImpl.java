@@ -27,6 +27,7 @@ import com.fpt.printhub_3d.service.InventoryService;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import com.fpt.printhub_3d.service.PaymentService;
+import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -66,6 +67,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private final ObjectMapper objectMapper;
     private final CloudinaryService cloudinaryService;
     private final StoreSettingRepository storeSettingRepository;
+    private final SubscriptionBenefitService subscriptionBenefitService;
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
     @Autowired
@@ -85,7 +87,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             NotificationService notificationService,
             ObjectMapper objectMapper,
             CloudinaryService cloudinaryService,
-            StoreSettingRepository storeSettingRepository
+            StoreSettingRepository storeSettingRepository,
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
     ) {
         this.checkoutOrderRepository = checkoutOrderRepository;
         this.cartRepository = cartRepository;
@@ -103,6 +106,46 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
         this.cloudinaryService = cloudinaryService;
         this.storeSettingRepository = storeSettingRepository;
+        this.subscriptionBenefitService = subscriptionBenefitService;
+    }
+
+    public CheckoutOrderServiceImpl(
+            CheckoutOrderRepository checkoutOrderRepository,
+            CartRepository cartRepository,
+            CartItemRepository cartItemRepository,
+            ProductRepository productRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            CustomOrderRepository customOrderRepository,
+            PaymentService paymentService,
+            InventoryService inventoryService,
+            UserRepository userRepository,
+            PaymentRepository paymentRepository,
+            OrderTransitionPolicy orderTransitionPolicy,
+            NotificationService notificationService,
+            ObjectMapper objectMapper,
+            CloudinaryService cloudinaryService,
+            StoreSettingRepository storeSettingRepository
+    ) {
+        this(
+                checkoutOrderRepository,
+                cartRepository,
+                cartItemRepository,
+                productRepository,
+                orderRepository,
+                orderItemRepository,
+                customOrderRepository,
+                paymentService,
+                inventoryService,
+                userRepository,
+                paymentRepository,
+                orderTransitionPolicy,
+                notificationService,
+                objectMapper,
+                cloudinaryService,
+                storeSettingRepository,
+                null
+        );
     }
 
     public CheckoutOrderServiceImpl(
@@ -138,6 +181,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 notificationService,
                 objectMapper,
                 cloudinaryService,
+                null,
                 null
         );
     }
@@ -169,6 +213,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 new OrderTransitionPolicy(),
                 null,
                 new ObjectMapper(),
+                null,
                 null,
                 null
         );
@@ -270,7 +315,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         checkoutOrder.setShippingAddress(request.shippingAddress());
         checkoutOrder.setShippingMode(shippingMode);
         checkoutOrder.setStatus(customLines.isEmpty() ? "CONFIRMED" : "PENDING_QUOTE");
-        checkoutOrder.setShippingFee(customLines.isEmpty() ? BigDecimal.valueOf(30000) : BigDecimal.ZERO);
+        BigDecimal baseShipFee = customLines.isEmpty() ? resolveDefaultShippingFee() : BigDecimal.ZERO;
+        checkoutOrder.setShippingFee(baseShipFee);
+        checkoutOrder.setDiscountAmount(BigDecimal.ZERO);
+        checkoutOrder.setShippingDiscountAmount(BigDecimal.ZERO);
+        checkoutOrder.setPriorityProduction(false);
         checkoutOrder.setPaymentMethod(normalizedPaymentMethod);
         checkoutOrder.setSummaryVersion(1L);
         checkoutOrder.setIdempotencyKey(request.idempotencyKey() != null ? request.idempotencyKey().trim() : null);
@@ -282,7 +331,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         checkoutOrder.setItemsSubtotal(marketSubtotal);
-        BigDecimal finalTotal = marketSubtotal.add(checkoutOrder.getShippingFee());
+        BigDecimal finalTotal = marketSubtotal.add(baseShipFee);
         checkoutOrder.setTotalAmount(finalTotal);
 
         if (!customLines.isEmpty()) {
@@ -292,6 +341,28 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
 
         checkoutOrder = checkoutOrderRepository.save(checkoutOrder);
+
+        if (customLines.isEmpty() && subscriptionBenefitService != null) {
+            SubscriptionBenefitService.AppliedBenefitSnapshot snap = subscriptionBenefitService.reserveAndApplyBenefits(
+                    user,
+                    SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER,
+                    checkoutOrder.getId(),
+                    SubscriptionBenefitService.BenefitScope.MARKETPLACE,
+                    marketSubtotal,
+                    baseShipFee
+            );
+            checkoutOrder.setItemsSubtotal(snap.itemsSubtotal());
+            checkoutOrder.setShippingFee(snap.baseShippingFee());
+            checkoutOrder.setDiscountAmount(snap.discountAmount());
+            checkoutOrder.setShippingDiscountAmount(snap.shippingDiscountAmount());
+            checkoutOrder.setAppliedSubscriptionId(snap.appliedSubscriptionId());
+            checkoutOrder.setAppliedSubscriptionName(snap.appliedSubscriptionName());
+            checkoutOrder.setPriorityProduction(snap.priorityProduction());
+            checkoutOrder.setTotalAmount(snap.finalTotal());
+            checkoutOrder.setUpdatedAt(Instant.now());
+            checkoutOrder = checkoutOrderRepository.save(checkoutOrder);
+            finalTotal = snap.finalTotal();
+        }
 
         // Tạo CustomOrder cho các dòng thiết kế custom
         for (CartItem cItem : customLines) {
@@ -334,7 +405,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 order.setCheckoutOrder(checkoutOrder);
                 order.setPaymentMethod(checkoutOrder.getPaymentMethod());
                 order.setStatus("PENDING");
+                order.setSubtotalAmount(sellerTotal);
                 order.setTotalAmount(sellerTotal);
+                order.setPriorityProduction(checkoutOrder.getPriorityProduction());
                 order.setCommissionFee(BigDecimal.ZERO);
                 order.setCreatedAt(Instant.now());
                 order.setUpdatedAt(Instant.now());
@@ -482,9 +555,41 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 : resolveDefaultShippingFee();
         BigDecimal finalTotal = itemsSubtotal.add(shippingFee);
 
-        checkoutOrder.setItemsSubtotal(itemsSubtotal);
-        checkoutOrder.setShippingFee(shippingFee);
-        checkoutOrder.setTotalAmount(finalTotal);
+        SubscriptionBenefitService.AppliedBenefitSnapshot appliedSnap = null;
+        if (subscriptionBenefitService != null) {
+            SubscriptionBenefitService.BenefitScope scope = (!activeCustomList.isEmpty() && !orderList.isEmpty())
+                    ? SubscriptionBenefitService.BenefitScope.MIXED
+                    : (!activeCustomList.isEmpty()
+                            ? SubscriptionBenefitService.BenefitScope.CUSTOM
+                            : SubscriptionBenefitService.BenefitScope.MARKETPLACE);
+            appliedSnap = subscriptionBenefitService.reserveAndApplyBenefits(
+                    user,
+                    SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER,
+                    checkoutOrder.getId(),
+                    scope,
+                    itemsSubtotal,
+                    shippingFee,
+                    customTotal,
+                    marketplaceTotal
+            );
+            checkoutOrder.setItemsSubtotal(appliedSnap.itemsSubtotal());
+            checkoutOrder.setShippingFee(appliedSnap.baseShippingFee());
+            checkoutOrder.setDiscountAmount(appliedSnap.discountAmount());
+            checkoutOrder.setShippingDiscountAmount(appliedSnap.shippingDiscountAmount());
+            checkoutOrder.setAppliedSubscriptionId(appliedSnap.appliedSubscriptionId());
+            checkoutOrder.setAppliedSubscriptionName(appliedSnap.appliedSubscriptionName());
+            checkoutOrder.setPriorityProduction(appliedSnap.priorityProduction());
+            finalTotal = appliedSnap.finalTotal();
+            checkoutOrder.setTotalAmount(finalTotal);
+        } else {
+            checkoutOrder.setItemsSubtotal(itemsSubtotal);
+            checkoutOrder.setShippingFee(shippingFee);
+            checkoutOrder.setDiscountAmount(BigDecimal.ZERO);
+            checkoutOrder.setShippingDiscountAmount(BigDecimal.ZERO);
+            checkoutOrder.setPriorityProduction(false);
+            checkoutOrder.setTotalAmount(finalTotal);
+        }
+
         checkoutOrder.setStatus("CONFIRMED");
         if (request.paymentMethod() != null) {
             checkoutOrder.setPaymentMethod(request.paymentMethod().toUpperCase());
@@ -492,6 +597,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         checkoutOrder.setSummaryVersion(checkoutOrder.getSummaryVersion() + 1);
         checkoutOrder.setUpdatedAt(Instant.now());
         checkoutOrderRepository.save(checkoutOrder);
+
+        distributeSnapshotToChildren(checkoutOrder, activeCustomList, orderList, appliedSnap);
 
         for (CustomOrder c : activeCustomList) {
             if (!"PAID".equals(c.getStatus())) {
@@ -561,9 +668,16 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .quotedAt(c.getQuotedAt())
                 .checkoutOrderId(c.getCheckoutOrder() != null ? c.getCheckoutOrder().getId() : null)
                 .status(c.getStatus())
-                .createdAt(c.getCreatedAt())
-                .updatedAt(c.getUpdatedAt())
-                .build()).toList();
+                    .createdAt(c.getCreatedAt())
+                    .updatedAt(c.getUpdatedAt())
+                    .subtotalAmount(c.getSubtotalAmount())
+                    .shippingFee(c.getShippingFee())
+                    .discountAmount(c.getDiscountAmount())
+                    .shippingDiscountAmount(c.getShippingDiscountAmount())
+                    .appliedSubscriptionId(c.getAppliedSubscriptionId())
+                    .appliedSubscriptionName(c.getAppliedSubscriptionName())
+                    .priorityProduction(c.getPriorityProduction())
+                    .build()).toList();
 
         List<OrderResponseDTO> orderDTOs = orders.stream().map(o -> {
             List<OrderItem> oItems = orderItemRepository.findByOrderId(o.getId());
@@ -590,6 +704,13 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     .items(itemDTOs)
                     .createdAt(o.getCreatedAt())
                     .updatedAt(o.getUpdatedAt())
+                    .subtotalAmount(o.getSubtotalAmount())
+                    .shippingFee(o.getShippingFee())
+                    .discountAmount(o.getDiscountAmount())
+                    .shippingDiscountAmount(o.getShippingDiscountAmount())
+                    .appliedSubscriptionId(o.getAppliedSubscriptionId())
+                    .appliedSubscriptionName(o.getAppliedSubscriptionName())
+                    .priorityProduction(o.getPriorityProduction())
                     .build();
         }).toList();
 
@@ -646,6 +767,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .allCustomQuoted(allCustomQuoted)
                 .readyForConfirm(readyForConfirm)
                 .paymentLinkUrl(resolvedLink)
+                .discountAmount(order.getDiscountAmount())
+                .shippingDiscountAmount(order.getShippingDiscountAmount())
+                .appliedSubscriptionId(order.getAppliedSubscriptionId())
+                .appliedSubscriptionName(order.getAppliedSubscriptionName())
+                .priorityProduction(order.getPriorityProduction())
                 .build();
     }
 
@@ -836,6 +962,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             co.setCancelReason(request.cancelReason());
             co.setUpdatedAt(Instant.now());
             checkoutOrderRepository.save(co);
+            if (subscriptionBenefitService != null) {
+                subscriptionBenefitService.releaseReservedBenefits(
+                        SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, co.getId());
+            }
 
             for (CustomOrder c : customs) {
                 if (!"CANCELLED".equalsIgnoreCase(c.getStatus())) {
@@ -1019,7 +1149,79 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .blockedActions(eval.blockedActions())
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
+                .subtotalAmount(order.getSubtotalAmount())
+                .shippingFee(order.getShippingFee())
+                .discountAmount(order.getDiscountAmount())
+                .shippingDiscountAmount(order.getShippingDiscountAmount())
+                .appliedSubscriptionId(order.getAppliedSubscriptionId())
+                .appliedSubscriptionName(order.getAppliedSubscriptionName())
+                .priorityProduction(order.getPriorityProduction())
                 .build();
+    }
+
+    private void distributeSnapshotToChildren(
+            CheckoutOrder co,
+            List<CustomOrder> activeCustoms,
+            List<Order> marketOrders,
+            SubscriptionBenefitService.AppliedBenefitSnapshot snap
+    ) {
+        if (snap == null) {
+            return;
+        }
+        BigDecimal totalDiscount = snap.discountAmount() != null ? snap.discountAmount() : BigDecimal.ZERO;
+        BigDecimal totalItemsSub = snap.itemsSubtotal() != null ? snap.itemsSubtotal() : BigDecimal.ZERO;
+        BigDecimal remainingDisc = totalDiscount;
+
+        int totalChildren = activeCustoms.size() + marketOrders.size();
+        int idx = 0;
+
+        for (CustomOrder c : activeCustoms) {
+            idx++;
+            BigDecimal cSub = resolveCustomLineTotal(c);
+            BigDecimal cDisc = allocateShare(cSub, totalItemsSub, totalDiscount, remainingDisc, idx == totalChildren);
+            remainingDisc = remainingDisc.subtract(cDisc).max(BigDecimal.ZERO);
+
+            c.setSubtotalAmount(cSub);
+            c.setDiscountAmount(cDisc);
+            c.setAppliedSubscriptionId(snap.appliedSubscriptionId());
+            c.setAppliedSubscriptionName(snap.appliedSubscriptionName());
+            c.setPriorityProduction(snap.priorityProduction());
+        }
+
+        for (Order o : marketOrders) {
+            idx++;
+            BigDecimal oSub = o.getSubtotalAmount() != null
+                    ? o.getSubtotalAmount()
+                    : (o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO);
+            BigDecimal oDisc = allocateShare(oSub, totalItemsSub, totalDiscount, remainingDisc, idx == totalChildren);
+            remainingDisc = remainingDisc.subtract(oDisc).max(BigDecimal.ZERO);
+
+            o.setSubtotalAmount(oSub);
+            o.setDiscountAmount(oDisc);
+            o.setAppliedSubscriptionId(snap.appliedSubscriptionId());
+            o.setAppliedSubscriptionName(snap.appliedSubscriptionName());
+            o.setPriorityProduction(snap.priorityProduction());
+            o.setUpdatedAt(Instant.now());
+            orderRepository.save(o);
+        }
+    }
+
+    private BigDecimal allocateShare(
+            BigDecimal lineSub,
+            BigDecimal totalSub,
+            BigDecimal totalDiscount,
+            BigDecimal remainingDisc,
+            boolean isLast
+    ) {
+        if (totalDiscount.compareTo(BigDecimal.ZERO) <= 0 || totalSub.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        if (isLast) {
+            return remainingDisc.min(lineSub).max(BigDecimal.ZERO);
+        }
+        BigDecimal ratioDisc = totalDiscount.multiply(lineSub)
+                .divide(totalSub, 0, java.math.RoundingMode.HALF_UP);
+        return ratioDisc.min(remainingDisc).min(lineSub).max(BigDecimal.ZERO);
     }
 
     private OrderTransitionPolicy.TransitionEvaluation evaluateParentActions(

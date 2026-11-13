@@ -53,6 +53,27 @@ public record CustomOrderResponseDTO(
         Instant createdAt,
 
         @Schema(description = "Thời gian cập nhật")
-        Instant updatedAt
+        Instant updatedAt,
+
+        @Schema(description = "Tiền hàng tạm tính (VND)")
+        BigDecimal subtotalAmount,
+
+        @Schema(description = "Phí vận chuyển gốc (VND)")
+        BigDecimal shippingFee,
+
+        @Schema(description = "Số tiền giảm từ gói hội viên (VND)")
+        BigDecimal discountAmount,
+
+        @Schema(description = "Số tiền phí ship được miễn/giảm từ gói hội viên (VND)")
+        BigDecimal shippingDiscountAmount,
+
+        @Schema(description = "ID gói hội viên đã áp dụng")
+        UUID appliedSubscriptionId,
+
+        @Schema(description = "Tên gói hội viên đã áp dụng")
+        String appliedSubscriptionName,
+
+        @Schema(description = "Ưu tiên xử lý / in ấn")
+        Boolean priorityProduction
 ) {
 }

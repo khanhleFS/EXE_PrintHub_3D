@@ -17,9 +17,10 @@ import com.fpt.printhub_3d.repository.SubscriptionPurchaseRepository;
 import com.fpt.printhub_3d.service.InventoryService;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.PaymentService;
+import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import com.fpt.printhub_3d.service.UserSubscriptionService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -38,9 +39,11 @@ import java.util.UUID;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 @Transactional
 public class PaymentServiceImpl implements PaymentService {
+
+    private static final BigDecimal DEFAULT_CUSTOM_SHIPPING_FEE = new BigDecimal("30000");
+    private static final BigDecimal PAYOS_MIN_AMOUNT = new BigDecimal("2000");
 
     private final OrderRepository orders;
     private final CustomOrderRepository customs;
@@ -51,6 +54,57 @@ public class PaymentServiceImpl implements PaymentService {
     private final PayOS payOS;
     private final NotificationService notifications;
     private final InventoryService inventoryService;
+    private final SubscriptionBenefitService subscriptionBenefitService;
+
+    @Autowired
+    public PaymentServiceImpl(
+            OrderRepository orders,
+            CustomOrderRepository customs,
+            CheckoutOrderRepository checkoutOrders,
+            PaymentRepository payments,
+            SubscriptionPurchaseRepository subscriptionPurchases,
+            UserSubscriptionService userSubscriptionService,
+            PayOS payOS,
+            NotificationService notifications,
+            InventoryService inventoryService,
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
+    ) {
+        this.orders = orders;
+        this.customs = customs;
+        this.checkoutOrders = checkoutOrders;
+        this.payments = payments;
+        this.subscriptionPurchases = subscriptionPurchases;
+        this.userSubscriptionService = userSubscriptionService;
+        this.payOS = payOS;
+        this.notifications = notifications;
+        this.inventoryService = inventoryService;
+        this.subscriptionBenefitService = subscriptionBenefitService;
+    }
+
+    public PaymentServiceImpl(
+            OrderRepository orders,
+            CustomOrderRepository customs,
+            CheckoutOrderRepository checkoutOrders,
+            PaymentRepository payments,
+            SubscriptionPurchaseRepository subscriptionPurchases,
+            UserSubscriptionService userSubscriptionService,
+            PayOS payOS,
+            NotificationService notifications,
+            InventoryService inventoryService
+    ) {
+        this(
+                orders,
+                customs,
+                checkoutOrders,
+                payments,
+                subscriptionPurchases,
+                userSubscriptionService,
+                payOS,
+                notifications,
+                inventoryService,
+                null
+        );
+    }
 
     @Value("${payos.return-url:http://localhost:5173/payment-result}")
     private String returnUrl;
@@ -97,7 +151,36 @@ public class PaymentServiceImpl implements PaymentService {
                 int qty = custom.getQuantity() != null && custom.getQuantity() > 0 ? custom.getQuantity() : 1;
                 lineTotal = custom.getUnitQuotedPrice().multiply(BigDecimal.valueOf(qty));
             }
-            total = lineTotal;
+            if (custom.getCheckoutOrder() == null && subscriptionBenefitService != null) {
+                BigDecimal baseSub = custom.getSubtotalAmount() != null ? custom.getSubtotalAmount() : lineTotal;
+                BigDecimal baseShip = custom.getShippingFee() != null ? custom.getShippingFee() : DEFAULT_CUSTOM_SHIPPING_FEE;
+                SubscriptionBenefitService.AppliedBenefitSnapshot snap = subscriptionBenefitService.reserveAndApplyBenefits(
+                        custom.getBuyer(),
+                        SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER,
+                        custom.getId(),
+                        SubscriptionBenefitService.BenefitScope.CUSTOM,
+                        baseSub,
+                        baseShip
+                );
+                custom.setSubtotalAmount(snap.itemsSubtotal());
+                custom.setShippingFee(snap.baseShippingFee());
+                custom.setDiscountAmount(snap.discountAmount());
+                custom.setShippingDiscountAmount(snap.shippingDiscountAmount());
+                custom.setAppliedSubscriptionId(snap.appliedSubscriptionId());
+                custom.setAppliedSubscriptionName(snap.appliedSubscriptionName());
+                custom.setPriorityProduction(snap.priorityProduction());
+                custom.setUpdatedAt(Instant.now());
+                customs.save(custom);
+                total = snap.finalTotal();
+            } else if (custom.getSubtotalAmount() != null) {
+                BigDecimal sub = custom.getSubtotalAmount();
+                BigDecimal disc = custom.getDiscountAmount() != null ? custom.getDiscountAmount() : BigDecimal.ZERO;
+                BigDecimal ship = custom.getShippingFee() != null ? custom.getShippingFee() : BigDecimal.ZERO;
+                BigDecimal shipDisc = custom.getShippingDiscountAmount() != null ? custom.getShippingDiscountAmount() : BigDecimal.ZERO;
+                total = sub.subtract(disc).max(BigDecimal.ZERO).add(ship.subtract(shipDisc).max(BigDecimal.ZERO));
+            } else {
+                total = lineTotal;
+            }
             payment = payments.findByCustomOrderId(custom.getId()).orElseGet(Payment::new);
 
         } else if ("CHECKOUT_ORDER".equals(request.orderType())) {
@@ -137,6 +220,9 @@ public class PaymentServiceImpl implements PaymentService {
 
         if (total == null || total.signum() <= 0) {
             throw bad("Đơn chưa có số tiền thanh toán hợp lệ");
+        }
+        if (total.compareTo(PAYOS_MIN_AMOUNT) < 0) {
+            throw bad("Số tiền thanh toán PayOS sau ưu đãi phải tối thiểu 2.000 VND (hiện tại: " + total + " VND)");
         }
         if (request.customAmount() != null && request.customAmount().compareTo(total) != 0) {
             throw bad("Số tiền phải khớp giá từ hệ thống");
@@ -307,8 +393,19 @@ public class PaymentServiceImpl implements PaymentService {
                             order.setUpdatedAt(Instant.now());
                             orders.save(order);
                             inventoryService.releaseActiveReservations(order.getId(), "Hủy giao dịch cổng PayOS", "PAYOS_CANCEL_" + payment.getId());
+                            if (subscriptionBenefitService != null) {
+                                subscriptionBenefitService.releaseReservedBenefits(
+                                        SubscriptionBenefitService.UsageTargetType.ORDER, order.getId());
+                            }
                             log.info("Đã đồng bộ hủy Order [{}] và giải phóng kho theo cổng PayOS", order.getId());
                         }
+                    }
+
+                    // Giải phóng ưu đãi tạm giữ cho CustomOrder đơn lẻ khi PayOS bị hủy
+                    if (payment.getCustomOrder() != null && subscriptionBenefitService != null) {
+                        subscriptionBenefitService.releaseReservedBenefits(
+                                SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER,
+                                payment.getCustomOrder().getId());
                     }
 
                     // Đồng bộ hủy CheckoutOrder và các đơn con
@@ -320,6 +417,11 @@ public class PaymentServiceImpl implements PaymentService {
                             checkoutOrder.setStatus("CANCELLED");
                             checkoutOrder.setUpdatedAt(Instant.now());
                             checkoutOrders.save(checkoutOrder);
+                            if (subscriptionBenefitService != null) {
+                                subscriptionBenefitService.releaseReservedBenefits(
+                                        SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER,
+                                        checkoutOrder.getId());
+                            }
 
                             List<Order> childOrders = orders.findByCheckoutOrderId(checkoutOrder.getId());
                             for (Order o : childOrders) {
@@ -513,6 +615,19 @@ public class PaymentServiceImpl implements PaymentService {
             // QUAN TRỌNG: Mua gói hội viên bằng tiền TUYỆT ĐỐI KHÔNG CỘNG ĐIỂM THƯỞNG để tránh loop tiền -> điểm -> đổi gói
         } else {
             throw bad("Giao dịch không có thông tin đơn hàng");
+        }
+
+        if (subscriptionBenefitService != null) {
+            if (payment.getOrder() != null) {
+                subscriptionBenefitService.commitAppliedBenefits(
+                        SubscriptionBenefitService.UsageTargetType.ORDER, payment.getOrder().getId());
+            } else if (payment.getCustomOrder() != null) {
+                subscriptionBenefitService.commitAppliedBenefits(
+                        SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, payment.getCustomOrder().getId());
+            } else if (payment.getCheckoutOrder() != null) {
+                subscriptionBenefitService.commitAppliedBenefits(
+                        SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, payment.getCheckoutOrder().getId());
+            }
         }
 
         payments.save(payment);

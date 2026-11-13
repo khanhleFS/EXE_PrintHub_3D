@@ -1,8 +1,12 @@
 package com.fpt.printhub_3d.controller;
 
+import com.fpt.printhub_3d.common.exception.ApiException;
+import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.UserSubscriptionAPI;
+import com.fpt.printhub_3d.dto.subscription.BenefitPreviewRequestDTO;
+import com.fpt.printhub_3d.dto.subscription.BenefitPreviewResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.CreateSubscriptionPurchaseRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.RedeemSubscriptionRequestDTO;
@@ -10,6 +14,8 @@ import com.fpt.printhub_3d.dto.subscription.SubscriptionPlanResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPurchaseResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.UserSubscriptionResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.UserSubscriptionSummaryDTO;
+import com.fpt.printhub_3d.entity.User;
+import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import com.fpt.printhub_3d.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +35,7 @@ import java.util.UUID;
 public class UserSubscriptionController implements UserSubscriptionAPI {
 
     private final UserSubscriptionService userSubscriptionService;
+    private final SubscriptionBenefitService subscriptionBenefitService;
 
     @Override
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
@@ -136,6 +143,41 @@ public class UserSubscriptionController implements UserSubscriptionAPI {
                         .code(200)
                         .message("Lấy lịch sử mua gói hội viên thành công.")
                         .result(response)
+                        .build()
+        );
+    }
+
+    @Override
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<BenefitPreviewResponseDTO>> previewBenefits(BenefitPreviewRequestDTO request) {
+        User currentUser = SecurityUtils.getCurrentUser();
+        SubscriptionBenefitService.BenefitScope scope = SubscriptionBenefitService.BenefitScope.MARKETPLACE;
+        if (request != null && request.getScope() != null && !request.getScope().isBlank()) {
+            try {
+                scope = SubscriptionBenefitService.BenefitScope.valueOf(
+                        request.getScope().trim().toUpperCase(java.util.Locale.ROOT));
+            } catch (IllegalArgumentException ignored) {
+                throw new ApiException(CommonErrorCode.BAD_REQUEST,
+                        "Phạm vi xem trước ưu đãi không hợp lệ: " + request.getScope());
+            }
+        }
+        java.math.BigDecimal itemsSubtotal = request != null && request.getItemsSubtotal() != null
+                ? request.getItemsSubtotal()
+                : java.math.BigDecimal.ZERO;
+        java.math.BigDecimal baseShippingFee = request != null && request.getBaseShippingFee() != null
+                ? request.getBaseShippingFee()
+                : java.math.BigDecimal.ZERO;
+        java.math.BigDecimal customSubtotal = request != null ? request.getCustomSubtotal() : null;
+        java.math.BigDecimal marketplaceSubtotal = request != null ? request.getMarketplaceSubtotal() : null;
+
+        BenefitPreviewResponseDTO preview = subscriptionBenefitService.previewBenefits(
+                currentUser, scope, itemsSubtotal, baseShippingFee, customSubtotal, marketplaceSubtotal);
+
+        return ResponseEntity.ok(
+                ApiResponse.<BenefitPreviewResponseDTO>builder()
+                        .code(200)
+                        .message("Tính trước quyền lợi gói hội viên thành công.")
+                        .result(preview)
                         .build()
         );
     }

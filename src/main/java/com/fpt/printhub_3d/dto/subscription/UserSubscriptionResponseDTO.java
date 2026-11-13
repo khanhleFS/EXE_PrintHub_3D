@@ -19,6 +19,9 @@ public record UserSubscriptionResponseDTO(
         LocalDateTime endDate,
         String benefits,
         String structuredBenefits,
-        Boolean isActive
+        Boolean isActive,
+        Integer freeShippingUsesLimit,
+        Integer freeShippingUsesUsed,
+        Integer remainingFreeShippingUses
 ) {
 }

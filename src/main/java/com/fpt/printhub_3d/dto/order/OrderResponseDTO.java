@@ -63,6 +63,27 @@ public record OrderResponseDTO(
         List<String> allowedActions,
 
         @Schema(description = "Danh sách các hành động bị chặn kèm lý do")
-        List<BlockedActionDTO> blockedActions
+        List<BlockedActionDTO> blockedActions,
+
+        @Schema(description = "Tiền hàng tạm tính trước giảm giá và ship (VND)")
+        BigDecimal subtotalAmount,
+
+        @Schema(description = "Phí vận chuyển gốc (VND)")
+        BigDecimal shippingFee,
+
+        @Schema(description = "Số tiền giảm từ gói hội viên (VND)")
+        BigDecimal discountAmount,
+
+        @Schema(description = "Số tiền phí ship được miễn/giảm từ gói hội viên (VND)")
+        BigDecimal shippingDiscountAmount,
+
+        @Schema(description = "ID gói hội viên đã áp dụng")
+        UUID appliedSubscriptionId,
+
+        @Schema(description = "Tên gói hội viên đã áp dụng")
+        String appliedSubscriptionName,
+
+        @Schema(description = "Ưu tiên xử lý / in ấn")
+        Boolean priorityProduction
 ) {
 }

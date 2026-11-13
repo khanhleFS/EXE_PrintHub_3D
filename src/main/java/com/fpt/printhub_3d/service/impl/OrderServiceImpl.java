@@ -11,7 +11,9 @@ import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import lombok.RequiredArgsConstructor;
+import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,7 +27,6 @@ import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
     private final ProductRepository productRepository;
@@ -40,6 +41,69 @@ public class OrderServiceImpl implements OrderService {
     private final ReviewRepository reviewRepository;
     private final com.fpt.printhub_3d.service.InventoryService inventoryService;
     private final com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy;
+    private final SubscriptionBenefitService subscriptionBenefitService;
+
+    @Autowired
+    public OrderServiceImpl(
+            ProductRepository productRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            ShippingInfoRepository shippingInfoRepository,
+            UserRepository userRepository,
+            PaymentRepository paymentRepository,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository,
+            NotificationService notificationService,
+            ReviewRepository reviewRepository,
+            com.fpt.printhub_3d.service.InventoryService inventoryService,
+            com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy,
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
+    ) {
+        this.productRepository = productRepository;
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.shippingInfoRepository = shippingInfoRepository;
+        this.userRepository = userRepository;
+        this.paymentRepository = paymentRepository;
+        this.pointWalletRepository = pointWalletRepository;
+        this.pointTransactionRepository = pointTransactionRepository;
+        this.notificationService = notificationService;
+        this.reviewRepository = reviewRepository;
+        this.inventoryService = inventoryService;
+        this.orderTransitionPolicy = orderTransitionPolicy;
+        this.subscriptionBenefitService = subscriptionBenefitService;
+    }
+
+    public OrderServiceImpl(
+            ProductRepository productRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            ShippingInfoRepository shippingInfoRepository,
+            UserRepository userRepository,
+            PaymentRepository paymentRepository,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository,
+            NotificationService notificationService,
+            ReviewRepository reviewRepository,
+            com.fpt.printhub_3d.service.InventoryService inventoryService,
+            com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy
+    ) {
+        this(
+                productRepository,
+                orderRepository,
+                orderItemRepository,
+                shippingInfoRepository,
+                userRepository,
+                paymentRepository,
+                pointWalletRepository,
+                pointTransactionRepository,
+                notificationService,
+                reviewRepository,
+                inventoryService,
+                orderTransitionPolicy,
+                null
+        );
+    }
 
     private User getCurrentUserSafely() {
         try {
@@ -53,6 +117,7 @@ public class OrderServiceImpl implements OrderService {
 
     private static final BigDecimal COMMISSION_RATE = new BigDecimal("0.05");
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
+    private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
     private static final Set<String> VALID_COLORS = Set.of("GREEN", "BLUE", "PINK", "WHITE", "BLACK");
 
@@ -102,30 +167,61 @@ public class OrderServiceImpl implements OrderService {
                 .collect(Collectors.groupingBy(iwp -> iwp.product().getSeller().getId()));
 
         List<OrderResponseDTO> createdOrders = new ArrayList<>();
+        int sellerOrderIdx = 0;
 
         for (Map.Entry<UUID, List<ItemWithProduct>> sellerEntry : itemsBySeller.entrySet()) {
             List<ItemWithProduct> sellerItems = sellerEntry.getValue();
             User seller = sellerItems.getFirst().product().getSeller();
 
-            BigDecimal totalAmount = BigDecimal.ZERO;
+            BigDecimal itemsSubtotal = BigDecimal.ZERO;
             for (ItemWithProduct iwp : sellerItems) {
                 BigDecimal itemTotal = iwp.product().getPrice().multiply(BigDecimal.valueOf(iwp.item().quantity()));
-                totalAmount = totalAmount.add(itemTotal);
+                itemsSubtotal = itemsSubtotal.add(itemTotal);
             }
 
-            BigDecimal commissionFee = totalAmount.multiply(COMMISSION_RATE).setScale(0, RoundingMode.HALF_UP);
+            BigDecimal baseShippingFee = sellerOrderIdx == 0 ? DEFAULT_SHIPPING_FEE : BigDecimal.ZERO;
+            sellerOrderIdx++;
 
             Order order = new Order();
             order.setBuyer(buyer);
             order.setSeller(seller);
-            order.setTotalAmount(totalAmount);
-            order.setCommissionFee(commissionFee);
+            order.setSubtotalAmount(itemsSubtotal);
+            order.setShippingFee(subscriptionBenefitService != null ? baseShippingFee : BigDecimal.ZERO);
+            order.setDiscountAmount(BigDecimal.ZERO);
+            order.setShippingDiscountAmount(BigDecimal.ZERO);
+            order.setPriorityProduction(false);
+            order.setTotalAmount(itemsSubtotal);
+            order.setCommissionFee(itemsSubtotal.multiply(COMMISSION_RATE).setScale(0, RoundingMode.HALF_UP));
             order.setPaymentMethod(request.paymentMethod() != null ? request.paymentMethod().toUpperCase() : "PAYOS");
             order.setStatus("PENDING");
             order.setRewardProcessed(false);
             order.setCreatedAt(Instant.now());
             order.setUpdatedAt(Instant.now());
             Order savedOrder = orderRepository.save(order);
+
+            if (subscriptionBenefitService != null) {
+                SubscriptionBenefitService.AppliedBenefitSnapshot snap = subscriptionBenefitService.reserveAndApplyBenefits(
+                        buyer,
+                        SubscriptionBenefitService.UsageTargetType.ORDER,
+                        savedOrder.getId(),
+                        SubscriptionBenefitService.BenefitScope.MARKETPLACE,
+                        itemsSubtotal,
+                        baseShippingFee
+                );
+                savedOrder.setSubtotalAmount(snap.itemsSubtotal());
+                savedOrder.setShippingFee(snap.baseShippingFee());
+                savedOrder.setDiscountAmount(snap.discountAmount());
+                savedOrder.setShippingDiscountAmount(snap.shippingDiscountAmount());
+                savedOrder.setAppliedSubscriptionId(snap.appliedSubscriptionId());
+                savedOrder.setAppliedSubscriptionName(snap.appliedSubscriptionName());
+                savedOrder.setPriorityProduction(snap.priorityProduction());
+                savedOrder.setTotalAmount(snap.finalTotal());
+                BigDecimal netMerchandise = snap.itemsSubtotal().subtract(snap.discountAmount()).max(BigDecimal.ZERO);
+                savedOrder.setCommissionFee(netMerchandise.multiply(COMMISSION_RATE).setScale(0, RoundingMode.HALF_UP));
+                savedOrder = orderRepository.save(savedOrder);
+            }
+
+            BigDecimal totalAmount = savedOrder.getTotalAmount();
 
             ShippingInfo shippingInfo = new ShippingInfo();
             shippingInfo.setOrders(savedOrder);
@@ -209,6 +305,13 @@ public class OrderServiceImpl implements OrderService {
                     .createdAt(savedOrder.getCreatedAt())
                     .updatedAt(savedOrder.getUpdatedAt())
                     .paymentDueAt(savedOrder.getPaymentDueAt())
+                    .subtotalAmount(savedOrder.getSubtotalAmount())
+                    .shippingFee(savedOrder.getShippingFee())
+                    .discountAmount(savedOrder.getDiscountAmount())
+                    .shippingDiscountAmount(savedOrder.getShippingDiscountAmount())
+                    .appliedSubscriptionId(savedOrder.getAppliedSubscriptionId())
+                    .appliedSubscriptionName(savedOrder.getAppliedSubscriptionName())
+                    .priorityProduction(savedOrder.getPriorityProduction())
                     .build());
         }
 
@@ -245,7 +348,10 @@ public class OrderServiceImpl implements OrderService {
                     .build();
         }
 
-        BigDecimal eligibleNet = order.getTotalAmount() != null ? order.getTotalAmount() : BigDecimal.ZERO;
+        BigDecimal baseMerch = order.getSubtotalAmount() != null ? order.getSubtotalAmount()
+                : (order.getTotalAmount() != null ? order.getTotalAmount() : BigDecimal.ZERO);
+        BigDecimal discount = order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO;
+        BigDecimal eligibleNet = baseMerch.subtract(discount).max(BigDecimal.ZERO);
         int earnedPoints = eligibleNet.compareTo(BigDecimal.ZERO) > 0
                 ? eligibleNet.divideToIntegralValue(REWARD_POINT_UNIT).intValue()
                 : 0;
@@ -372,6 +478,13 @@ public class OrderServiceImpl implements OrderService {
                 .paymentDueAt(order.getPaymentDueAt())
                 .allowedActions(eval.allowedActions())
                 .blockedActions(eval.blockedActions())
+                .subtotalAmount(order.getSubtotalAmount())
+                .shippingFee(order.getShippingFee())
+                .discountAmount(order.getDiscountAmount())
+                .shippingDiscountAmount(order.getShippingDiscountAmount())
+                .appliedSubscriptionId(order.getAppliedSubscriptionId())
+                .appliedSubscriptionName(order.getAppliedSubscriptionName())
+                .priorityProduction(order.getPriorityProduction())
                 .build();
     }
 
@@ -468,6 +581,10 @@ public class OrderServiceImpl implements OrderService {
             }
             // Hoàn lại tồn kho cho đơn hủy PENDING
             inventoryService.releaseActiveReservations(order.getId(), "Hủy đơn hàng PENDING", currentUser.getId().toString());
+            if (subscriptionBenefitService != null) {
+                subscriptionBenefitService.releaseReservedBenefits(
+                        SubscriptionBenefitService.UsageTargetType.ORDER, order.getId());
+            }
         } else {
             if ("PREPARING".equals(resolvedStatus) || "PRINTING".equals(resolvedStatus)) {
                 inventoryService.confirmReservation(order.getId());

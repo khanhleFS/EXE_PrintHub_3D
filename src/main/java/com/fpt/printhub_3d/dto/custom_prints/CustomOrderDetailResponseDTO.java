@@ -35,5 +35,12 @@ public record CustomOrderDetailResponseDTO(
         Instant createdAt,
         Instant updatedAt,
         java.util.List<String> allowedActions,
-        java.util.List<com.fpt.printhub_3d.dto.order.BlockedActionDTO> blockedActions
+        java.util.List<com.fpt.printhub_3d.dto.order.BlockedActionDTO> blockedActions,
+        BigDecimal subtotalAmount,
+        BigDecimal shippingFee,
+        BigDecimal discountAmount,
+        BigDecimal shippingDiscountAmount,
+        UUID appliedSubscriptionId,
+        String appliedSubscriptionName,
+        Boolean priorityProduction
 ) {}

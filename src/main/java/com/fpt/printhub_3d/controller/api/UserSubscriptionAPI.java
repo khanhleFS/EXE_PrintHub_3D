@@ -1,6 +1,8 @@
 package com.fpt.printhub_3d.controller.api;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
+import com.fpt.printhub_3d.dto.subscription.BenefitPreviewRequestDTO;
+import com.fpt.printhub_3d.dto.subscription.BenefitPreviewResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.CreateSubscriptionPurchaseRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.GiftSubscriptionRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.RedeemSubscriptionRequestDTO;
@@ -84,4 +86,14 @@ public interface UserSubscriptionAPI {
     )
     @GetMapping("/api/subscriptions/purchases/me")
     ResponseEntity<ApiResponse<List<SubscriptionPurchaseResponseDTO>>> getMyPurchases();
+
+    @Operation(
+            summary = "Preview subscription benefits for an order or quotation",
+            description = "Xem trước mức giảm giá, miễn phí vận chuyển còn lại và ưu tiên sản xuất từ gói hội viên hiện có.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PostMapping("/api/subscriptions/preview-benefits")
+    ResponseEntity<ApiResponse<BenefitPreviewResponseDTO>> previewBenefits(
+            @RequestBody(required = false) BenefitPreviewRequestDTO request
+    );
 }

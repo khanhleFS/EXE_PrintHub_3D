@@ -41,5 +41,10 @@ public record CheckoutOrderResponseDTO(
         List<BlockedActionDTO> blockedActions,
         boolean allCustomQuoted,
         boolean readyForConfirm,
-        String paymentLinkUrl
+        String paymentLinkUrl,
+        BigDecimal discountAmount,
+        BigDecimal shippingDiscountAmount,
+        UUID appliedSubscriptionId,
+        String appliedSubscriptionName,
+        Boolean priorityProduction
 ) {}
