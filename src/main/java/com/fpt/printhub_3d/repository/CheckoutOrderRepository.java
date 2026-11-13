@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.repository;
 
 import com.fpt.printhub_3d.entity.CheckoutOrder;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -22,4 +23,10 @@ public interface CheckoutOrderRepository extends JpaRepository<CheckoutOrder, UU
     List<CheckoutOrder> findByUserIdOrderByCreatedAtDesc(UUID userId);
 
     Optional<CheckoutOrder> findByIdempotencyKey(String idempotencyKey);
+
+    @EntityGraph(attributePaths = {"user"})
+    List<CheckoutOrder> findAllByOrderByCreatedAtDesc();
+
+    @EntityGraph(attributePaths = {"user"})
+    List<CheckoutOrder> findByOrderTypeOrderByCreatedAtDesc(String orderType);
 }

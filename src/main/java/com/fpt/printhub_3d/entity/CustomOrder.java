@@ -62,9 +62,9 @@ public class CustomOrder {
     @Column(name = "requirements", columnDefinition = "TEXT")
     private String requirements;
 
-    @Size(max = 500)
+    @Size(max = 1000)
     @Nationalized
-    @Column(name = "attachment_url", length = 500)
+    @Column(name = "attachment_url", length = 1000)
     private String attachmentUrl;
 
     @Column(name = "quoted_price", precision = 18, scale = 2)

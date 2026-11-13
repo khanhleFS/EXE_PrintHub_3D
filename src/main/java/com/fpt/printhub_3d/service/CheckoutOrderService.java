@@ -1,5 +1,6 @@
 package com.fpt.printhub_3d.service;
 
+import com.fpt.printhub_3d.dto.checkout.AdminCheckoutOrderStatusRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderConfirmRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderCreateRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderResponseDTO;
@@ -17,4 +18,10 @@ public interface CheckoutOrderService {
     List<CheckoutOrderResponseDTO> getMyCheckoutOrders(User user);
 
     CheckoutOrderResponseDTO confirmCheckoutOrder(User user, UUID id, CheckoutOrderConfirmRequestDTO request);
+
+    List<CheckoutOrderResponseDTO> getAdminCheckoutOrders(String orderType, String status, String query);
+
+    CheckoutOrderResponseDTO getAdminCheckoutOrder(UUID id);
+
+    CheckoutOrderResponseDTO updateAdminCheckoutOrderStatus(User admin, UUID id, AdminCheckoutOrderStatusRequestDTO request);
 }

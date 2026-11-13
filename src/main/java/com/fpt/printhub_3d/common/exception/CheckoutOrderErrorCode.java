@@ -16,7 +16,9 @@ public enum CheckoutOrderErrorCode implements ErrorCode {
     MARKETPLACE_PRICE_CHANGED(28006, "Giá sản phẩm bán sẵn đã thay đổi kể từ khi tạo đơn. Vui lòng xem và xác nhận lại tổng tiền", HttpStatus.CONFLICT, "checkout.marketplace_price_changed"),
     CONFIRMATION_VERSION_CONFLICT(28007, "Phiên bản xác nhận đơn hàng không khớp. Vui lòng làm mới trang để cập nhật tổng tiền mới nhất", HttpStatus.CONFLICT, "checkout.version_conflict"),
     INVALID_PAYMENT_STATE(28008, "Đơn hàng chưa ở trạng thái sẵn sàng để tạo giao dịch thanh toán", HttpStatus.BAD_REQUEST, "checkout.invalid_payment_state"),
-    CANNOT_CANCEL_CONFIRMED_ORDER(28009, "Không thể hủy đơn hàng đã bước vào giai đoạn sản xuất hoặc giao hàng", HttpStatus.BAD_REQUEST, "checkout.cannot_cancel_confirmed");
+    CANNOT_CANCEL_CONFIRMED_ORDER(28009, "Không thể hủy đơn hàng đã bước vào giai đoạn sản xuất hoặc giao hàng", HttpStatus.BAD_REQUEST, "checkout.cannot_cancel_confirmed"),
+    COD_NOT_ALLOWED_FOR_CUSTOM(28010, "Đơn in theo yêu cầu chỉ hỗ trợ thanh toán trực tuyến PayOS", HttpStatus.BAD_REQUEST, "checkout.cod_not_allowed_for_custom"),
+    CHECKOUT_PAYMENT_REQUIRED(28011, "Đơn hàng chưa hoàn tất thanh toán PayOS", HttpStatus.BAD_REQUEST, "checkout.payment_required");
 
     private final int code;
     private final String message;

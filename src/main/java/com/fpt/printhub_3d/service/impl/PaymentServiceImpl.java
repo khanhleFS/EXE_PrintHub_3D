@@ -106,6 +106,7 @@ public class PaymentServiceImpl implements PaymentService {
             }
             List<CustomOrder> customsList = customs.findByCheckoutOrderId(checkoutOrder.getId());
             boolean hasUnacceptedCustom = customsList.stream()
+                    .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
                     .anyMatch(c -> !"ACCEPTED".equals(c.getStatus()) && !"PAID".equals(c.getStatus()));
             if (hasUnacceptedCustom) {
                 throw bad("Đơn còn sản phẩm custom chưa được duyệt báo giá, không thể tạo liên kết thanh toán");
@@ -308,7 +309,9 @@ public class PaymentServiceImpl implements PaymentService {
                     // Đồng bộ hủy CheckoutOrder và các đơn con
                     if (payment.getCheckoutOrder() != null) {
                         CheckoutOrder checkoutOrder = payment.getCheckoutOrder();
-                        if ("PENDING_QUOTE".equals(checkoutOrder.getStatus()) || "CONFIRMED".equals(checkoutOrder.getStatus())) {
+                        if ("PENDING_QUOTE".equals(checkoutOrder.getStatus())
+                                || "QUOTED".equals(checkoutOrder.getStatus())
+                                || "CONFIRMED".equals(checkoutOrder.getStatus())) {
                             checkoutOrder.setStatus("CANCELLED");
                             checkoutOrder.setUpdatedAt(Instant.now());
                             checkoutOrders.save(checkoutOrder);
@@ -324,7 +327,9 @@ public class PaymentServiceImpl implements PaymentService {
                             }
                             List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());
                             for (CustomOrder c : childCustoms) {
-                                if ("REQUESTED".equals(c.getStatus()) || "ACCEPTED".equals(c.getStatus())) {
+                                if ("REQUESTED".equals(c.getStatus())
+                                        || "QUOTED".equals(c.getStatus())
+                                        || "ACCEPTED".equals(c.getStatus())) {
                                     c.setStatus("CANCELLED");
                                     c.setUpdatedAt(Instant.now());
                                     customs.save(c);
@@ -458,7 +463,9 @@ public class PaymentServiceImpl implements PaymentService {
                         checkoutOrder.getId(), checkoutOrder.getStatus(), payment.getTransactionId());
                 buyer = checkoutOrder.getUser();
             } else {
-                if ("PENDING_QUOTE".equals(checkoutOrder.getStatus()) || "CONFIRMED".equals(checkoutOrder.getStatus())) {
+                if ("PENDING_QUOTE".equals(checkoutOrder.getStatus())
+                        || "QUOTED".equals(checkoutOrder.getStatus())
+                        || "CONFIRMED".equals(checkoutOrder.getStatus())) {
                     checkoutOrder.setStatus("PAID");
                     checkoutOrder.setUpdatedAt(Instant.now());
                     checkoutOrders.save(checkoutOrder);

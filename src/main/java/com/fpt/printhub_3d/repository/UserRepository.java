@@ -1,5 +1,6 @@
 package com.fpt.printhub_3d.repository;
 
+import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.entity.Enumeration.UserStatus;
 import com.fpt.printhub_3d.entity.User;
 import jakarta.persistence.LockModeType;
@@ -30,8 +31,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByUsername(String username);
     boolean existsByUsername(String username);
     Optional<User> findByPhone(String phone);
-    boolean existsByCccdNumber(String cccdNumber);
-    Optional<User> findByCccdNumber(String cccdNumber);
+    List<User> findByRole(UserRole role);
 
     // Dùng cho Job Cleanup dọn dẹp tài khoản PENDING hết hạn
     List<User> findTop200ByStatusAndEmailVerifiedFalseAndRegistrationExpiresAtLessThanEqualOrderByRegistrationExpiresAtAsc(
