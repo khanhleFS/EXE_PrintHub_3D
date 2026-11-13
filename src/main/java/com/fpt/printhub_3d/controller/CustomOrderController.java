@@ -56,6 +56,29 @@ public class CustomOrderController implements CustomOrderAPI {
 
     @Override
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<CustomOrderDetailResponseDTO>> getCustomOrderDetail(UUID id) {
+        User currentUser = SecurityUtils.getCurrentUser();
+        CustomOrderDetailResponseDTO result = customOrderService.getCustomOrderDetail(id, currentUser);
+        return ResponseEntity.ok(ApiResponse.<CustomOrderDetailResponseDTO>builder()
+                .code(200)
+                .message("Lấy chi tiết yêu cầu in thành công")
+                .result(result)
+                .build());
+    }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<CustomOrderDetailResponseDTO>> getAdminCustomOrderDetail(UUID id) {
+        CustomOrderDetailResponseDTO result = customOrderService.getAdminCustomOrderDetail(id);
+        return ResponseEntity.ok(ApiResponse.<CustomOrderDetailResponseDTO>builder()
+                .code(200)
+                .message("Lấy chi tiết yêu cầu in thành công")
+                .result(result)
+                .build());
+    }
+
+    @Override
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<CustomOrderDetailResponseDTO>> createCustomOrder(CustomOrderCreateRequestDTO request) {
         User user = SecurityUtils.getCurrentUser();
         CustomOrderDetailResponseDTO result = customOrderService.createCustomOrder(user, request);

@@ -12,6 +12,8 @@ public interface CustomOrderService {
     CustomOrderResponseDTO createRequest(String requirements, MultipartFile file, User buyer);
     List<CustomOrderDetailResponseDTO> getMyCustomOrders(User user);
     List<CustomOrderDetailResponseDTO> getAllCustomOrders();
+    CustomOrderDetailResponseDTO getCustomOrderDetail(UUID id, User currentUser);
+    CustomOrderDetailResponseDTO getAdminCustomOrderDetail(UUID id);
     CustomOrderDetailResponseDTO createCustomOrder(User user, CustomOrderCreateRequestDTO request);
     void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User admin);
     void updateCustomOrderStatus(UUID id, CustomOrderStatusRequestDTO request, User user);

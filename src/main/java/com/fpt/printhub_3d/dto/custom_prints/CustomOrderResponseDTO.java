@@ -74,6 +74,18 @@ public record CustomOrderResponseDTO(
         String appliedSubscriptionName,
 
         @Schema(description = "Ưu tiên xử lý / in ấn")
-        Boolean priorityProduction
+        Boolean priorityProduction,
+
+        @Schema(description = "Địa chỉ giao hàng")
+        String shippingAddress,
+
+        @Schema(description = "Lý do hủy yêu cầu")
+        String cancelReason,
+
+        @Schema(description = "Vai trò người hủy (ADMIN / BUYER)")
+        String cancelledByRole,
+
+        @Schema(description = "Thời điểm hủy yêu cầu")
+        Instant cancelledAt
 ) {
 }

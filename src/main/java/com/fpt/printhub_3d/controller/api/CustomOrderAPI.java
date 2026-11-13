@@ -33,6 +33,22 @@ public interface CustomOrderAPI {
     ResponseEntity<ApiResponse<List<CustomOrderDetailResponseDTO>>> getAllCustomOrders();
 
     @Operation(
+            summary = "Get custom print request detail by ID",
+            description = "Lấy chi tiết 1 yêu cầu in tùy chỉnh theo ID (chủ sở hữu hoặc Admin).",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/api/custom-orders/{id}")
+    ResponseEntity<ApiResponse<CustomOrderDetailResponseDTO>> getCustomOrderDetail(@PathVariable UUID id);
+
+    @Operation(
+            summary = "Get custom print request detail by ID (Admin)",
+            description = "Quản trị viên xem chi tiết 1 yêu cầu in tùy chỉnh theo ID.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @GetMapping("/api/admin/custom-orders/{id}")
+    ResponseEntity<ApiResponse<CustomOrderDetailResponseDTO>> getAdminCustomOrderDetail(@PathVariable UUID id);
+
+    @Operation(
             summary = "Create custom print request",
             description = "Người dùng gửi yêu cầu in 3D kèm thông số từ tệp đã upload.",
             security = @SecurityRequirement(name = "Bearer Authentication")

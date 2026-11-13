@@ -133,4 +133,19 @@ public class CustomOrder {
 
     @Column(name = "priority_production")
     private Boolean priorityProduction = false;
+
+    @Size(max = 1000)
+    @Nationalized
+    @Column(name = "cancel_reason", length = 1000)
+    private String cancelReason;
+
+    @Size(max = 20)
+    @Column(name = "cancelled_by_role", length = 20)
+    private String cancelledByRole;
+
+    @Column(name = "cancelled_by_id")
+    private UUID cancelledById;
+
+    @Column(name = "cancelled_at")
+    private Instant cancelledAt;
 }

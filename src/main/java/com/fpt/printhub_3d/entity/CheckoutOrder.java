@@ -49,10 +49,20 @@ public class CheckoutOrder {
     @Column(name = "recipient_phone", length = 30)
     private String recipientPhone;
 
-    @Size(max = 500)
+    @Size(max = 1000)
     @Nationalized
-    @Column(name = "cancel_reason", length = 500)
+    @Column(name = "cancel_reason", length = 1000)
     private String cancelReason;
+
+    @Size(max = 20)
+    @Column(name = "cancelled_by_role", length = 20)
+    private String cancelledByRole;
+
+    @Column(name = "cancelled_by_id")
+    private UUID cancelledById;
+
+    @Column(name = "cancelled_at")
+    private Instant cancelledAt;
 
     @Size(max = 30)
     @NotNull

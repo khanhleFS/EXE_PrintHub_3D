@@ -677,6 +677,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     .appliedSubscriptionId(c.getAppliedSubscriptionId())
                     .appliedSubscriptionName(c.getAppliedSubscriptionName())
                     .priorityProduction(c.getPriorityProduction())
+                    .shippingAddress(c.getShippingAddress())
+                    .cancelReason(c.getCancelReason())
+                    .cancelledByRole(c.getCancelledByRole())
+                    .cancelledAt(c.getCancelledAt())
                     .build()).toList();
 
         List<OrderResponseDTO> orderDTOs = orders.stream().map(o -> {
@@ -772,6 +776,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .appliedSubscriptionId(order.getAppliedSubscriptionId())
                 .appliedSubscriptionName(order.getAppliedSubscriptionName())
                 .priorityProduction(order.getPriorityProduction())
+                .cancelledByRole(order.getCancelledByRole())
+                .cancelledAt(order.getCancelledAt())
                 .build();
     }
 
@@ -794,8 +800,16 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                             ? co.getUser().getFullName().toLowerCase() : "";
                     String recipientName = co.getRecipientName() != null ? co.getRecipientName().toLowerCase() : "";
                     String address = co.getShippingAddress() != null ? co.getShippingAddress().toLowerCase() : "";
-                    return idStr.contains(normalizedQ) || buyerName.contains(normalizedQ)
-                            || recipientName.contains(normalizedQ) || address.contains(normalizedQ);
+                    if (idStr.contains(normalizedQ) || buyerName.contains(normalizedQ)
+                            || recipientName.contains(normalizedQ) || address.contains(normalizedQ)) {
+                        return true;
+                    }
+                    return customOrderRepository.findByCheckoutOrderId(co.getId()).stream().anyMatch(c ->
+                            (c.getId() != null && c.getId().toString().toLowerCase().contains(normalizedQ))
+                            || (c.getCustomName() != null && c.getCustomName().toLowerCase().contains(normalizedQ))
+                            || (c.getCustomStudentId() != null && c.getCustomStudentId().toLowerCase().contains(normalizedQ))
+                            || (c.getRulerModel() != null && c.getRulerModel().toLowerCase().contains(normalizedQ))
+                    );
                 })
                 .map(co -> toDTO(co, null))
                 .toList();
@@ -958,9 +972,18 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             if (isPaid) {
                 throw new ApiException(CheckoutOrderErrorCode.CANNOT_CANCEL_CONFIRMED_ORDER);
             }
+            String reason = request.getEffectiveCancelReason();
+            if (reason == null || reason.length() < 5) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT,
+                        "Vui lòng nhập lý do hủy đơn (tối thiểu 5 ký tự).");
+            }
+            Instant cancelTime = Instant.now();
             co.setStatus("CANCELLED");
-            co.setCancelReason(request.cancelReason());
-            co.setUpdatedAt(Instant.now());
+            co.setCancelReason(reason);
+            co.setCancelledByRole("ADMIN");
+            co.setCancelledById(admin != null ? admin.getId() : null);
+            co.setCancelledAt(cancelTime);
+            co.setUpdatedAt(cancelTime);
             checkoutOrderRepository.save(co);
             if (subscriptionBenefitService != null) {
                 subscriptionBenefitService.releaseReservedBenefits(
@@ -970,14 +993,18 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             for (CustomOrder c : customs) {
                 if (!"CANCELLED".equalsIgnoreCase(c.getStatus())) {
                     c.setStatus("CANCELLED");
-                    c.setUpdatedAt(Instant.now());
+                    c.setCancelReason(reason);
+                    c.setCancelledByRole("ADMIN");
+                    c.setCancelledById(admin != null ? admin.getId() : null);
+                    c.setCancelledAt(cancelTime);
+                    c.setUpdatedAt(cancelTime);
                     customOrderRepository.save(c);
                 }
             }
             for (Order o : orders) {
                 if (!"CANCELLED".equalsIgnoreCase(o.getStatus())) {
                     o.setStatus("CANCELLED");
-                    o.setUpdatedAt(Instant.now());
+                    o.setUpdatedAt(cancelTime);
                     orderRepository.save(o);
                 }
             }
@@ -1010,13 +1037,24 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
 
         if (notificationService != null && co.getUser() != null) {
-            notificationService.sendNotification(
-                    co.getUser(),
-                    "Cập nhật tiến độ đơn hàng",
-                    "Đơn hàng #" + id.toString().substring(0, 8) + " đã chuyển sang trạng thái: " + nextStatus,
-                    "CUSTOM_ORDER",
-                    "/orders"
-            );
+            if ("CANCELLED".equals(nextStatus)) {
+                String shortId = id.toString().length() >= 8 ? id.toString().substring(0, 8) : id.toString();
+                notificationService.sendNotification(
+                        co.getUser(),
+                        "Yêu cầu báo giá đã bị hủy",
+                        "Đơn hàng #" + shortId + " đã bị xưởng hủy. Lý do: " + co.getCancelReason(),
+                        "CUSTOM_ORDER",
+                        "/orders/" + id
+                );
+            } else {
+                notificationService.sendNotification(
+                        co.getUser(),
+                        "Cập nhật tiến độ đơn hàng",
+                        "Đơn hàng #" + id.toString().substring(0, 8) + " đã chuyển sang trạng thái: " + nextStatus,
+                        "CUSTOM_ORDER",
+                        "/orders"
+                );
+            }
         }
 
         return toDTO(co, null);
@@ -1116,13 +1154,16 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private CustomOrderDetailResponseDTO toCustomDetailDTO(CustomOrder order, String parentPaymentStatus) {
         String pMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : "PAYOS";
         String pStatus = parentPaymentStatus != null ? parentPaymentStatus : "PENDING";
+        User currentUser = getCurrentUserSafely();
+        boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
+        boolean isOwner = currentUser == null || (order.getBuyer() != null && currentUser.getId().equals(order.getBuyer().getId()));
         OrderTransitionPolicy.TransitionEvaluation eval = orderTransitionPolicy.evaluateActions(
                 OrderTransitionPolicy.OrderType.CUSTOM,
                 order.getStatus(),
                 pMethod,
                 pStatus,
-                false,
-                true
+                isAdmin,
+                isOwner
         );
         return CustomOrderDetailResponseDTO.builder()
                 .id(order.getId())
@@ -1156,6 +1197,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .appliedSubscriptionId(order.getAppliedSubscriptionId())
                 .appliedSubscriptionName(order.getAppliedSubscriptionName())
                 .priorityProduction(order.getPriorityProduction())
+                .cancelReason(order.getCancelReason())
+                .cancelledByRole(order.getCancelledByRole())
+                .cancelledAt(order.getCancelledAt())
                 .build();
     }
 

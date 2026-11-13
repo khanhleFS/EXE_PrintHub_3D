@@ -46,5 +46,7 @@ public record CheckoutOrderResponseDTO(
         BigDecimal shippingDiscountAmount,
         UUID appliedSubscriptionId,
         String appliedSubscriptionName,
-        Boolean priorityProduction
+        Boolean priorityProduction,
+        String cancelledByRole,
+        Instant cancelledAt
 ) {}

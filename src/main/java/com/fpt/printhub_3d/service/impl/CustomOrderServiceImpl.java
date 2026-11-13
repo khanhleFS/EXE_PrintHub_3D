@@ -223,6 +223,10 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .status(saved.getStatus())
                 .createdAt(saved.getCreatedAt())
                 .updatedAt(saved.getUpdatedAt())
+                .shippingAddress(saved.getShippingAddress())
+                .cancelReason(saved.getCancelReason())
+                .cancelledByRole(saved.getCancelledByRole())
+                .cancelledAt(saved.getCancelledAt())
                 .build();
     }
 
@@ -285,6 +289,9 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .appliedSubscriptionId(o.getAppliedSubscriptionId())
                 .appliedSubscriptionName(o.getAppliedSubscriptionName())
                 .priorityProduction(o.getPriorityProduction())
+                .cancelReason(o.getCancelReason())
+                .cancelledByRole(o.getCancelledByRole())
+                .cancelledAt(o.getCancelledAt())
                 .build();
     }
 
@@ -304,6 +311,31 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .stream()
                 .map(this::toDTO)
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CustomOrderDetailResponseDTO getCustomOrderDetail(UUID id, User currentUser) {
+        CustomOrder order = customOrderRepository.findById(id)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND,
+                        "Không tìm thấy yêu cầu in ID: " + id));
+        boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
+        boolean isOwner = currentUser != null && order.getBuyer() != null
+                && order.getBuyer().getId().equals(currentUser.getId());
+        if (!isAdmin && !isOwner) {
+            throw new ApiException(CommonErrorCode.FORBIDDEN,
+                    "Bạn không có quyền xem yêu cầu in này");
+        }
+        return toDTO(order);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CustomOrderDetailResponseDTO getAdminCustomOrderDetail(UUID id) {
+        CustomOrder order = customOrderRepository.findById(id)
+                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND,
+                        "Không tìm thấy yêu cầu in ID: " + id));
+        return toDTO(order);
     }
 
     @Override
@@ -498,6 +530,22 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 }
             }
         } else if ("CANCELLED".equals(resolvedStatus)) {
+            boolean isAdminActor = user != null && user.getRole() == UserRole.ADMIN;
+            String reason = request.getEffectiveCancelReason();
+            if (isAdminActor) {
+                if (reason == null || reason.length() < 5) {
+                    throw new ApiException(CommonErrorCode.INVALID_INPUT,
+                            "Vui lòng nhập lý do hủy đơn (tối thiểu 5 ký tự).");
+                }
+            } else if (reason == null || reason.isBlank()) {
+                reason = "Khách hàng tự hủy yêu cầu";
+            }
+            order.setCancelReason(reason);
+            order.setCancelledByRole(isAdminActor ? "ADMIN" : "BUYER");
+            if (user != null) {
+                order.setCancelledById(user.getId());
+            }
+            order.setCancelledAt(Instant.now());
             if (order.getCheckoutOrder() == null && subscriptionBenefitService != null) {
                 subscriptionBenefitService.releaseReservedBenefits(
                         SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, order.getId());
@@ -527,11 +575,23 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             }
         }
 
-        notificationService.sendNotification(order.getBuyer(),
-                "Cập nhật tiến trình in",
-                "Yêu cầu in 3D " + id + " đã chuyển sang trạng thái: " + resolvedStatus,
-                "CUSTOM_ORDER",
-                "/quotations");
+        if (notificationService != null && order.getBuyer() != null) {
+            boolean isAdminActor = user != null && user.getRole() == UserRole.ADMIN;
+            if ("CANCELLED".equals(resolvedStatus) && isAdminActor) {
+                String shortId = id.toString().length() >= 8 ? id.toString().substring(0, 8) : id.toString();
+                notificationService.sendNotification(order.getBuyer(),
+                        "Yêu cầu báo giá đã bị hủy",
+                        "Yêu cầu báo giá #" + shortId + " đã bị xưởng hủy. Lý do: " + order.getCancelReason(),
+                        "CUSTOM_ORDER",
+                        "/quotations");
+            } else {
+                notificationService.sendNotification(order.getBuyer(),
+                        "Cập nhật tiến trình in",
+                        "Yêu cầu in 3D " + id + " đã chuyển sang trạng thái: " + resolvedStatus,
+                        "CUSTOM_ORDER",
+                        "/quotations");
+            }
+        }
     }
 
     @Override
