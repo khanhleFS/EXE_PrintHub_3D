@@ -53,6 +53,21 @@ public class AdminCheckoutOrderController implements AdminCheckoutOrderAPI {
 
     @Override
     @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<CheckoutOrderResponseDTO>> batchQuoteCheckoutOrder(
+            UUID id,
+            com.fpt.printhub_3d.dto.checkout.CheckoutOrderBatchQuoteRequestDTO request
+    ) {
+        User admin = SecurityUtils.getCurrentUser();
+        CheckoutOrderResponseDTO result = checkoutOrderService.batchQuoteCheckoutOrder(admin, id, request);
+        return ResponseEntity.ok(ApiResponse.<CheckoutOrderResponseDTO>builder()
+                .code(200)
+                .message("Đã gửi báo giá toàn đơn thành công")
+                .result(result)
+                .build());
+    }
+
+    @Override
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<CheckoutOrderResponseDTO>> updateAdminCheckoutOrderStatus(
             UUID id,
             AdminCheckoutOrderStatusRequestDTO request

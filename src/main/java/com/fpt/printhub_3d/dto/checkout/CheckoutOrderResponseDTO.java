@@ -24,6 +24,7 @@ public record CheckoutOrderResponseDTO(
         String shippingAddress,
         String shippingMode,
         String status,
+        BigDecimal itemsSubtotal,
         BigDecimal totalAmount,
         BigDecimal shippingFee,
         String paymentMethod,

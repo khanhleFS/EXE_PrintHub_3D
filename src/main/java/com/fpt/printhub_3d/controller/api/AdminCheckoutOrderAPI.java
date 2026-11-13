@@ -37,6 +37,17 @@ public interface AdminCheckoutOrderAPI {
     ResponseEntity<ApiResponse<CheckoutOrderResponseDTO>> getAdminCheckoutOrder(@PathVariable UUID id);
 
     @Operation(
+            summary = "Batch quote all custom items of a checkout order (Admin)",
+            description = "Báo giá từng đơn vị sản phẩm cho toàn bộ các đơn con custom của CheckoutOrder, tự động tính thành tiền, phí ship và tổng đơn.",
+            security = @SecurityRequirement(name = "Bearer Authentication")
+    )
+    @PutMapping("/{id}/quote")
+    ResponseEntity<ApiResponse<CheckoutOrderResponseDTO>> batchQuoteCheckoutOrder(
+            @PathVariable UUID id,
+            @jakarta.validation.Valid @RequestBody com.fpt.printhub_3d.dto.checkout.CheckoutOrderBatchQuoteRequestDTO request
+    );
+
+    @Operation(
             summary = "Update checkout order status (Admin)",
             description = "Chuyển trạng thái đơn cha (PREPARING, PRINTING, SHIPPING, COMPLETED, CANCELLED) có kiểm tra thanh toán và đồng bộ xuống các đơn con.",
             security = @SecurityRequirement(name = "Bearer Authentication")

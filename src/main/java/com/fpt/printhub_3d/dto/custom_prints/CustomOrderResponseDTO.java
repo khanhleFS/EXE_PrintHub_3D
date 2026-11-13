@@ -31,8 +31,20 @@ public record CustomOrderResponseDTO(
         @Schema(description = "Đường dẫn file thiết kế STL đã đính kèm")
         String attachmentUrl,
 
-        @Schema(description = "Báo giá từ xưởng/Admin (sẽ được cập nhật sau khi Admin báo giá)")
+        @Schema(description = "Đơn giá / 1 chiếc do xưởng báo (VND)")
+        BigDecimal unitQuotedPrice,
+
+        @Schema(description = "Thành tiền line item = đơn giá × số lượng (VND)")
         BigDecimal quotedPrice,
+
+        @Schema(description = "Ghi chú báo giá / kỹ thuật từ xưởng")
+        String quoteNote,
+
+        @Schema(description = "Thời điểm Admin báo giá gần nhất")
+        Instant quotedAt,
+
+        @Schema(description = "ID đơn cha CheckoutOrder nếu đặt qua giỏ nhiều món")
+        java.util.UUID checkoutOrderId,
 
         @Schema(description = "Trạng thái yêu cầu (ví dụ: REQUESTED)")
         String status,

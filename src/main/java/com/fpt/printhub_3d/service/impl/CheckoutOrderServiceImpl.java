@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fpt.printhub_3d.common.exception.ApiException;
 import com.fpt.printhub_3d.common.exception.CheckoutOrderErrorCode;
+import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.dto.checkout.AdminCheckoutOrderStatusRequestDTO;
+import com.fpt.printhub_3d.dto.checkout.CheckoutOrderBatchQuoteRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderConfirmRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderCreateRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderResponseDTO;
@@ -63,6 +65,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper;
     private final CloudinaryService cloudinaryService;
+    private final StoreSettingRepository storeSettingRepository;
+    private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
     @Autowired
     public CheckoutOrderServiceImpl(
@@ -80,7 +84,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             OrderTransitionPolicy orderTransitionPolicy,
             NotificationService notificationService,
             ObjectMapper objectMapper,
-            CloudinaryService cloudinaryService
+            CloudinaryService cloudinaryService,
+            StoreSettingRepository storeSettingRepository
     ) {
         this.checkoutOrderRepository = checkoutOrderRepository;
         this.cartRepository = cartRepository;
@@ -97,6 +102,44 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         this.notificationService = notificationService;
         this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
         this.cloudinaryService = cloudinaryService;
+        this.storeSettingRepository = storeSettingRepository;
+    }
+
+    public CheckoutOrderServiceImpl(
+            CheckoutOrderRepository checkoutOrderRepository,
+            CartRepository cartRepository,
+            CartItemRepository cartItemRepository,
+            ProductRepository productRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            CustomOrderRepository customOrderRepository,
+            PaymentService paymentService,
+            InventoryService inventoryService,
+            UserRepository userRepository,
+            PaymentRepository paymentRepository,
+            OrderTransitionPolicy orderTransitionPolicy,
+            NotificationService notificationService,
+            ObjectMapper objectMapper,
+            CloudinaryService cloudinaryService
+    ) {
+        this(
+                checkoutOrderRepository,
+                cartRepository,
+                cartItemRepository,
+                productRepository,
+                orderRepository,
+                orderItemRepository,
+                customOrderRepository,
+                paymentService,
+                inventoryService,
+                userRepository,
+                paymentRepository,
+                orderTransitionPolicy,
+                notificationService,
+                objectMapper,
+                cloudinaryService,
+                null
+        );
     }
 
     public CheckoutOrderServiceImpl(
@@ -126,8 +169,36 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 new OrderTransitionPolicy(),
                 null,
                 new ObjectMapper(),
+                null,
                 null
         );
+    }
+
+    private BigDecimal resolveDefaultShippingFee() {
+        if (storeSettingRepository != null) {
+            try {
+                var feeOpt = storeSettingRepository.findById("shippingFee");
+                if (feeOpt.isPresent() && feeOpt.get().getValue() != null) {
+                    BigDecimal configured = new BigDecimal(feeOpt.get().getValue().trim());
+                    if (configured.compareTo(BigDecimal.ZERO) > 0) {
+                        return configured;
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return DEFAULT_SHIPPING_FEE;
+    }
+
+    private BigDecimal resolveCustomLineTotal(CustomOrder c) {
+        if (c == null) return BigDecimal.ZERO;
+        if (c.getQuotedPrice() != null && c.getQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
+            return c.getQuotedPrice();
+        }
+        int qty = c.getQuantity() != null && c.getQuantity() > 0 ? c.getQuantity() : 1;
+        if (c.getUnitQuotedPrice() != null && c.getUnitQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
+            return c.getUnitQuotedPrice().multiply(BigDecimal.valueOf(qty));
+        }
+        return BigDecimal.ZERO;
     }
 
     @Override
@@ -210,6 +281,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .map(i -> i.getProduct().getPrice().multiply(BigDecimal.valueOf(i.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        checkoutOrder.setItemsSubtotal(marketSubtotal);
         BigDecimal finalTotal = marketSubtotal.add(checkoutOrder.getShippingFee());
         checkoutOrder.setTotalAmount(finalTotal);
 
@@ -365,7 +437,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     "Tất cả sản phẩm thiết kế trong đơn đã bị hủy");
         }
         for (CustomOrder c : activeCustomList) {
-            if (c.getQuotedPrice() == null || c.getQuotedPrice().compareTo(BigDecimal.ZERO) <= 0
+            if (resolveCustomLineTotal(c).compareTo(BigDecimal.ZERO) <= 0
                     || "REQUESTED".equalsIgnoreCase(c.getStatus())) {
                 throw new ApiException(CheckoutOrderErrorCode.CUSTOM_NOT_ALL_QUOTED);
             }
@@ -395,18 +467,23 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             throw new ApiException(CheckoutOrderErrorCode.COD_NOT_ALLOWED_FOR_CUSTOM, "Đơn in theo yêu cầu chỉ hỗ trợ thanh toán trực tuyến PayOS");
         }
 
-        // Tính tổng tiền sau báo giá (chỉ tính các đơn con chưa hủy)
+        // Tính tổng tiền sau báo giá (chỉ tính các đơn con chưa hủy; quotedPrice đã là lineTotal = unitQuotedPrice * quantity)
         BigDecimal customTotal = activeCustomList.stream()
-                .map(c -> c.getQuotedPrice().multiply(BigDecimal.valueOf(c.getQuantity() != null ? c.getQuantity() : 1)))
+                .map(this::resolveCustomLineTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal marketplaceTotal = orderList.stream()
-                .map(Order::getTotalAmount)
+                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal shippingFee = checkoutOrder.getShippingFee() != null ? checkoutOrder.getShippingFee() : BigDecimal.valueOf(30000);
-        BigDecimal finalTotal = customTotal.add(marketplaceTotal).add(shippingFee);
+        BigDecimal itemsSubtotal = customTotal.add(marketplaceTotal);
+        BigDecimal shippingFee = (checkoutOrder.getShippingFee() != null && checkoutOrder.getShippingFee().compareTo(BigDecimal.ZERO) > 0)
+                ? checkoutOrder.getShippingFee()
+                : resolveDefaultShippingFee();
+        BigDecimal finalTotal = itemsSubtotal.add(shippingFee);
 
+        checkoutOrder.setItemsSubtotal(itemsSubtotal);
+        checkoutOrder.setShippingFee(shippingFee);
         checkoutOrder.setTotalAmount(finalTotal);
         checkoutOrder.setStatus("CONFIRMED");
         if (request.paymentMethod() != null) {
@@ -478,7 +555,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .buyerName(c.getBuyer().getFullName())
                 .requirements(c.getRequirements())
                 .attachmentUrl(c.getAttachmentUrl())
+                .unitQuotedPrice(c.getUnitQuotedPrice())
                 .quotedPrice(c.getQuotedPrice())
+                .quoteNote(c.getQuoteNote())
+                .quotedAt(c.getQuotedAt())
+                .checkoutOrderId(c.getCheckoutOrder() != null ? c.getCheckoutOrder().getId() : null)
                 .status(c.getStatus())
                 .createdAt(c.getCreatedAt())
                 .updatedAt(c.getUpdatedAt())
@@ -516,9 +597,19 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
                 .toList();
         boolean allCustomQuoted = !customs.isEmpty()
-                ? (!activeCustoms.isEmpty() && activeCustoms.stream().allMatch(c -> c.getQuotedPrice() != null && c.getQuotedPrice().compareTo(BigDecimal.ZERO) > 0))
+                ? (!activeCustoms.isEmpty() && activeCustoms.stream().allMatch(c -> resolveCustomLineTotal(c).compareTo(BigDecimal.ZERO) > 0 && !"REQUESTED".equalsIgnoreCase(c.getStatus())))
                 : true;
         boolean readyForConfirm = ("PENDING_QUOTE".equals(order.getStatus()) || "QUOTED".equals(order.getStatus())) && allCustomQuoted;
+
+        BigDecimal computedCustomSubtotal = activeCustoms.stream()
+                .map(this::resolveCustomLineTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal computedMarketSubtotal = orders.stream()
+                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal resolvedItemsSubtotal = order.getItemsSubtotal() != null
+                ? order.getItemsSubtotal()
+                : computedCustomSubtotal.add(computedMarketSubtotal);
 
         User currentUser = getCurrentUserSafely();
         boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
@@ -537,6 +628,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .shippingAddress(order.getShippingAddress())
                 .shippingMode(order.getShippingMode())
                 .status(order.getStatus())
+                .itemsSubtotal(resolvedItemsSubtotal)
                 .totalAmount(order.getTotalAmount())
                 .shippingFee(order.getShippingFee())
                 .paymentMethod(paymentMethod)
@@ -588,6 +680,119 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     public CheckoutOrderResponseDTO getAdminCheckoutOrder(UUID id) {
         CheckoutOrder co = checkoutOrderRepository.findById(id)
                 .orElseThrow(() -> new ApiException(CheckoutOrderErrorCode.CHECKOUT_ORDER_NOT_FOUND));
+        return toDTO(co, null);
+    }
+
+    @Override
+    public CheckoutOrderResponseDTO batchQuoteCheckoutOrder(User admin, UUID id, CheckoutOrderBatchQuoteRequestDTO request) {
+        CheckoutOrder co = checkoutOrderRepository.findLockedById(id)
+                .orElseThrow(() -> new ApiException(CheckoutOrderErrorCode.CHECKOUT_ORDER_NOT_FOUND));
+
+        String currentParentStatus = co.getStatus() != null ? co.getStatus().toUpperCase() : "";
+        if (!Set.of("PENDING_QUOTE", "QUOTED").contains(currentParentStatus)) {
+            throw new ApiException(
+                    CheckoutOrderErrorCode.INVALID_ORDER_TRANSITION,
+                    "Không thể báo giá hoặc chỉnh sửa báo giá khi đơn hàng đang ở trạng thái " + co.getStatus()
+            );
+        }
+
+        if (request == null || request.items() == null || request.items().isEmpty()) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Danh sách báo giá từng sản phẩm không được để trống");
+        }
+
+        List<CustomOrder> allCustoms = customOrderRepository.findByCheckoutOrderId(id);
+        List<CustomOrder> activeCustoms = allCustoms.stream()
+                .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
+                .toList();
+        if (activeCustoms.isEmpty()) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn hàng không có sản phẩm in custom nào đang hoạt động để báo giá");
+        }
+
+        Map<UUID, CustomOrder> activeMap = activeCustoms.stream()
+                .collect(Collectors.toMap(CustomOrder::getId, c -> c));
+
+        // Kiểm tra toàn bộ payload trước khi thay đổi DB để đảm bảo tính nguyên tử (atomic)
+        Set<UUID> seenIds = new HashSet<>();
+        for (CheckoutOrderBatchQuoteRequestDTO.ItemQuote itemQuote : request.items()) {
+            if (itemQuote == null || itemQuote.customOrderId() == null) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "ID đơn in custom không hợp lệ");
+            }
+            if (!seenIds.add(itemQuote.customOrderId())) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Bị trùng lặp sản phẩm trong yêu cầu báo giá: " + itemQuote.customOrderId());
+            }
+            CustomOrder target = activeMap.get(itemQuote.customOrderId());
+            if (target == null) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Sản phẩm " + itemQuote.customOrderId() + " không thuộc đơn cha hoặc đã bị hủy");
+            }
+            if (itemQuote.unitPrice() == null || itemQuote.unitPrice().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn giá sản phẩm phải lớn hơn 0 VND");
+            }
+            String childStatus = target.getStatus() != null ? target.getStatus().toUpperCase() : "";
+            if (!Set.of("REQUESTED", "QUOTED").contains(childStatus)) {
+                throw new ApiException(
+                        CheckoutOrderErrorCode.INVALID_ORDER_TRANSITION,
+                        "Sản phẩm " + itemQuote.customOrderId() + " đang ở trạng thái " + target.getStatus() + ", không thể báo giá lại"
+                );
+            }
+        }
+
+        if (seenIds.size() != activeMap.size() || !seenIds.containsAll(activeMap.keySet())) {
+            throw new ApiException(
+                    CommonErrorCode.INVALID_INPUT,
+                    "Vui lòng nhập đầy đủ đơn giá cho toàn bộ " + activeMap.size() + " sản phẩm in custom đang hoạt động trong đơn"
+            );
+        }
+
+        Instant now = Instant.now();
+        BigDecimal customSubtotal = BigDecimal.ZERO;
+        for (CheckoutOrderBatchQuoteRequestDTO.ItemQuote itemQuote : request.items()) {
+            CustomOrder target = activeMap.get(itemQuote.customOrderId());
+            int qty = target.getQuantity() != null && target.getQuantity() > 0 ? target.getQuantity() : 1;
+            BigDecimal unitPrice = itemQuote.unitPrice();
+            BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(qty));
+            String normalizedNote = itemQuote.note() != null && !itemQuote.note().isBlank() ? itemQuote.note().trim() : null;
+
+            target.setUnitQuotedPrice(unitPrice);
+            target.setQuotedPrice(lineTotal);
+            target.setQuoteNote(normalizedNote);
+            target.setQuotedAt(now);
+            target.setProcessedBy(admin);
+            target.setStatus("QUOTED");
+            target.setUpdatedAt(now);
+            customOrderRepository.save(target);
+
+            customSubtotal = customSubtotal.add(lineTotal);
+        }
+
+        List<Order> marketOrders = orderRepository.findByCheckoutOrderId(id);
+        BigDecimal marketSubtotal = marketOrders.stream()
+                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal itemsSubtotal = customSubtotal.add(marketSubtotal);
+        BigDecimal shippingFee = (co.getShippingFee() != null && co.getShippingFee().compareTo(BigDecimal.ZERO) > 0)
+                ? co.getShippingFee()
+                : resolveDefaultShippingFee();
+        BigDecimal totalAmount = itemsSubtotal.add(shippingFee);
+
+        co.setItemsSubtotal(itemsSubtotal);
+        co.setShippingFee(shippingFee);
+        co.setTotalAmount(totalAmount);
+        co.setStatus("QUOTED");
+        co.setSummaryVersion((co.getSummaryVersion() != null ? co.getSummaryVersion() : 1L) + 1L);
+        co.setUpdatedAt(now);
+        checkoutOrderRepository.save(co);
+
+        if (notificationService != null && co.getUser() != null) {
+            notificationService.sendNotification(
+                    co.getUser(),
+                    "Đơn in 3D #" + id.toString().substring(0, 8) + " đã có báo giá",
+                    "Xưởng đã báo giá chi tiết cho " + activeCustoms.size() + " sản phẩm in 3D. Tổng tạm tính: " + totalAmount + " VND (đã gồm phí ship).",
+                    "CUSTOM_ORDER",
+                    "/orders/" + id
+            );
+        }
+
         return toDTO(co, null);
     }
 
@@ -802,7 +1007,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .quantity(order.getQuantity() != null ? order.getQuantity() : 1)
                 .shippingAddress(order.getShippingAddress())
                 .attachmentUrl(order.getAttachmentUrl())
+                .unitQuotedPrice(order.getUnitQuotedPrice())
                 .quotedPrice(order.getQuotedPrice())
+                .quoteNote(order.getQuoteNote())
+                .quotedAt(order.getQuotedAt())
+                .checkoutOrderId(order.getCheckoutOrder() != null ? order.getCheckoutOrder().getId() : null)
                 .status(order.getStatus())
                 .paymentMethod(pMethod)
                 .paymentStatus(pStatus)

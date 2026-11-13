@@ -67,8 +67,19 @@ public class CustomOrder {
     @Column(name = "attachment_url", length = 1000)
     private String attachmentUrl;
 
+    @Column(name = "unit_quoted_price", precision = 18, scale = 2)
+    private BigDecimal unitQuotedPrice;
+
     @Column(name = "quoted_price", precision = 18, scale = 2)
     private BigDecimal quotedPrice;
+
+    @Size(max = 500)
+    @Nationalized
+    @Column(name = "quote_note", length = 500)
+    private String quoteNote;
+
+    @Column(name = "quoted_at")
+    private java.time.Instant quotedAt;
 
     @Size(max = 20)
     @NotNull

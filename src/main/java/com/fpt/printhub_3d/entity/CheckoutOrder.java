@@ -60,6 +60,9 @@ public class CheckoutOrder {
     @Column(name = "status", nullable = false, length = 30)
     private String status = "PENDING_QUOTE"; // PENDING_QUOTE, QUOTED, CONFIRMED, PAID, PREPARING, PRINTING, SHIPPING, COMPLETED, CANCELLED
 
+    @Column(name = "items_subtotal", precision = 18, scale = 2)
+    private BigDecimal itemsSubtotal;
+
     @Column(name = "total_amount", precision = 18, scale = 2)
     private BigDecimal totalAmount;
 

@@ -1,19 +1,25 @@
 package com.fpt.printhub_3d.service.impl;
 
 import com.fpt.printhub_3d.common.exception.ApiException;
+import com.fpt.printhub_3d.common.exception.CheckoutOrderErrorCode;
 import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.exception.CustomPrintErrorCode;
 import com.fpt.printhub_3d.common.exception.VaultErrorCode;
 import com.fpt.printhub_3d.dto.custom_prints.*;
+import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Enumeration.CustomOrderStatus;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.entity.FileAsset;
+import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.Payment;
 import com.fpt.printhub_3d.entity.User;
+import com.fpt.printhub_3d.repository.CheckoutOrderRepository;
 import com.fpt.printhub_3d.repository.CustomOrderRepository;
 import com.fpt.printhub_3d.repository.FileAssetRepository;
+import com.fpt.printhub_3d.repository.OrderRepository;
 import com.fpt.printhub_3d.repository.PaymentRepository;
+import com.fpt.printhub_3d.repository.StoreSettingRepository;
 import com.fpt.printhub_3d.repository.UserRepository;
 import com.fpt.printhub_3d.service.CloudinaryService;
 import com.fpt.printhub_3d.service.CustomOrderService;
@@ -24,24 +30,23 @@ import com.fpt.printhub_3d.entity.PointWallet;
 import com.fpt.printhub_3d.repository.PointTransactionRepository;
 import com.fpt.printhub_3d.repository.PointWalletRepository;
 import java.time.LocalDateTime;
-import com.fpt.printhub_3d.service.FileStorageService;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 @Transactional
 public class CustomOrderServiceImpl implements CustomOrderService {
 
@@ -54,7 +59,94 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy;
     private final PointWalletRepository pointWalletRepository;
     private final PointTransactionRepository pointTransactionRepository;
+    private final CheckoutOrderRepository checkoutOrderRepository;
+    private final OrderRepository orderRepository;
+    private final StoreSettingRepository storeSettingRepository;
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
+    private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
+
+    @Autowired
+    public CustomOrderServiceImpl(
+            CustomOrderRepository customOrderRepository,
+            FileAssetRepository fileAssetRepository,
+            PaymentRepository paymentRepository,
+            UserRepository userRepository,
+            NotificationService notificationService,
+            CloudinaryService cloudinaryService,
+            com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository,
+            CheckoutOrderRepository checkoutOrderRepository,
+            OrderRepository orderRepository,
+            StoreSettingRepository storeSettingRepository
+    ) {
+        this.customOrderRepository = customOrderRepository;
+        this.fileAssetRepository = fileAssetRepository;
+        this.paymentRepository = paymentRepository;
+        this.userRepository = userRepository;
+        this.notificationService = notificationService;
+        this.cloudinaryService = cloudinaryService;
+        this.orderTransitionPolicy = orderTransitionPolicy;
+        this.pointWalletRepository = pointWalletRepository;
+        this.pointTransactionRepository = pointTransactionRepository;
+        this.checkoutOrderRepository = checkoutOrderRepository;
+        this.orderRepository = orderRepository;
+        this.storeSettingRepository = storeSettingRepository;
+    }
+
+    public CustomOrderServiceImpl(
+            CustomOrderRepository customOrderRepository,
+            FileAssetRepository fileAssetRepository,
+            PaymentRepository paymentRepository,
+            UserRepository userRepository,
+            NotificationService notificationService,
+            CloudinaryService cloudinaryService,
+            com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository
+    ) {
+        this(
+                customOrderRepository,
+                fileAssetRepository,
+                paymentRepository,
+                userRepository,
+                notificationService,
+                cloudinaryService,
+                orderTransitionPolicy,
+                pointWalletRepository,
+                pointTransactionRepository,
+                null,
+                null,
+                null
+        );
+    }
+
+    private BigDecimal resolveLineTotal(CustomOrder order) {
+        if (order == null) return BigDecimal.ZERO;
+        if (order.getQuotedPrice() != null && order.getQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
+            return order.getQuotedPrice();
+        }
+        int qty = order.getQuantity() != null && order.getQuantity() > 0 ? order.getQuantity() : 1;
+        if (order.getUnitQuotedPrice() != null && order.getUnitQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
+            return order.getUnitQuotedPrice().multiply(BigDecimal.valueOf(qty));
+        }
+        return BigDecimal.ZERO;
+    }
+
+    private BigDecimal resolveDefaultShippingFee() {
+        if (storeSettingRepository != null) {
+            try {
+                var feeOpt = storeSettingRepository.findById("shippingFee");
+                if (feeOpt.isPresent() && feeOpt.get().getValue() != null) {
+                    BigDecimal configured = new BigDecimal(feeOpt.get().getValue().trim());
+                    if (configured.compareTo(BigDecimal.ZERO) > 0) {
+                        return configured;
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        return DEFAULT_SHIPPING_FEE;
+    }
 
     private User getCurrentUserSafely() {
         try {
@@ -134,7 +226,11 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .quantity(o.getQuantity() != null ? o.getQuantity() : 1)
                 .shippingAddress(o.getShippingAddress())
                 .attachmentUrl(o.getAttachmentUrl())
+                .unitQuotedPrice(o.getUnitQuotedPrice())
                 .quotedPrice(o.getQuotedPrice())
+                .quoteNote(o.getQuoteNote())
+                .quotedAt(o.getQuotedAt())
+                .checkoutOrderId(o.getCheckoutOrder() != null ? o.getCheckoutOrder().getId() : null)
                 .status(o.getStatus())
                 .rulerModel(o.getRulerModel())
                 .customName(o.getCustomName())
@@ -215,17 +311,91 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             throw new ApiException(CommonErrorCode.INVALID_INPUT, "Không thể sửa báo giá của yêu cầu đã được chấp nhận");
         }
 
-        order.setQuotedPrice(request.price());
+        BigDecimal unitPrice = request != null ? request.getEffectiveUnitPrice() : null;
+        if (unitPrice == null || unitPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn giá sản phẩm phải lớn hơn 0 VND");
+        }
+
+        CheckoutOrder parent = null;
+        if (order.getCheckoutOrder() != null && checkoutOrderRepository != null) {
+            parent = checkoutOrderRepository.findLockedById(order.getCheckoutOrder().getId())
+                    .orElse(order.getCheckoutOrder());
+            if (!Set.of("PENDING_QUOTE", "QUOTED").contains(parent.getStatus())) {
+                throw new ApiException(
+                        CheckoutOrderErrorCode.INVALID_ORDER_TRANSITION,
+                        "Không thể báo giá lại khi đơn cha đã chuyển sang trạng thái " + parent.getStatus()
+                );
+            }
+        }
+
+        int qty = order.getQuantity() != null && order.getQuantity() > 0 ? order.getQuantity() : 1;
+        BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(qty));
+        String normalizedNote = request.note() != null && !request.note().isBlank() ? request.note().trim() : null;
+        Instant now = Instant.now();
+
+        order.setUnitQuotedPrice(unitPrice);
+        order.setQuotedPrice(lineTotal);
+        order.setQuoteNote(normalizedNote);
+        order.setQuotedAt(now);
         order.setProcessedBy(admin);
         order.setStatus("QUOTED");
-        order.setUpdatedAt(Instant.now());
+        order.setUpdatedAt(now);
         customOrderRepository.save(order);
 
-        notificationService.sendNotification(order.getBuyer(),
-                "Đã có báo giá yêu cầu in",
-                "Yêu cầu in 3D " + id + " đã được báo giá: " + request.price() + " VND.",
-                "CUSTOM_ORDER",
-                "/quotations");
+        if (parent != null) {
+            List<CustomOrder> siblings = new ArrayList<>(customOrderRepository.findByCheckoutOrderId(parent.getId()));
+            if (siblings.stream().noneMatch(c -> id.equals(c.getId()))) {
+                siblings.add(order);
+            }
+            List<CustomOrder> activeSiblings = siblings.stream()
+                    .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
+                    .toList();
+
+            BigDecimal customSubtotal = activeSiblings.stream()
+                    .map(c -> id.equals(c.getId()) ? lineTotal : resolveLineTotal(c))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal marketSubtotal = orderRepository != null
+                    ? orderRepository.findByCheckoutOrderId(parent.getId()).stream()
+                            .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    : BigDecimal.ZERO;
+
+            BigDecimal itemsSubtotal = customSubtotal.add(marketSubtotal);
+            boolean allQuoted = !activeSiblings.isEmpty() && activeSiblings.stream()
+                    .allMatch(c -> {
+                        BigDecimal lTotal = id.equals(c.getId()) ? lineTotal : resolveLineTotal(c);
+                        String st = id.equals(c.getId()) ? "QUOTED" : c.getStatus();
+                        return lTotal.compareTo(BigDecimal.ZERO) > 0 && !"REQUESTED".equalsIgnoreCase(st);
+                    });
+
+            parent.setItemsSubtotal(itemsSubtotal);
+            if (allQuoted) {
+                BigDecimal shippingFee = (parent.getShippingFee() != null && parent.getShippingFee().compareTo(BigDecimal.ZERO) > 0)
+                        ? parent.getShippingFee()
+                        : resolveDefaultShippingFee();
+                parent.setShippingFee(shippingFee);
+                parent.setTotalAmount(itemsSubtotal.add(shippingFee));
+                if ("PENDING_QUOTE".equalsIgnoreCase(parent.getStatus())) {
+                    parent.setStatus("QUOTED");
+                }
+            } else {
+                BigDecimal currentShip = parent.getShippingFee() != null ? parent.getShippingFee() : BigDecimal.ZERO;
+                parent.setTotalAmount(itemsSubtotal.add(currentShip));
+            }
+            parent.setSummaryVersion((parent.getSummaryVersion() != null ? parent.getSummaryVersion() : 1L) + 1L);
+            parent.setUpdatedAt(now);
+            checkoutOrderRepository.save(parent);
+        }
+
+        if (notificationService != null && order.getBuyer() != null) {
+            String targetLink = parent != null ? "/orders/" + parent.getId() : "/quotations";
+            notificationService.sendNotification(order.getBuyer(),
+                    "Đã có báo giá yêu cầu in",
+                    "Yêu cầu in 3D " + id + " đã được báo giá: " + unitPrice + " VND/chiếc (SL " + qty + ", thành tiền " + lineTotal + " VND).",
+                    "CUSTOM_ORDER",
+                    targetLink);
+        }
     }
 
     @Override
@@ -261,9 +431,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         } else if ("COMPLETED".equals(resolvedStatus) && "COD".equalsIgnoreCase(paymentMethod)) {
             Payment codPay = p != null ? p : new Payment();
             codPay.setCustomOrder(order);
-            BigDecimal total = order.getQuotedPrice() != null
-                    ? order.getQuotedPrice().multiply(BigDecimal.valueOf(order.getQuantity() != null ? order.getQuantity() : 1))
-                    : BigDecimal.ZERO;
+            BigDecimal total = resolveLineTotal(order);
             codPay.setAmount(total);
             codPay.setGateway("COD");
             codPay.setStatus("SUCCESS");
@@ -322,9 +490,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                     .build();
         }
 
-        BigDecimal eligibleNet = order.getQuotedPrice() != null
-                ? order.getQuotedPrice().multiply(BigDecimal.valueOf(order.getQuantity() != null ? order.getQuantity() : 1))
-                : BigDecimal.ZERO;
+        BigDecimal eligibleNet = resolveLineTotal(order);
         int earnedPoints = eligibleNet.compareTo(BigDecimal.ZERO) > 0
                 ? eligibleNet.divideToIntegralValue(REWARD_POINT_UNIT).intValue()
                 : 0;

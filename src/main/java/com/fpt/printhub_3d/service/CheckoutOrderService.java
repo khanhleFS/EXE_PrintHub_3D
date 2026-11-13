@@ -23,5 +23,7 @@ public interface CheckoutOrderService {
 
     CheckoutOrderResponseDTO getAdminCheckoutOrder(UUID id);
 
+    CheckoutOrderResponseDTO batchQuoteCheckoutOrder(User admin, UUID id, com.fpt.printhub_3d.dto.checkout.CheckoutOrderBatchQuoteRequestDTO request);
+
     CheckoutOrderResponseDTO updateAdminCheckoutOrderStatus(User admin, UUID id, AdminCheckoutOrderStatusRequestDTO request);
 }

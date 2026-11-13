@@ -92,7 +92,12 @@ public class PaymentServiceImpl implements PaymentService {
             if (!"ACCEPTED".equals(custom.getStatus())) {
                 throw bad("Hãy chấp nhận báo giá trước khi thanh toán");
             }
-            total = custom.getQuotedPrice();
+            BigDecimal lineTotal = custom.getQuotedPrice();
+            if ((lineTotal == null || lineTotal.compareTo(BigDecimal.ZERO) <= 0) && custom.getUnitQuotedPrice() != null) {
+                int qty = custom.getQuantity() != null && custom.getQuantity() > 0 ? custom.getQuantity() : 1;
+                lineTotal = custom.getUnitQuotedPrice().multiply(BigDecimal.valueOf(qty));
+            }
+            total = lineTotal;
             payment = payments.findByCustomOrderId(custom.getId()).orElseGet(Payment::new);
 
         } else if ("CHECKOUT_ORDER".equals(request.orderType())) {
