@@ -10,17 +10,21 @@ import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
 import com.fpt.printhub_3d.dto.payment.PaymentEvidenceResponseDTO;
 import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.CustomOrder;
+import com.fpt.printhub_3d.entity.CustomOrderReview;
 import com.fpt.printhub_3d.entity.Enumeration.CustomOrderStatus;
 import com.fpt.printhub_3d.entity.Enumeration.OrderRewardStatus;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.entity.FileAsset;
 import com.fpt.printhub_3d.entity.Order;
+import com.fpt.printhub_3d.entity.OrderRewardRecord;
 import com.fpt.printhub_3d.entity.Payment;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.repository.CheckoutOrderRepository;
 import com.fpt.printhub_3d.repository.CustomOrderRepository;
+import com.fpt.printhub_3d.repository.CustomOrderReviewRepository;
 import com.fpt.printhub_3d.repository.FileAssetRepository;
 import com.fpt.printhub_3d.repository.OrderRepository;
+import com.fpt.printhub_3d.repository.OrderRewardRecordRepository;
 import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.repository.StoreSettingRepository;
 import com.fpt.printhub_3d.repository.UserRepository;
@@ -45,12 +49,15 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -72,8 +79,17 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final SubscriptionBenefitService subscriptionBenefitService;
     private final OrderEmailEvents emailEvents;
 
-    @Autowired
+    @Autowired(required = false)
     private OrderRewardService orderRewardService;
+
+    @Autowired(required = false)
+    private CustomOrderReviewRepository customOrderReviewRepository;
+
+    @Autowired(required = false)
+    private OrderRewardRecordRepository orderRewardRecordRepository;
+
+    @Autowired(required = false)
+    private Clock clock;
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
@@ -108,6 +124,39 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         this.storeSettingRepository = storeSettingRepository;
         this.subscriptionBenefitService = subscriptionBenefitService;
         this.emailEvents = emailEvents;
+    }
+
+    public CustomOrderServiceImpl(
+            CustomOrderRepository customOrderRepository,
+            FileAssetRepository fileAssetRepository,
+            PaymentRepository paymentRepository,
+            UserRepository userRepository,
+            NotificationService notificationService,
+            CloudinaryService cloudinaryService,
+            com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository,
+            CheckoutOrderRepository checkoutOrderRepository,
+            OrderRepository orderRepository,
+            StoreSettingRepository storeSettingRepository,
+            SubscriptionBenefitService subscriptionBenefitService
+    ) {
+        this(
+                customOrderRepository,
+                fileAssetRepository,
+                paymentRepository,
+                userRepository,
+                notificationService,
+                cloudinaryService,
+                orderTransitionPolicy,
+                pointWalletRepository,
+                pointTransactionRepository,
+                checkoutOrderRepository,
+                orderRepository,
+                storeSettingRepository,
+                subscriptionBenefitService,
+                null
+        );
     }
 
     public CustomOrderServiceImpl(
@@ -236,6 +285,24 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     }
 
     private CustomOrderDetailResponseDTO toDTO(CustomOrder o) {
+        CustomOrderReview customReview = customOrderReviewRepository != null
+                ? customOrderReviewRepository.findByCustomOrderId(o.getId()).orElse(null)
+                : null;
+        OrderRewardRecord rewardRecord = null;
+        if (orderRewardRecordRepository != null) {
+            String srcType = o.getCheckoutOrder() != null ? "CHECKOUT_ORDER" : "CUSTOM_ORDER";
+            UUID srcId = o.getCheckoutOrder() != null ? o.getCheckoutOrder().getId() : o.getId();
+            rewardRecord = orderRewardRecordRepository.findBySourceTypeAndSourceIdAndRewardType(
+                    srcType, srcId, OrderRewardRecord.REWARD_TYPE_COMPLETION).orElse(null);
+        }
+        return toDTO(o, customReview, rewardRecord);
+    }
+
+    private CustomOrderDetailResponseDTO toDTO(
+            CustomOrder o,
+            CustomOrderReview customReview,
+            OrderRewardRecord rewardRecord
+    ) {
         Payment p = findOrderPayment(o);
 
         String pMethod = o.getPaymentMethod() != null ? o.getPaymentMethod() : (p != null ? p.getGateway() : "PAYOS");
@@ -256,6 +323,24 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 pStatus,
                 isAdmin,
                 isOwner
+        );
+
+        Instant now = (clock != null ? clock : Clock.systemUTC()).instant();
+        OrderDisplayMetadata.CustomReviewMeta reviewMeta =
+                OrderDisplayMetadata.computeCustomReviewMeta(o, customReview, isOwner, now);
+
+        PricingBreakdownDTO pricing = standalonePricing(o);
+        BigDecimal eligibleNet = (pricing != null && pricing.itemsSubtotal() != null && pricing.itemDiscountAmount() != null)
+                ? pricing.itemsSubtotal().subtract(pricing.itemDiscountAmount()).max(BigDecimal.ZERO)
+                : OrderDisplayMetadata.resolveCustomLineNetGoods(o);
+        OrderDisplayMetadata.RewardSnapshot rewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                o.getStatus(),
+                zeroAmountSettledAt != null,
+                eligibleNet,
+                rewardRecord,
+                o.getRewardProcessed(),
+                o.getRewardPointsEarned(),
+                orderRewardService
         );
 
         return CustomOrderDetailResponseDTO.builder()
@@ -296,8 +381,13 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .cancelledByRole(o.getCancelledByRole())
                 .cancelledAt(o.getCancelledAt())
                 .quoteVersion(o.getCheckoutOrder() == null ? o.getQuoteVersion() : null)
-                .pricingBreakdown(standalonePricing(o))
+                .pricingBreakdown(pricing)
                 .paymentEvidence(PaymentEvidenceResponseDTO.from(p, zeroAmountSettledAt))
+                .canReview(reviewMeta.canReview())
+                .canEditReview(reviewMeta.canEditReview())
+                .review(reviewMeta.review())
+                .estimatedRewardPoints(rewardSnap.estimatedRewardPoints())
+                .rewardStatus(rewardSnap.rewardStatus())
                 .build();
     }
 
@@ -323,22 +413,52 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 order.getZeroAmountSettledAt() != null);
     }
 
+    private List<CustomOrderDetailResponseDTO> toDTOList(List<CustomOrder> orders) {
+        if (orders.isEmpty()) return List.of();
+        List<UUID> customIds = orders.stream().map(CustomOrder::getId).toList();
+        Map<UUID, CustomOrderReview> reviewMap = customOrderReviewRepository != null
+                ? customOrderReviewRepository.findByCustomOrderIdIn(customIds).stream()
+                        .collect(Collectors.toMap(r -> r.getCustomOrder().getId(), r -> r, (r1, r2) -> r1))
+                : Map.of();
+
+        Map<UUID, OrderRewardRecord> standaloneRewards = new HashMap<>();
+        Map<UUID, OrderRewardRecord> parentRewards = new HashMap<>();
+        if (orderRewardRecordRepository != null) {
+            List<UUID> standaloneIds = orders.stream()
+                    .filter(c -> c.getCheckoutOrder() == null).map(CustomOrder::getId).toList();
+            if (!standaloneIds.isEmpty()) {
+                orderRewardRecordRepository.findBySourceTypeAndSourceIdInAndRewardType(
+                        "CUSTOM_ORDER", standaloneIds, OrderRewardRecord.REWARD_TYPE_COMPLETION)
+                        .forEach(r -> standaloneRewards.put(r.getSourceId(), r));
+            }
+            List<UUID> checkoutIds = orders.stream()
+                    .filter(c -> c.getCheckoutOrder() != null)
+                    .map(c -> c.getCheckoutOrder().getId()).distinct().toList();
+            if (!checkoutIds.isEmpty()) {
+                orderRewardRecordRepository.findBySourceTypeAndSourceIdInAndRewardType(
+                        "CHECKOUT_ORDER", checkoutIds, OrderRewardRecord.REWARD_TYPE_COMPLETION)
+                        .forEach(r -> parentRewards.put(r.getSourceId(), r));
+            }
+        }
+
+        return orders.stream().map(o -> {
+            OrderRewardRecord rec = o.getCheckoutOrder() != null
+                    ? parentRewards.get(o.getCheckoutOrder().getId())
+                    : standaloneRewards.get(o.getId());
+            return toDTO(o, reviewMap.get(o.getId()), rec);
+        }).toList();
+    }
+
     @Override
     @Transactional(readOnly = true)
     public List<CustomOrderDetailResponseDTO> getMyCustomOrders(User user) {
-        return customOrderRepository.findByBuyerIdOrderByCreatedAtDesc(user.getId())
-                .stream()
-                .map(this::toDTO)
-                .toList();
+        return toDTOList(customOrderRepository.findByBuyerIdOrderByCreatedAtDesc(user.getId()));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<CustomOrderDetailResponseDTO> getAllCustomOrders() {
-        return customOrderRepository.findAllByOrderByCreatedAtDesc()
-                .stream()
-                .map(this::toDTO)
-                .toList();
+        return toDTOList(customOrderRepository.findAllByOrderByCreatedAtDesc());
     }
 
     @Override
@@ -592,10 +712,14 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         customOrderRepository.save(order);
 
         if ("COMPLETED".equals(resolvedStatus)) {
-            try {
-                completeRewards(id);
-            } catch (Exception e) {
-                log.warn("Lỗi khi tự động thưởng điểm cho custom order {}: {}", id, e.getMessage());
+            if (orderRewardService != null) {
+                orderRewardService.processCompletionReward(PaymentEvidenceService.SourceType.CUSTOM_ORDER, id);
+            } else {
+                try {
+                    completeRewards(id);
+                } catch (Exception e) {
+                    log.warn("Lỗi khi tự động thưởng điểm cho custom order {}: {}", id, e.getMessage());
+                }
             }
         }
 
@@ -680,6 +804,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     public RewardCompletionResponseDTO completeRewards(UUID customOrderId) {
         if (orderRewardService != null) {
             var checkoutId = customOrderRepository.findCheckoutId(customOrderId);
+            PaymentEvidenceService.SourceType targetType = PaymentEvidenceService.SourceType.CUSTOM_ORDER;
+            UUID targetId = customOrderId;
             if (checkoutId.isPresent()) {
                 CustomOrder child = customOrderRepository.findById(customOrderId)
                         .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND,
@@ -687,14 +813,15 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 if (!"COMPLETED".equals(child.getStatus())) {
                     throw new ApiException(CommonErrorCode.BAD_REQUEST, "Yêu cầu in chưa ở trạng thái COMPLETED");
                 }
-                var reward = orderRewardService.processCompletionReward(PaymentEvidenceService.SourceType.CHECKOUT_ORDER,
-                        checkoutId.get());
-                if (reward.status() == OrderRewardStatus.PENDING_PAYMENT_EVIDENCE) {
-                    throw new ApiException(CommonErrorCode.BAD_REQUEST,
-                            "Yêu cầu in chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
-                }
-                return reward.toLegacyResponse().withOrderId(customOrderId);
+                targetType = PaymentEvidenceService.SourceType.CHECKOUT_ORDER;
+                targetId = checkoutId.get();
             }
+            var reward = orderRewardService.processCompletionReward(targetType, targetId);
+            if (reward.status() == OrderRewardStatus.PENDING_PAYMENT_EVIDENCE) {
+                throw new ApiException(CommonErrorCode.BAD_REQUEST,
+                        "Yêu cầu in chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
+            }
+            return reward.toLegacyResponse().withOrderId(customOrderId);
         }
         CustomOrder order = customOrderRepository.findLockedById(customOrderId)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in ID: " + customOrderId));

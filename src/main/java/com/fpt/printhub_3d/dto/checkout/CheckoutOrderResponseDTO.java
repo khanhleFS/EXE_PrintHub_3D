@@ -52,5 +52,7 @@ public record CheckoutOrderResponseDTO(
         String cancelledByRole,
         Instant cancelledAt,
         PricingBreakdownDTO pricingBreakdown,
-        PaymentEvidenceResponseDTO paymentEvidence
+        PaymentEvidenceResponseDTO paymentEvidence,
+        Integer estimatedRewardPoints,
+        String rewardStatus
 ) {}

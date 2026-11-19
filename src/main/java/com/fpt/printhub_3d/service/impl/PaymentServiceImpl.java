@@ -18,6 +18,8 @@ import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.repository.SubscriptionPurchaseRepository;
 import com.fpt.printhub_3d.service.InventoryService;
 import com.fpt.printhub_3d.service.NotificationService;
+import com.fpt.printhub_3d.service.OrderRewardService;
+import com.fpt.printhub_3d.service.PaymentEvidenceService;
 import com.fpt.printhub_3d.service.PaymentService;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import com.fpt.printhub_3d.service.UserSubscriptionService;
@@ -71,6 +73,9 @@ public class PaymentServiceImpl implements PaymentService {
     private final SubscriptionBenefitService subscriptionBenefitService;
     private final OrderEmailEvents emailEvents;
 
+    @Autowired(required = false)
+    private OrderRewardService orderRewardService;
+
     @Autowired
     public PaymentServiceImpl(
             OrderRepository orders,
@@ -96,6 +101,33 @@ public class PaymentServiceImpl implements PaymentService {
         this.inventoryService = inventoryService;
         this.subscriptionBenefitService = subscriptionBenefitService;
         this.emailEvents = emailEvents;
+    }
+
+    public PaymentServiceImpl(
+            OrderRepository orders,
+            CustomOrderRepository customs,
+            CheckoutOrderRepository checkoutOrders,
+            PaymentRepository payments,
+            SubscriptionPurchaseRepository subscriptionPurchases,
+            UserSubscriptionService userSubscriptionService,
+            PayOS payOS,
+            NotificationService notifications,
+            InventoryService inventoryService,
+            SubscriptionBenefitService subscriptionBenefitService
+    ) {
+        this(
+                orders,
+                customs,
+                checkoutOrders,
+                payments,
+                subscriptionPurchases,
+                userSubscriptionService,
+                payOS,
+                notifications,
+                inventoryService,
+                subscriptionBenefitService,
+                null
+        );
     }
 
     public PaymentServiceImpl(
@@ -766,7 +798,33 @@ public class PaymentServiceImpl implements PaymentService {
         if (emailEvents != null) {
             emailEvents.enqueueReceipt(payment);
         }
+        retryCompletedOrderReward(payment);
         notifications.sendNotification(buyer, "Đã nhận thanh toán", notificationMessage, "PAYMENT", notificationLink);
+    }
+
+    private void retryCompletedOrderReward(Payment payment) {
+        if (orderRewardService == null || payment == null) {
+            return;
+        }
+        if (payment.getCheckoutOrder() != null) {
+            CheckoutOrder checkout = payment.getCheckoutOrder();
+            if ("COMPLETED".equalsIgnoreCase(checkout.getStatus())) {
+                orderRewardService.retryRewardAfterPaymentSettled(
+                        PaymentEvidenceService.SourceType.CHECKOUT_ORDER, checkout.getId());
+            }
+        } else if (payment.getOrder() != null) {
+            Order order = payment.getOrder();
+            if ("COMPLETED".equalsIgnoreCase(order.getStatus())) {
+                orderRewardService.retryRewardAfterPaymentSettled(
+                        PaymentEvidenceService.SourceType.ORDER, order.getId());
+            }
+        } else if (payment.getCustomOrder() != null) {
+            CustomOrder custom = payment.getCustomOrder();
+            if ("COMPLETED".equalsIgnoreCase(custom.getStatus())) {
+                orderRewardService.retryRewardAfterPaymentSettled(
+                        PaymentEvidenceService.SourceType.CUSTOM_ORDER, custom.getId());
+            }
+        }
     }
 
     private void settleCheckout(CheckoutOrder checkout, Instant now) {

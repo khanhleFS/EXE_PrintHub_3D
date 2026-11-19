@@ -45,6 +45,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -73,11 +74,23 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private final SubscriptionBenefitService subscriptionBenefitService;
     private final OrderEmailEvents emailEvents;
 
-    @Autowired
+    @Autowired(required = false)
     private PaymentEvidenceService paymentEvidenceService;
 
-    @Autowired
+    @Autowired(required = false)
     private OrderRewardService orderRewardService;
+
+    @Autowired(required = false)
+    private CustomOrderReviewRepository customOrderReviewRepository;
+
+    @Autowired(required = false)
+    private ReviewRepository reviewRepository;
+
+    @Autowired(required = false)
+    private OrderRewardRecordRepository orderRewardRecordRepository;
+
+    @Autowired(required = false)
+    private Clock clock;
 
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
@@ -120,6 +133,47 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         this.storeSettingRepository = storeSettingRepository;
         this.subscriptionBenefitService = subscriptionBenefitService;
         this.emailEvents = emailEvents;
+    }
+
+    public CheckoutOrderServiceImpl(
+            CheckoutOrderRepository checkoutOrderRepository,
+            CartRepository cartRepository,
+            CartItemRepository cartItemRepository,
+            ProductRepository productRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            CustomOrderRepository customOrderRepository,
+            PaymentService paymentService,
+            InventoryService inventoryService,
+            UserRepository userRepository,
+            PaymentRepository paymentRepository,
+            OrderTransitionPolicy orderTransitionPolicy,
+            NotificationService notificationService,
+            ObjectMapper objectMapper,
+            CloudinaryService cloudinaryService,
+            StoreSettingRepository storeSettingRepository,
+            SubscriptionBenefitService subscriptionBenefitService
+    ) {
+        this(
+                checkoutOrderRepository,
+                cartRepository,
+                cartItemRepository,
+                productRepository,
+                orderRepository,
+                orderItemRepository,
+                customOrderRepository,
+                paymentService,
+                inventoryService,
+                userRepository,
+                paymentRepository,
+                orderTransitionPolicy,
+                notificationService,
+                objectMapper,
+                cloudinaryService,
+                storeSettingRepository,
+                subscriptionBenefitService,
+                null
+        );
     }
 
     public CheckoutOrderServiceImpl(
@@ -679,9 +733,75 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 : ("PAID".equals(order.getStatus()) ? "SUCCESS" : "PENDING");
 
         String resolvedOrderType = OrderPricing.checkoutOrderType(order, !customs.isEmpty(), !orders.isEmpty());
+        Instant now = (clock != null ? clock : Clock.systemUTC()).instant();
+        User currentUser = getCurrentUserSafely();
+        boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
+        boolean isOwner = currentUser != null && order.getUser() != null && currentUser.getId().equals(order.getUser().getId());
 
+        Map<UUID, CustomOrderReview> customReviewMap = Map.of();
+        if (customOrderReviewRepository != null && !customs.isEmpty()) {
+            List<UUID> customIds = customs.stream().map(CustomOrder::getId).toList();
+            customReviewMap = customOrderReviewRepository.findByCustomOrderIdIn(customIds).stream()
+                    .collect(Collectors.toMap(r -> r.getCustomOrder().getId(), r -> r, (r1, r2) -> r1));
+        }
+
+        Map<UUID, Map<Long, Review>> itemReviewsByOrderId = new HashMap<>();
+        if (reviewRepository != null && !orders.isEmpty()) {
+            List<UUID> orderIds = orders.stream().map(Order::getId).toList();
+            for (Review r : reviewRepository.findByOrderIdIn(orderIds)) {
+                if (r.getOrder() != null && r.getOrderItem() != null) {
+                    itemReviewsByOrderId
+                            .computeIfAbsent(r.getOrder().getId(), k -> new HashMap<>())
+                            .putIfAbsent(r.getOrderItem().getId(), r);
+                }
+            }
+        }
+
+        OrderRewardRecord parentRewardRecord = orderRewardRecordRepository != null
+                ? orderRewardRecordRepository.findBySourceTypeAndSourceIdAndRewardType(
+                        "CHECKOUT_ORDER", order.getId(), OrderRewardRecord.REWARD_TYPE_COMPLETION).orElse(null)
+                : null;
+
+        List<CustomOrder> activeCustoms = customs.stream()
+                .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
+                .toList();
+        boolean allCustomQuoted = !customs.isEmpty()
+                ? (!activeCustoms.isEmpty() && activeCustoms.stream().allMatch(c -> resolveCustomLineTotal(c).compareTo(BigDecimal.ZERO) > 0 && !"REQUESTED".equalsIgnoreCase(c.getStatus())))
+                : true;
+        boolean readyForConfirm = ("PENDING_QUOTE".equals(order.getStatus()) || "QUOTED".equals(order.getStatus())) && allCustomQuoted;
+
+        BigDecimal computedCustomSubtotal = activeCustoms.stream()
+                .map(this::resolveCustomLineTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal computedMarketSubtotal = OrderPricing.marketplaceSubtotal(orders);
+        BigDecimal resolvedItemsSubtotal = order.getItemsSubtotal() != null
+                ? order.getItemsSubtotal()
+                : computedCustomSubtotal.add(computedMarketSubtotal);
+        PricingBreakdownDTO pricing = checkoutPricing(order, readyForConfirm, computedCustomSubtotal,
+                computedMarketSubtotal, resolvedItemsSubtotal, resolvedOrderType);
+
+        BigDecimal checkoutDiscount = order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO;
+        BigDecimal checkoutNetGoods = (pricing != null && pricing.itemsSubtotal() != null && pricing.itemDiscountAmount() != null)
+                ? pricing.itemsSubtotal().subtract(pricing.itemDiscountAmount()).max(BigDecimal.ZERO)
+                : resolvedItemsSubtotal.subtract(checkoutDiscount).max(BigDecimal.ZERO);
+        int legacyPoints = customs.stream().filter(c -> Boolean.TRUE.equals(c.getRewardProcessed()))
+                .mapToInt(c -> c.getRewardPointsEarned() != null ? c.getRewardPointsEarned() : 0).sum()
+                + orders.stream().filter(o -> Boolean.TRUE.equals(o.getRewardProcessed()))
+                .mapToInt(o -> o.getRewardPointsEarned() != null ? o.getRewardPointsEarned() : 0).sum();
+        OrderDisplayMetadata.RewardSnapshot checkoutRewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                order.getStatus(),
+                zeroAmountSettlement,
+                checkoutNetGoods,
+                parentRewardRecord,
+                legacyPoints > 0,
+                legacyPoints,
+                orderRewardService
+        );
+
+        final Map<UUID, CustomOrderReview> finalCustomReviewMap = customReviewMap;
         List<CustomOrderDetailResponseDTO> customDetailDTOs = customs.stream()
-                .map(c -> toCustomDetailDTO(c, paymentStatus, payment, zeroAmountSettlement))
+                .map(c -> toCustomDetailDTO(c, paymentStatus, payment, zeroAmountSettlement,
+                        finalCustomReviewMap.get(c.getId()), parentRewardRecord, now))
                 .toList();
 
         List<CustomOrderResponseDTO> customDTOs = customs.stream().map(c -> CustomOrderResponseDTO.builder()
@@ -713,16 +833,38 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
         List<OrderResponseDTO> orderDTOs = orders.stream().map(o -> {
             List<OrderItem> oItems = orderItemRepository.findByOrderId(o.getId());
-            List<OrderItemResponseDTO> itemDTOs = oItems.stream().map(oi -> OrderItemResponseDTO.builder()
-                    .id(oi.getId())
-                    .productId(oi.getProduct() != null ? oi.getProduct().getId() : null)
-                    .productTitle(oi.getProduct() != null ? oi.getProduct().getTitle() : "Sản phẩm")
-                    .quantity(oi.getQuantity())
-                    .unitPrice(oi.getUnitPrice())
-                    .subTotal(oi.getUnitPrice() != null ? oi.getUnitPrice().multiply(BigDecimal.valueOf(oi.getQuantity())) : BigDecimal.ZERO)
-                    .color(oi.getColor())
-                    .engravingText(oi.getEngravingText())
-                    .build()).toList();
+            Map<Long, Review> itemReviews = itemReviewsByOrderId.getOrDefault(o.getId(), Map.of());
+            boolean orderBuyerOwner = currentUser != null && o.getBuyer() != null && currentUser.getId().equals(o.getBuyer().getId());
+            List<OrderItemResponseDTO> itemDTOs = oItems.stream().map(oi -> {
+                OrderDisplayMetadata.ItemReviewMeta reviewMeta =
+                        OrderDisplayMetadata.computeItemReviewMeta(o, itemReviews.get(oi.getId()), orderBuyerOwner, now);
+                return OrderItemResponseDTO.builder()
+                        .id(oi.getId())
+                        .productId(oi.getProduct() != null ? oi.getProduct().getId() : null)
+                        .productTitle(oi.getProduct() != null ? oi.getProduct().getTitle() : "Sản phẩm")
+                        .quantity(oi.getQuantity())
+                        .unitPrice(oi.getUnitPrice())
+                        .subTotal(oi.getUnitPrice() != null ? oi.getUnitPrice().multiply(BigDecimal.valueOf(oi.getQuantity())) : BigDecimal.ZERO)
+                        .color(oi.getColor())
+                        .engravingText(oi.getEngravingText())
+                        .reviewId(reviewMeta.reviewId())
+                        .reviewRating(reviewMeta.reviewRating())
+                        .canReview(reviewMeta.canReview())
+                        .canEditReview(reviewMeta.canEditReview())
+                        .reviewComment(reviewMeta.reviewComment())
+                        .reviewCreatedAt(reviewMeta.reviewCreatedAt())
+                        .build();
+            }).toList();
+
+            OrderDisplayMetadata.RewardSnapshot orderRewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                    o.getStatus(),
+                    zeroAmountSettlement,
+                    OrderDisplayMetadata.resolveStandaloneOrderNetGoods(o),
+                    parentRewardRecord,
+                    o.getRewardProcessed(),
+                    o.getRewardPointsEarned(),
+                    orderRewardService
+            );
 
             return OrderResponseDTO.builder()
                     .id(o.getId())
@@ -744,30 +886,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     .appliedSubscriptionId(o.getAppliedSubscriptionId())
                     .appliedSubscriptionName(o.getAppliedSubscriptionName())
                     .priorityProduction(o.getPriorityProduction())
+                    .estimatedRewardPoints(orderRewardSnap.estimatedRewardPoints())
+                    .rewardStatus(orderRewardSnap.rewardStatus())
                     .build();
         }).toList();
 
-        List<CustomOrder> activeCustoms = customs.stream()
-                .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
-                .toList();
-        boolean allCustomQuoted = !customs.isEmpty()
-                ? (!activeCustoms.isEmpty() && activeCustoms.stream().allMatch(c -> resolveCustomLineTotal(c).compareTo(BigDecimal.ZERO) > 0 && !"REQUESTED".equalsIgnoreCase(c.getStatus())))
-                : true;
-        boolean readyForConfirm = ("PENDING_QUOTE".equals(order.getStatus()) || "QUOTED".equals(order.getStatus())) && allCustomQuoted;
-
-        BigDecimal computedCustomSubtotal = activeCustoms.stream()
-                .map(this::resolveCustomLineTotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal computedMarketSubtotal = OrderPricing.marketplaceSubtotal(orders);
-        BigDecimal resolvedItemsSubtotal = order.getItemsSubtotal() != null
-                ? order.getItemsSubtotal()
-                : computedCustomSubtotal.add(computedMarketSubtotal);
-        PricingBreakdownDTO pricing = checkoutPricing(order, readyForConfirm, computedCustomSubtotal,
-                computedMarketSubtotal, resolvedItemsSubtotal, resolvedOrderType);
-
-        User currentUser = getCurrentUserSafely();
-        boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
-        boolean isOwner = currentUser != null && order.getUser() != null && currentUser.getId().equals(order.getUser().getId());
         OrderTransitionPolicy.TransitionEvaluation eval = evaluateParentActions(order, resolvedOrderType, paymentMethod, paymentStatus, isAdmin, isOwner);
 
         String resolvedLink = paymentLinkUrl;
@@ -814,6 +937,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .cancelledAt(order.getCancelledAt())
                 .pricingBreakdown(pricing)
                 .paymentEvidence(PaymentEvidenceResponseDTO.from(payment, order.getZeroAmountSettledAt()))
+                .estimatedRewardPoints(checkoutRewardSnap.estimatedRewardPoints())
+                .rewardStatus(checkoutRewardSnap.rewardStatus())
                 .build();
     }
 
@@ -1258,8 +1383,15 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
     }
 
-    private CustomOrderDetailResponseDTO toCustomDetailDTO(CustomOrder order, String parentPaymentStatus,
-                                                         Payment parentPayment, boolean zeroAmountSettlement) {
+    private CustomOrderDetailResponseDTO toCustomDetailDTO(
+            CustomOrder order,
+            String parentPaymentStatus,
+            Payment parentPayment,
+            boolean zeroAmountSettlement,
+            CustomOrderReview customReview,
+            OrderRewardRecord parentRewardRecord,
+            Instant now
+    ) {
         String pMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : "PAYOS";
         Instant zeroAmountSettledAt = order.resolveZeroAmountSettledAt();
         String pStatus = parentPaymentStatus != null && (!zeroAmountSettlement || zeroAmountSettledAt != null)
@@ -1267,6 +1399,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         User currentUser = getCurrentUserSafely();
         boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
         boolean isOwner = currentUser == null || (order.getBuyer() != null && currentUser.getId().equals(order.getBuyer().getId()));
+        boolean buyerOwner = currentUser != null && order.getBuyer() != null && currentUser.getId().equals(order.getBuyer().getId());
         OrderTransitionPolicy.TransitionEvaluation eval = orderTransitionPolicy.evaluateActions(
                 OrderTransitionPolicy.OrderType.CUSTOM,
                 order.getStatus(),
@@ -1274,6 +1407,17 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 pStatus,
                 isAdmin,
                 isOwner
+        );
+        OrderDisplayMetadata.CustomReviewMeta reviewMeta =
+                OrderDisplayMetadata.computeCustomReviewMeta(order, customReview, buyerOwner, now);
+        OrderDisplayMetadata.RewardSnapshot rewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                order.getStatus(),
+                zeroAmountSettlement || zeroAmountSettledAt != null,
+                OrderDisplayMetadata.resolveCustomLineNetGoods(order),
+                parentRewardRecord,
+                order.getRewardProcessed(),
+                order.getRewardPointsEarned(),
+                orderRewardService
         );
         return CustomOrderDetailResponseDTO.builder()
                 .id(order.getId())
@@ -1311,6 +1455,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .cancelledByRole(order.getCancelledByRole())
                 .cancelledAt(order.getCancelledAt())
                 .paymentEvidence(PaymentEvidenceResponseDTO.from(parentPayment, zeroAmountSettledAt))
+                .canReview(reviewMeta.canReview())
+                .canEditReview(reviewMeta.canEditReview())
+                .review(reviewMeta.review())
+                .estimatedRewardPoints(rewardSnap.estimatedRewardPoints())
+                .rewardStatus(rewardSnap.rewardStatus())
                 .build();
     }
 
