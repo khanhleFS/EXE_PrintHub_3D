@@ -24,8 +24,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -70,45 +72,40 @@ public class FinancialReportingService {
                 && payment.isSettledReceiptFor(purchase.getAmount(), "PAYOS");
     }
 
+    public Map<UUID, Payment> settledSubscriptionReceipts() {
+        return allocateReceipts().stream()
+                .filter(receipt -> receipt.issue() == null && "SUBSCRIPTION_PURCHASE".equals(receipt.source().type()))
+                .collect(Collectors.toMap(receipt -> receipt.source().id(), Receipt::payment));
+    }
+
     private CashTotals summarizeCash(FinancialReportPeriod period) {
         BigDecimal orderCash = BigDecimal.ZERO;
         BigDecimal subscriptionCash = BigDecimal.ZERO;
         BigDecimal shippingCash = BigDecimal.ZERO;
         List<ReconciliationItem> issues = new ArrayList<>();
-        Set<UUID> paymentIds = new HashSet<>();
-        Set<String> payosCodes = new HashSet<>();
         Set<Source> settledSources = new HashSet<>();
 
-        // Canonical valid receipts take precedence over legacy aliases. Deduplicate before applying the period.
-        List<Receipt> receipts = payments.findReportablePayments().stream()
-                .map(this::classify)
-                .sorted(Comparator.comparing((Receipt receipt) -> receipt.issue() != null)
-                        .thenComparing(receipt -> receipt.payment().getPaidAt(), Comparator.nullsLast(Comparator.naturalOrder()))
-                        .thenComparing(receipt -> receipt.payment().getId(), Comparator.nullsLast(Comparator.naturalOrder())))
-                .toList();
-        for (Receipt receipt : receipts) {
+        for (Receipt receipt : allocateReceipts()) {
             Payment payment = receipt.payment();
-            if (payment.getId() != null && !paymentIds.add(payment.getId())) {
-                continue;
-            }
-            if ("PAYOS".equalsIgnoreCase(payment.getGateway()) && payment.getTransactionId() != null
-                    && !payment.getTransactionId().isBlank() && !payosCodes.add(payment.getTransactionId().strip())) {
+            if ("DUPLICATE_PAYOS_CODE".equals(receipt.issue())) {
                 addIssue(issues, receipt, period, "DUPLICATE_PAYOS_CODE", null,
                         payment.getPaidAt() != null ? payment.getPaidAt() : payment.getReconciliationReceivedAt());
                 continue;
             }
             if ("SUCCESS".equalsIgnoreCase(payment.getStatus())) {
                 String reason = receipt.issue();
-                if (reason != null || !settledSources.add(receipt.source())) {
-                    addIssue(issues, receipt, period, reason != null ? reason : "DUPLICATE_SETTLED_SOURCE",
-                            positiveOrNull(payment.getAmount()), payment.getPaidAt());
-                } else if (period.includes(payment.getPaidAt())) {
-                    if ("SUBSCRIPTION_PURCHASE".equals(receipt.source().type())) {
-                        subscriptionCash = subscriptionCash.add(payment.getAmount());
-                    } else {
-                        orderCash = orderCash.add(payment.getAmount());
-                        if (receipt.shippingCash() != null && receipt.shippingCash().compareTo(payment.getAmount()) <= 0) {
-                            shippingCash = shippingCash.add(receipt.shippingCash());
+                if (reason != null) {
+                    addIssue(issues, receipt, period, reason, positiveOrNull(payment.getAmount()), payment.getPaidAt());
+                } else {
+                    settledSources.add(receipt.source());
+                    if (period.includes(payment.getPaidAt())) {
+                        if ("SUBSCRIPTION_PURCHASE".equals(receipt.source().type())) {
+                            subscriptionCash = subscriptionCash.add(payment.getAmount());
+                        } else {
+                            orderCash = orderCash.add(payment.getAmount());
+                            if (receipt.shippingCash() != null && receipt.shippingCash().compareTo(payment.getAmount()) <= 0) {
+                                shippingCash = shippingCash.add(receipt.shippingCash());
+                            }
                         }
                     }
                 }
@@ -127,6 +124,36 @@ public class FinancialReportingService {
         issues.sort(Comparator.comparing(ReconciliationItem::receivedAt, Comparator.nullsLast(Comparator.reverseOrder()))
                 .thenComparing(ReconciliationItem::paymentId, Comparator.nullsLast(Comparator.naturalOrder())));
         return new CashTotals(orderCash, subscriptionCash, shippingCash, reconciliation, List.copyOf(issues), settledSources);
+    }
+
+    private List<Receipt> allocateReceipts() {
+        // Select the canonical receipt before applying date, status, or buyer filters.
+        List<Receipt> candidates = payments.findReportablePayments().stream()
+                .map(this::classify)
+                .sorted(Comparator.comparing((Receipt receipt) -> receipt.issue() != null)
+                        .thenComparing(receipt -> receipt.payment().getPaidAt(), Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(receipt -> receipt.payment().getId(), Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+        Set<UUID> paymentIds = new HashSet<>();
+        Set<String> payosCodes = new HashSet<>();
+        Set<Source> settledSources = new HashSet<>();
+        List<Receipt> allocated = new ArrayList<>(candidates.size());
+        for (Receipt candidate : candidates) {
+            Payment payment = candidate.payment();
+            if (payment.getId() != null && !paymentIds.add(payment.getId())) {
+                continue;
+            }
+            String code = payment.getTransactionId();
+            String issue = candidate.issue();
+            if ("PAYOS".equalsIgnoreCase(payment.getGateway()) && code != null
+                    && !code.isBlank() && !payosCodes.add(code.strip())) {
+                issue = "DUPLICATE_PAYOS_CODE";
+            } else if (issue == null && !settledSources.add(candidate.source())) {
+                issue = "DUPLICATE_SETTLED_SOURCE";
+            }
+            allocated.add(new Receipt(payment, candidate.source(), candidate.shippingCash(), issue));
+        }
+        return allocated;
     }
 
     private Receipt classify(Payment payment) {

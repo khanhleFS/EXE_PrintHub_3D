@@ -208,6 +208,24 @@ Checkout và chi tiết custom trả thông tin chứng từ trong `paymentEvide
 
 `completed_at` là cột nullable trên `checkout_orders`, `orders` và `custom_orders`. Luồng hoàn tất ghi lần đầu. Dữ liệu cũ thiếu mốc giữ giá trị trống để đối soát.
 
+## Lịch sử giao dịch hội viên dành cho admin
+
+`GET /api/admin/subscriptions/transactions` yêu cầu vai trò `ADMIN`. Mọi bộ lọc đều tùy chọn.
+
+| Tham số | Giá trị |
+|---|---|
+| `q` | Họ tên, email, mã khách, mã giao dịch, mã chứng từ hoặc mã đơn PayOS. |
+| `userId`, `planId` | UUID của khách và gói. |
+| `method` | `CASH`, `POINTS_REDEEM`. |
+| `status` | `PAID`, `PENDING`, `CANCELLED`, `EXPIRED`, `PENDING_RECONCILIATION`, `REDEEMED`. |
+| `from`, `to` | Ngày `YYYY-MM-DD` theo giờ Việt Nam hoặc thời điểm ISO 8601 có múi giờ. Bao gồm `from`, kết thúc trước `to`. Ví dụ chọn ngày 19/11 thì dùng `from=2026-11-19&to=2026-11-20`. |
+| `page`, `size` | Trang bắt đầu từ 0. Mặc định 20 dòng, tối đa 100. |
+
+- `result` gồm `items`, `totalElements`, `page`, `size` và `summary`. `summary.subscriptionCashVnd`, `cashCount` và `pointsRedeemCount` tính trên toàn bộ tập sau lọc. Với S1 thu 50.000đ, S2 đổi 80 xu, S3 hủy, mỗi trang đều có `totalElements=3` và `subscriptionCashVnd=50000`. Lọc `POINTS_REDEEM` trả một dòng `pointsSpent=80` và tổng tiền 0đ.
+- Các dòng có `buyerName`, `buyerEmail`, `userId`, `planId`, `planName`, `transactionAt`, `method`, `status` và `referenceId`. `amountVnd` là tiền thực thu theo Finance và Dashboard. `purchaseAmountVnd` là giá chốt của lượt mua tiền. Dòng cần đối soát giữ `purchaseStatus` gốc và cung cấp `reconciliationReason`. Dòng đổi xu cung cấp `subscriptionId` nếu bút toán đã lưu liên kết.
+- `transactionAt` dùng `paidAt` cho tiền đã quyết toán, mốc trừ ví cho lượt đổi và mốc tạo cho yêu cầu mua còn lại. API sắp xếp giảm dần theo thời điểm và ID. Khi chưa xác minh được tên hoặc mã gói, `planVerified=false` và các trường thiếu giữ `null`. Dòng đổi xu cũ giữ mô tả gốc. `legacyTimestamp=true` cho biết mốc giờ cũ được diễn giải theo `app.membership-history.legacy-points-zone`, mặc định là múi giờ của JVM. Khi chuyển môi trường, đặt thuộc tính này theo múi giờ JVM từng ghi dữ liệu cũ.
+- Lược đồ thêm hai cột nullable `subscription_purchases.plan_name_snapshot` và `point_transactions.occurred_at`, tăng chiều dài `point_transactions.reference_plan_name` lên 255 và `description` lên 320. Dữ liệu lịch sử được đọc trực tiếp theo ID mua hoặc ID bút toán. Không cần chạy chuyển dữ liệu để tạo dòng lịch sử.
+
 ## Hợp đồng cho BE2
 
 ### Chứng từ và mốc hoàn tất

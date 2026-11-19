@@ -4,18 +4,22 @@ import com.fpt.printhub_3d.common.exception.ApiException;
 import com.fpt.printhub_3d.common.exception.GlobalExceptionHandler;
 import com.fpt.printhub_3d.common.exception.SubscriptionErrorCode;
 import com.fpt.printhub_3d.common.security.CustomUserDetail;
+import com.fpt.printhub_3d.controller.AdminSubscriptionHistoryController;
 import com.fpt.printhub_3d.controller.DashboardController;
 import com.fpt.printhub_3d.controller.FinanceController;
 import com.fpt.printhub_3d.dto.finance.RevenueAnalyticsResponseDTO;
 import com.fpt.printhub_3d.dto.finance.FinancialReportPeriod;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkResponseDTO;
+import com.fpt.printhub_3d.dto.subscription.AdminSubscriptionHistoryDTO;
 import com.fpt.printhub_3d.dto.subscription.CreateSubscriptionPurchaseRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.SubscriptionPurchaseResponseDTO;
 import com.fpt.printhub_3d.entity.*;
+import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
 import com.fpt.printhub_3d.entity.Enumeration.SubscriptionType;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.repository.*;
+import com.fpt.printhub_3d.service.impl.AdminSubscriptionHistoryService;
 import com.fpt.printhub_3d.service.impl.FinanceServiceImpl;
 import com.fpt.printhub_3d.service.impl.FinancialReportingService;
 import com.fpt.printhub_3d.service.impl.DashboardServiceImpl;
@@ -28,7 +32,11 @@ import org.mockito.Answers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.server.ResponseStatusException;
@@ -59,6 +67,7 @@ class SubscriptionCashPurchaseFlowTest {
     private PaymentServiceImpl paymentService;
     private FinanceServiceImpl financeService;
     private FinancialReportingService financialReporting;
+    private AdminSubscriptionHistoryService historyService;
     private DashboardServiceImpl dashboardService;
 
     @Mock private UserRepository userRepository;
@@ -109,6 +118,8 @@ class SubscriptionCashPurchaseFlowTest {
 
         financialReporting = new FinancialReportingService(paymentRepository, checkoutOrderRepository, orderRepository,
                 customOrderRepository, Clock.fixed(Instant.parse("2026-11-21T00:00:00Z"), FinancialReportPeriod.ZONE));
+        historyService = new AdminSubscriptionHistoryService(subscriptionPurchaseRepository, pointTransactionRepository,
+                paymentRepository, financialReporting, "Asia/Ho_Chi_Minh");
         financeService = new FinanceServiceImpl(
                 orderRepository,
                 paymentRepository,
@@ -174,7 +185,9 @@ class SubscriptionCashPurchaseFlowTest {
         assertEquals("PENDING", response.status());
         assertEquals("KEY_PURCHASE_001", response.idempotencyKey());
 
-        verify(subscriptionPurchaseRepository, times(1)).save(any(SubscriptionPurchase.class));
+        ArgumentCaptor<SubscriptionPurchase> saved = ArgumentCaptor.forClass(SubscriptionPurchase.class);
+        verify(subscriptionPurchaseRepository, times(1)).save(saved.capture());
+        assertEquals("VIP Pro Plan", saved.getValue().getPlanNameSnapshot());
     }
 
     @Test
@@ -638,6 +651,134 @@ class SubscriptionCashPurchaseFlowTest {
         checkout.setShippingDiscountAmount(new BigDecimal(shipDiscount));
         checkout.setTotalAmount(new BigDecimal(total));
         return checkout;
+    }
+
+    @Test
+    void adminHistoryReturnsSampleTransactionsAndKeepsFilteredTotalAcrossPages() {
+        var period = FinancialReportPeriod.parse("2026-11-19", "2026-11-20");
+        Instant paidAt = period.from();
+        Payment paid = subscriptionReceipt(701, "50000", paidAt);
+        SubscriptionPurchase purchase = paid.getSubscriptionPurchase();
+        purchase.setCreatedAt(paidAt.minusSeconds(1));
+        purchase.setPlanNameSnapshot("Gói G1");
+        User redeemer = User.builder().id(UUID.randomUUID()).fullName("Người đổi xu").email("xu@example.com").build();
+        User cancelledBuyer = User.builder().id(UUID.randomUUID()).fullName("Người hủy").build();
+        SubscriptionPurchase cancelled = SubscriptionPurchase.builder().id(UUID.randomUUID()).user(cancelledBuyer)
+                .plan(testPlan).planNameSnapshot("Gói G1").status("CANCELLED").amount(new BigDecimal("50000"))
+                .createdAt(paidAt.plusSeconds(1)).build();
+        PointTransaction redeemed = PointTransaction.builder().id(702L).type(PointTransactionType.REDEEM)
+                .pointWallet(PointWallet.builder().userId(redeemer.getId()).user(redeemer).build()).amount(-80)
+                .referencePlanId(testPlan.getId()).referencePlanName("Gói G1").occurredAt(paidAt).build();
+        when(subscriptionPurchaseRepository.findForTransactionHistory()).thenReturn(List.of(purchase, cancelled));
+        when(paymentRepository.findReportablePayments()).thenReturn(List.of(paid));
+        when(paymentRepository.findBySubscriptionPurchaseIsNotNull()).thenReturn(List.of(paid));
+        when(pointTransactionRepository.findForSubscriptionHistory(eq(PointTransactionType.REDEEM), anyString()))
+                .thenReturn(List.of(redeemed, redeemed));
+
+        List<AdminSubscriptionHistoryDTO.Item> rows = IntStream.range(0, 3).mapToObj(page -> {
+            var result = historyService.getHistory(null, null, null, null, null, period, page, 1);
+            assertEquals(3, result.totalElements());
+            assertEquals(new BigDecimal("50000"), result.summary().subscriptionCashVnd());
+            return result.items().getFirst();
+        }).toList();
+        assertEquals(cancelled.getId().toString(), rows.getFirst().id());
+        assertEquals(3, rows.stream().map(AdminSubscriptionHistoryDTO.Item::id).distinct().count());
+        assertEquals(rows.get(1), historyService.getHistory(null, null, null, null, null, period, 1, 1).items().getFirst());
+        assertEquals(financialReporting.summarize(period).subscriptionCashVnd(),
+                historyService.getHistory(null, null, null, null, null, period, 0, 1).summary().subscriptionCashVnd());
+
+        var points = historyService.getHistory("XU@EXAMPLE.COM", redeemer.getId(), testPlan.getId(),
+                AdminSubscriptionHistoryDTO.Method.POINTS_REDEEM, AdminSubscriptionHistoryDTO.Status.REDEEMED, period, 0, 1);
+        assertEquals(1, points.totalElements());
+        assertEquals(80, points.items().getFirst().pointsSpent());
+        assertEquals(BigDecimal.ZERO, points.summary().subscriptionCashVnd());
+        var cancelledOnly = historyService.getHistory(null, cancelledBuyer.getId(), null,
+                AdminSubscriptionHistoryDTO.Method.CASH, AdminSubscriptionHistoryDTO.Status.CANCELLED, period, 0, 1);
+        assertEquals(List.of(rows.getFirst()), cancelledOnly.items());
+        assertEquals(BigDecimal.ZERO, cancelledOnly.summary().subscriptionCashVnd());
+    }
+
+    @Test
+    void adminHistoryPreservesHistoricalValuesAndRequiresCanonicalCashEvidence() {
+        var period = FinancialReportPeriod.parse("2026-11-19", "2026-11-20");
+        Payment legacy = subscriptionReceipt(710, "50000", period.from());
+        Payment renewal = subscriptionReceipt(711, "70000", period.from().plusSeconds(1));
+        Payment duplicate = subscriptionReceipt(710, "50000", period.from().plusSeconds(2));
+        SubscriptionPurchase oldPurchase = legacy.getSubscriptionPurchase();
+        SubscriptionPurchase newPurchase = renewal.getSubscriptionPurchase();
+        SubscriptionPurchase duplicatePurchase = duplicate.getSubscriptionPurchase();
+        duplicatePurchase.setCreatedAt(period.from());
+        newPurchase.setPlanNameSnapshot("Tên gói tại lần mua mới");
+        testPlan.setName("Tên đang bán");
+        testPlan.setPrice(new BigDecimal("90000"));
+        var wallet = PointWallet.builder().user(testUser).userId(testUser.getId()).build();
+        UUID sameSubscription = UUID.randomUUID();
+        PointTransaction oldDebit = PointTransaction.builder().id(3L).pointWallet(wallet).amount(-80)
+                .description("Đổi điểm lấy gói hội viên: Gói cũ").referenceSubscriptionId(sameSubscription)
+                .createdAt(LocalDateTime.parse("2026-11-19T00:00:00")).build();
+        PointTransaction nextDebit = PointTransaction.builder().id(4L).pointWallet(wallet).amount(-90)
+                .referenceSubscriptionId(sameSubscription).occurredAt(period.from().plusSeconds(3)).build();
+        when(subscriptionPurchaseRepository.findForTransactionHistory())
+                .thenReturn(List.of(oldPurchase, newPurchase, duplicatePurchase));
+        when(paymentRepository.findReportablePayments()).thenReturn(List.of(duplicate, renewal, legacy));
+        when(paymentRepository.findBySubscriptionPurchaseIsNotNull()).thenReturn(List.of(duplicate, renewal, legacy));
+        when(pointTransactionRepository.findForSubscriptionHistory(eq(PointTransactionType.REDEEM), anyString()))
+                .thenReturn(List.of(oldDebit, nextDebit));
+
+        var result = historyService.getHistory(null, testUser.getId(), null, null, null, period, 0, 20);
+        assertEquals(5, result.totalElements());
+        assertEquals(new BigDecimal("120000"), result.summary().subscriptionCashVnd());
+        var byId = result.items().stream().collect(java.util.stream.Collectors.toMap(
+                AdminSubscriptionHistoryDTO.Item::id, item -> item));
+        var oldRow = byId.get(oldPurchase.getId().toString());
+        assertNull(oldRow.planName());
+        assertFalse(oldRow.planVerified());
+        assertEquals(new BigDecimal("50000"), oldRow.purchaseAmountVnd());
+        assertEquals("Tên gói tại lần mua mới", byId.get(newPurchase.getId().toString()).planName());
+        var duplicateRow = byId.get(duplicatePurchase.getId().toString());
+        assertEquals(AdminSubscriptionHistoryDTO.Status.PENDING_RECONCILIATION, duplicateRow.status());
+        assertEquals(BigDecimal.ZERO, duplicateRow.amountVnd());
+        assertEquals(period.from(), byId.get("3").transactionAt());
+        assertTrue(byId.get("3").legacyTimestamp());
+        assertEquals(oldDebit.getDescription(), byId.get("3").description());
+        assertFalse(byId.get("3").planVerified());
+        assertEquals(90, byId.get("4").pointsSpent());
+    }
+
+    @Test
+    void adminHistoryEndpointRequiresAdminAndValidatesFilters() throws Exception {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.register(HistoryMethodSecurity.class, AdminSubscriptionHistoryController.class);
+            context.registerBean(AdminSubscriptionHistoryService.class, () -> historyService);
+            context.refresh();
+            var mvc = MockMvcBuilders.standaloneSetup(context.getBean(AdminSubscriptionHistoryController.class))
+                    .setControllerAdvice(new GlobalExceptionHandler()).build();
+            String path = "/api/admin/subscriptions/transactions";
+            SecurityContextHolder.clearContext();
+            mvc.perform(get(path)).andExpect(status().isUnauthorized());
+            SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken("buyer", null,
+                    List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+            mvc.perform(get(path)).andExpect(status().isForbidden());
+            verifyNoInteractions(subscriptionPurchaseRepository, pointTransactionRepository);
+
+            SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken("admin", null,
+                    List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))));
+            mvc.perform(get(path).param("method", "POINTS_REDEEM").param("from", "2026-11-19").param("size", "1"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.result.items").isEmpty())
+                    .andExpect(jsonPath("$.result.totalElements").value(0))
+                    .andExpect(jsonPath("$.result.summary.subscriptionCashVnd").value(0));
+            verifyNoInteractions(subscriptionPurchaseRepository);
+            mvc.perform(get(path).param("size", "101")).andExpect(status().isBadRequest());
+            mvc.perform(get(path).param("from", "invalid")).andExpect(status().isBadRequest());
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableMethodSecurity
+    static class HistoryMethodSecurity {
     }
 
     private Payment subscriptionReceipt(int code, String amount, Instant paidAt) {

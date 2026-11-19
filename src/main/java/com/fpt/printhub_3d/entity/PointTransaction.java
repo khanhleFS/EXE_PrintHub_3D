@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.Nationalized;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -31,7 +32,7 @@ public class PointTransaction {
     @Column(name = "type", length = 50, nullable = false)
     private PointTransactionType type;
 
-    @Column(name = "description", length = 255)
+    @Column(name = "description", length = 320)
     private String description; // Ví dụ: "Tích điểm từ đơn hàng #ORD123"
 
     @Column(name = "source_type", length = 40)
@@ -47,7 +48,7 @@ public class PointTransaction {
     private UUID referencePlanId;
 
     @Nationalized
-    @Column(name = "reference_plan_name", length = 200)
+    @Column(name = "reference_plan_name", length = 255)
     private String referencePlanName;
 
     @Column(name = "reference_subscription_id")
@@ -55,4 +56,7 @@ public class PointTransaction {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "occurred_at", updatable = false)
+    private Instant occurredAt;
 }

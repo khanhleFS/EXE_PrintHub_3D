@@ -22,6 +22,9 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     Optional<Payment> findBySubscriptionPurchaseId(UUID subscriptionPurchaseId);
 
+    @EntityGraph(attributePaths = "subscriptionPurchase")
+    List<Payment> findBySubscriptionPurchaseIsNotNull();
+
     Optional<Payment> findByTransactionId(String transactionId);
 
     boolean existsByTransactionId(String transactionId);

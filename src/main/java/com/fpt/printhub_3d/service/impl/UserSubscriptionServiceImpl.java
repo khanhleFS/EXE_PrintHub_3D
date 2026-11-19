@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -229,6 +230,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
         UserSubscription userSub = processSubscriptionActivation(user, plan);
 
         UUID subId = userSub != null ? userSub.getId() : null;
+        Instant redeemedAt = Instant.now();
         PointTransaction tx = PointTransaction.builder()
                 .pointWallet(wallet)
                 .amount(-plan.getRequiredPoints())
@@ -240,7 +242,8 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .referencePlanId(plan.getId())
                 .referencePlanName(plan.getName())
                 .referenceSubscriptionId(subId)
-                .createdAt(LocalDateTime.now())
+                .createdAt(LocalDateTime.ofInstant(redeemedAt, ZoneId.systemDefault()))
+                .occurredAt(redeemedAt)
                 .build();
         pointTransactionRepository.save(tx);
         log.info("Đã trừ [{}] điểm của User [{}]. Số dư mới: [{}] pts", plan.getRequiredPoints(), userId, wallet.getBalance());
@@ -391,6 +394,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .user(user)
                 .plan(plan)
                 .amount(plan.getPrice())
+                .planNameSnapshot(plan.getName())
                 .durationDays(durationDays)
                 .status("PENDING")
                 .idempotencyKey(key != null && !key.isBlank() ? key.trim() : null)
@@ -543,7 +547,8 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .purchaseId(purchase.getId())
                 .userId(purchase.getUser().getId())
                 .planId(purchase.getPlan().getId())
-                .planName(purchase.getPlan().getName())
+                .planName(purchase.getPlanNameSnapshot() != null
+                        ? purchase.getPlanNameSnapshot() : purchase.getPlan().getName())
                 .amount(purchase.getAmount())
                 .durationDays(purchase.getDurationDays())
                 .status(purchase.getStatus())
