@@ -3,6 +3,7 @@ package com.fpt.printhub_3d.service.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fpt.printhub_3d.dto.subscription.BenefitPreviewResponseDTO;
+import com.fpt.printhub_3d.dto.subscription.BenefitPreviewResponseDTO.BenefitStatus;
 import com.fpt.printhub_3d.entity.SubscriptionPlan;
 import com.fpt.printhub_3d.entity.SubscriptionUsageLog;
 import com.fpt.printhub_3d.entity.User;
@@ -72,7 +73,8 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
             BigDecimal baseShippingFee,
             BigDecimal finalShippingFee,
             BigDecimal finalTotal,
-            String ineligibleReason
+            String ineligibleReason,
+            BenefitStatus benefitStatus
     ) {}
 
     @Override
@@ -111,10 +113,16 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
         );
 
         UserSubscription mainSub = resolveMainSubscription(eval);
+        UserSubscription appliedSub = resolveAppliedSubscription(eval);
+        boolean expired = activeSubs.isEmpty() && user != null
+                && userSubscriptionRepository.hasExpiredSubscription(user);
         return BenefitPreviewResponseDTO.builder()
                 .hasActiveSubscription(eval.hasActiveSubscription())
                 .userSubscriptionId(mainSub != null ? mainSub.getId() : null)
                 .planName(mainSub != null && mainSub.getPlan() != null ? mainSub.getPlan().getName() : null)
+                .appliedSubscriptionId(appliedSub != null ? appliedSub.getId() : null)
+                .appliedSubscriptionName(resolveCombinedAppliedName(eval, appliedSub))
+                .benefitStatus(expired ? BenefitStatus.EXPIRED : eval.benefitStatus())
                 .appliedDiscountPlanName(eval.discountSub() != null && eval.discountSub().getPlan() != null
                         ? eval.discountSub().getPlan().getName() : null)
                 .appliedShippingPlanName(eval.shippingSub() != null && eval.shippingSub().getPlan() != null
@@ -130,7 +138,7 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
                 .remainingFreeShippingUses(eval.remainingFreeShippingUses())
                 .priorityProduction(eval.priorityProduction())
                 .finalTotal(eval.finalTotal())
-                .ineligibleReason(eval.ineligibleReason())
+                .ineligibleReason(expired ? "Gói hội viên đã hết hạn." : eval.ineligibleReason())
                 .build();
     }
 
@@ -312,7 +320,8 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
             return new EvaluationResult(
                     false, null, null, 0, BigDecimal.ZERO,
                     null, BigDecimal.ZERO, null, 0, null,
-                    null, false, safeSubtotal, safeShip, safeShip, safeSubtotal.add(safeShip), null
+                    null, false, safeSubtotal, safeShip, safeShip, safeSubtotal.add(safeShip),
+                    "Chưa có gói hội viên đang hiệu lực.", BenefitStatus.NO_SUBSCRIPTION
             );
         }
 
@@ -327,6 +336,7 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
         int trackedUsed = 0;
         Integer trackedRemaining = null;
         boolean foundShippingQuotaInfo = false;
+        boolean hasConfiguredBenefits = false;
 
         UserSubscription prioritySub = null;
         boolean priorityProduction = false;
@@ -339,6 +349,7 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
             if (parsed == null) {
                 continue;
             }
+            hasConfiguredBenefits = true;
 
             if (parsed.discount() != null) {
                 BigDecimal eligibleSub = resolveEligibleDiscountSubtotal(
@@ -428,13 +439,21 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
         BigDecimal finalShipping = safeShip.subtract(bestShippingDiscount).max(BigDecimal.ZERO);
         BigDecimal finalTotal = netSubtotal.add(finalShipping);
 
+        BenefitStatus status = bestDiscountSub != null || bestShippingSub != null || priorityProduction
+                ? BenefitStatus.APPLIED : BenefitStatus.INELIGIBLE;
         String reasonToReport = null;
         if (bestDiscountAmount.compareTo(BigDecimal.ZERO) == 0 && discountIneligibleReason != null) {
             reasonToReport = discountIneligibleReason;
         } else if (safeShip.compareTo(BigDecimal.ZERO) > 0
                 && bestShippingDiscount.compareTo(BigDecimal.ZERO) == 0
                 && shippingIneligibleReason != null) {
+            status = BenefitStatus.QUOTA_EXHAUSTED;
             reasonToReport = shippingIneligibleReason;
+        } else if (!hasConfiguredBenefits) {
+            status = BenefitStatus.CONFIG_REQUIRED;
+            reasonToReport = "Gói hội viên cần kiểm tra cấu hình quyền lợi.";
+        } else if (status == BenefitStatus.INELIGIBLE) {
+            reasonToReport = "Gói hội viên hiện tại không có quyền lợi áp dụng cho đơn này.";
         }
 
         return new EvaluationResult(
@@ -454,7 +473,8 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
                 safeShip,
                 finalShipping,
                 finalTotal,
-                reasonToReport
+                reasonToReport,
+                status
         );
     }
 
@@ -490,7 +510,7 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
             }
             return sum.min(itemsSubtotal);
         }
-        return itemsSubtotal;
+        return BigDecimal.ZERO;
     }
 
     private boolean appliesToScope(BenefitScope scope, List<String> appliesTo) {
@@ -545,7 +565,9 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
                 );
             }
 
-            return new ParsedBenefits(discount, shipping, production);
+            return discount != null || shipping != null || production != null
+                    ? new ParsedBenefits(discount, shipping, production)
+                    : null;
         } catch (Exception ex) {
             log.warn("Failed to parse structuredBenefits JSON: {}", ex.getMessage());
             return null;

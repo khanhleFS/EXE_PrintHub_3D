@@ -4,6 +4,7 @@ import com.fpt.printhub_3d.dto.custom_prints.CustomOrderDetailResponseDTO;
 import com.fpt.printhub_3d.dto.custom_prints.CustomOrderResponseDTO;
 import com.fpt.printhub_3d.dto.order.BlockedActionDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
+import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
@@ -48,5 +49,6 @@ public record CheckoutOrderResponseDTO(
         String appliedSubscriptionName,
         Boolean priorityProduction,
         String cancelledByRole,
-        Instant cancelledAt
+        Instant cancelledAt,
+        PricingBreakdownDTO pricingBreakdown
 ) {}

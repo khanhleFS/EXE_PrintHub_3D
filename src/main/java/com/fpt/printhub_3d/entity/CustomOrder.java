@@ -81,6 +81,14 @@ public class CustomOrder {
     @Column(name = "quoted_at")
     private java.time.Instant quotedAt;
 
+    @Column(name = "quote_version")
+    @ColumnDefault("1")
+    private Long quoteVersion = 1L;
+
+    public Long getQuoteVersion() {
+        return quoteVersion != null ? quoteVersion : 1L;
+    }
+
     @Size(max = 20)
     @NotNull
     @ColumnDefault("'PENDING'")

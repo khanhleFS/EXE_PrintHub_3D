@@ -6,6 +6,7 @@ import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.exception.CustomPrintErrorCode;
 import com.fpt.printhub_3d.common.exception.VaultErrorCode;
 import com.fpt.printhub_3d.dto.custom_prints.*;
+import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
 import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Enumeration.CustomOrderStatus;
@@ -43,6 +44,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -174,7 +176,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 var feeOpt = storeSettingRepository.findById("shippingFee");
                 if (feeOpt.isPresent() && feeOpt.get().getValue() != null) {
                     BigDecimal configured = new BigDecimal(feeOpt.get().getValue().trim());
-                    if (configured.compareTo(BigDecimal.ZERO) > 0) {
+                    if (configured.signum() >= 0) {
                         return configured;
                     }
                 }
@@ -292,7 +294,30 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .cancelReason(o.getCancelReason())
                 .cancelledByRole(o.getCancelledByRole())
                 .cancelledAt(o.getCancelledAt())
+                .quoteVersion(o.getCheckoutOrder() == null ? o.getQuoteVersion() : null)
+                .pricingBreakdown(standalonePricing(o))
                 .build();
+    }
+
+    private PricingBreakdownDTO standalonePricing(CustomOrder order) {
+        String status = order.getStatus();
+        if (order.getCheckoutOrder() != null || status == null || "CANCELLED".equalsIgnoreCase(status)) {
+            return null;
+        }
+        BigDecimal lineTotal = resolveLineTotal(order);
+        if (Set.of("REQUESTED", "QUOTED").contains(status)) {
+            BigDecimal shippingFee = order.getShippingFee() != null ? order.getShippingFee() : resolveDefaultShippingFee();
+            if ("REQUESTED".equals(status) || lineTotal.signum() <= 0) {
+                return OrderPricing.pendingQuote(order.getQuoteVersion(), lineTotal, BigDecimal.ZERO, shippingFee);
+            }
+            return OrderPricing.estimate(subscriptionBenefitService, order.getBuyer(),
+                    SubscriptionBenefitService.BenefitScope.CUSTOM, order.getQuoteVersion(),
+                    lineTotal, BigDecimal.ZERO, shippingFee);
+        }
+        BigDecimal subtotal = order.getSubtotalAmount() != null ? order.getSubtotalAmount() : lineTotal;
+        return OrderPricing.locked(order.getQuoteVersion(), subtotal, BigDecimal.ZERO, subtotal,
+                order.getDiscountAmount(), order.getShippingFee(), order.getShippingDiscountAmount(), null,
+                order.getAppliedSubscriptionId(), order.getAppliedSubscriptionName(), order.getPriorityProduction());
     }
 
     @Override
@@ -407,6 +432,18 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         String normalizedNote = request.note() != null && !request.note().isBlank() ? request.note().trim() : null;
         Instant now = Instant.now();
 
+        if (order.getCheckoutOrder() == null) {
+            boolean quoteChanged = !"QUOTED".equals(order.getStatus()) || order.getUnitQuotedPrice() == null
+                    || order.getUnitQuotedPrice().compareTo(unitPrice) != 0
+                    || order.getQuotedPrice() == null || order.getQuotedPrice().compareTo(lineTotal) != 0
+                    || !Objects.equals(order.getQuoteNote(), normalizedNote);
+            if (quoteChanged) {
+                order.setQuoteVersion(order.getQuoteVersion() + 1);
+            }
+            if (order.getShippingFee() == null) {
+                order.setShippingFee(resolveDefaultShippingFee());
+            }
+        }
         order.setUnitQuotedPrice(unitPrice);
         order.setQuotedPrice(lineTotal);
         order.setQuoteNote(normalizedNote);
@@ -430,9 +467,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
             BigDecimal marketSubtotal = orderRepository != null
-                    ? orderRepository.findByCheckoutOrderId(parent.getId()).stream()
-                            .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
-                            .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    ? OrderPricing.marketplaceSubtotal(orderRepository.findByCheckoutOrderId(parent.getId()))
                     : BigDecimal.ZERO;
 
             BigDecimal itemsSubtotal = customSubtotal.add(marketSubtotal);
@@ -445,9 +480,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
 
             parent.setItemsSubtotal(itemsSubtotal);
             if (allQuoted) {
-                BigDecimal shippingFee = (parent.getShippingFee() != null && parent.getShippingFee().compareTo(BigDecimal.ZERO) > 0)
-                        ? parent.getShippingFee()
-                        : resolveDefaultShippingFee();
+                BigDecimal shippingFee = OrderPricing.checkoutShippingFee(parent, this::resolveDefaultShippingFee);
                 parent.setShippingFee(shippingFee);
                 parent.setTotalAmount(itemsSubtotal.add(shippingFee));
                 if ("PENDING_QUOTE".equalsIgnoreCase(parent.getStatus())) {
@@ -523,7 +556,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                     order.setPriorityProduction(snap.priorityProduction());
                 } else {
                     order.setSubtotalAmount(lineSub);
-                    order.setShippingFee(BigDecimal.ZERO);
+                    order.setShippingFee(baseShip);
                     order.setDiscountAmount(BigDecimal.ZERO);
                     order.setShippingDiscountAmount(BigDecimal.ZERO);
                     order.setPriorityProduction(false);

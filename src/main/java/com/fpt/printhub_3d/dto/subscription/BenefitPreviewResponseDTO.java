@@ -15,6 +15,10 @@ import java.util.UUID;
 @AllArgsConstructor
 public class BenefitPreviewResponseDTO {
 
+    public enum BenefitStatus {
+        APPLIED, NO_SUBSCRIPTION, EXPIRED, INELIGIBLE, QUOTA_EXHAUSTED, CONFIG_REQUIRED
+    }
+
     @Schema(description = "Người dùng có gói hội viên đang hoạt động hay không")
     private boolean hasActiveSubscription;
 
@@ -23,6 +27,10 @@ public class BenefitPreviewResponseDTO {
 
     @Schema(description = "Tên gói hội viên chính hoặc đang kích hoạt")
     private String planName;
+
+    private UUID appliedSubscriptionId;
+    private String appliedSubscriptionName;
+    private BenefitStatus benefitStatus;
 
     @Schema(description = "Tên gói áp dụng giảm giá đơn hàng")
     private String appliedDiscountPlanName;

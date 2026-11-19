@@ -16,6 +16,7 @@ import com.fpt.printhub_3d.dto.custom_prints.CustomOrderResponseDTO;
 import com.fpt.printhub_3d.dto.order.BlockedActionDTO;
 import com.fpt.printhub_3d.dto.order.OrderItemResponseDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
+import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkResponseDTO;
 import com.fpt.printhub_3d.entity.*;
@@ -28,6 +29,7 @@ import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import com.fpt.printhub_3d.service.PaymentService;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
+import com.fpt.printhub_3d.service.SubscriptionBenefitService.BenefitScope;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -225,7 +227,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 var feeOpt = storeSettingRepository.findById("shippingFee");
                 if (feeOpt.isPresent() && feeOpt.get().getValue() != null) {
                     BigDecimal configured = new BigDecimal(feeOpt.get().getValue().trim());
-                    if (configured.compareTo(BigDecimal.ZERO) > 0) {
+                    if (configured.signum() >= 0) {
                         return configured;
                     }
                 }
@@ -545,14 +547,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .map(this::resolveCustomLineTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal marketplaceTotal = orderList.stream()
-                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal marketplaceTotal = OrderPricing.marketplaceSubtotal(orderList);
 
         BigDecimal itemsSubtotal = customTotal.add(marketplaceTotal);
-        BigDecimal shippingFee = (checkoutOrder.getShippingFee() != null && checkoutOrder.getShippingFee().compareTo(BigDecimal.ZERO) > 0)
-                ? checkoutOrder.getShippingFee()
-                : resolveDefaultShippingFee();
+        BigDecimal shippingFee = OrderPricing.checkoutShippingFee(checkoutOrder, this::resolveDefaultShippingFee);
         BigDecimal finalTotal = itemsSubtotal.add(shippingFee);
 
         SubscriptionBenefitService.AppliedBenefitSnapshot appliedSnap = null;
@@ -729,12 +727,12 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         BigDecimal computedCustomSubtotal = activeCustoms.stream()
                 .map(this::resolveCustomLineTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal computedMarketSubtotal = orders.stream()
-                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal computedMarketSubtotal = OrderPricing.marketplaceSubtotal(orders);
         BigDecimal resolvedItemsSubtotal = order.getItemsSubtotal() != null
                 ? order.getItemsSubtotal()
                 : computedCustomSubtotal.add(computedMarketSubtotal);
+        PricingBreakdownDTO pricing = checkoutPricing(order, readyForConfirm, computedCustomSubtotal,
+                computedMarketSubtotal, resolvedItemsSubtotal, resolvedOrderType);
 
         User currentUser = getCurrentUserSafely();
         boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
@@ -778,7 +776,34 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .priorityProduction(order.getPriorityProduction())
                 .cancelledByRole(order.getCancelledByRole())
                 .cancelledAt(order.getCancelledAt())
+                .pricingBreakdown(pricing)
                 .build();
+    }
+
+    private PricingBreakdownDTO checkoutPricing(CheckoutOrder order, boolean readyForConfirm,
+                                                BigDecimal customSubtotal, BigDecimal marketSubtotal,
+                                                BigDecimal itemsSubtotal, String orderType) {
+        String status = order.getStatus();
+        if (status == null || "CANCELLED".equalsIgnoreCase(status)) {
+            return null;
+        }
+        Long version = order.getSummaryVersion() != null ? order.getSummaryVersion() : 1L;
+        if (Set.of("PENDING_QUOTE", "QUOTED").contains(status)) {
+            BigDecimal shippingFee = OrderPricing.checkoutShippingFee(order, this::resolveDefaultShippingFee);
+            if (!readyForConfirm) {
+                return OrderPricing.pendingQuote(version, customSubtotal, marketSubtotal, shippingFee);
+            }
+            BenefitScope scope = switch (orderType) {
+                case "CUSTOM" -> BenefitScope.CUSTOM;
+                case "MIXED" -> BenefitScope.MIXED;
+                default -> BenefitScope.MARKETPLACE;
+            };
+            return OrderPricing.estimate(subscriptionBenefitService, order.getUser(), scope,
+                    version, customSubtotal, marketSubtotal, shippingFee);
+        }
+        return OrderPricing.locked(version, customSubtotal, marketSubtotal, itemsSubtotal, order.getDiscountAmount(),
+                order.getShippingFee(), order.getShippingDiscountAmount(), order.getTotalAmount(),
+                order.getAppliedSubscriptionId(), order.getAppliedSubscriptionName(), order.getPriorityProduction());
     }
 
     @Override
@@ -905,14 +930,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
 
         List<Order> marketOrders = orderRepository.findByCheckoutOrderId(id);
-        BigDecimal marketSubtotal = marketOrders.stream()
-                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal marketSubtotal = OrderPricing.marketplaceSubtotal(marketOrders);
 
         BigDecimal itemsSubtotal = customSubtotal.add(marketSubtotal);
-        BigDecimal shippingFee = (co.getShippingFee() != null && co.getShippingFee().compareTo(BigDecimal.ZERO) > 0)
-                ? co.getShippingFee()
-                : resolveDefaultShippingFee();
+        BigDecimal shippingFee = OrderPricing.checkoutShippingFee(co, this::resolveDefaultShippingFee);
         BigDecimal totalAmount = itemsSubtotal.add(shippingFee);
 
         co.setItemsSubtotal(itemsSubtotal);

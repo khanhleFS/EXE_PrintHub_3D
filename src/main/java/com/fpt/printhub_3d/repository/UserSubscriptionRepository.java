@@ -29,6 +29,10 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
            "AND us.endDate > CURRENT_TIMESTAMP ORDER BY us.endDate DESC")
     List<UserSubscription> findActiveSubscriptionsByUser(@Param("user") User user);
 
+    @Query("SELECT CASE WHEN COUNT(us) > 0 THEN true ELSE false END FROM UserSubscription us " +
+           "WHERE us.user = :user AND us.endDate <= CURRENT_TIMESTAMP")
+    boolean hasExpiredSubscription(@Param("user") User user);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT us FROM UserSubscription us WHERE us.user = :user " +
            "AND us.isActive = true " +
