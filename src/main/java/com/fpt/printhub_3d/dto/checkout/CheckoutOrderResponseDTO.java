@@ -13,7 +13,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-@Builder
+@Builder(toBuilder = true)
 @Schema(description = "Thông tin chi tiết Đơn thanh toán cha")
 public record CheckoutOrderResponseDTO(
         UUID id,

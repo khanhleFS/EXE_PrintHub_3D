@@ -44,6 +44,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -403,6 +404,10 @@ public class CustomOrderServiceImpl implements CustomOrderService {
 
     @Override
     public void quoteCustomOrder(UUID id, CustomOrderQuoteRequestDTO request, User admin) {
+        CheckoutOrder parent = checkoutOrderRepository != null
+                ? customOrderRepository.findCheckoutId(id)
+                        .flatMap(checkoutOrderRepository::findLockedById).orElse(null)
+                : null;
         CustomOrder order = customOrderRepository.findLockedById(id)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in"));
 
@@ -415,10 +420,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn giá sản phẩm phải lớn hơn 0 VND");
         }
 
-        CheckoutOrder parent = null;
-        if (order.getCheckoutOrder() != null && checkoutOrderRepository != null) {
-            parent = checkoutOrderRepository.findLockedById(order.getCheckoutOrder().getId())
-                    .orElse(order.getCheckoutOrder());
+        if (parent != null) {
             if (!Set.of("PENDING_QUOTE", "QUOTED").contains(parent.getStatus())) {
                 throw new ApiException(
                         CheckoutOrderErrorCode.INVALID_ORDER_TRANSITION,
@@ -518,11 +520,33 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : (p != null ? p.getGateway() : "PAYOS");
         String paymentStatus = p != null ? p.getStatus() : "PENDING";
 
-        String target = request.getEffectiveTarget();
+        String target = orderTransitionPolicy.normalizeTargetStatus(request.getEffectiveTarget());
+        if ("ACCEPTED".equals(target)) {
+            if (user == null || !order.getBuyer().getId().equals(user.getId())) {
+                throw new ApiException(CommonErrorCode.FORBIDDEN, "Chỉ người đặt mới có quyền duyệt báo giá");
+            }
+            if (order.getCheckoutOrder() != null) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Vui lòng xác nhận báo giá trên đơn thanh toán.");
+            }
+            if (Set.of("QUOTED", "ACCEPTED", "PAID").contains(order.getStatus())
+                    && !order.getQuoteVersion().equals(request.quoteVersion())) {
+                throw customPricingConflict(order, CustomPrintErrorCode.CONFIRMATION_VERSION_CONFLICT,
+                        standalonePricing(order));
+            }
+            if ("ACCEPTED".equals(order.getStatus()) || "PAID".equals(order.getStatus())) {
+                var pricing = standalonePricing(order);
+                if (request.expectedTotalPayable() != null
+                        && request.expectedTotalPayable().compareTo(pricing.totalPayable()) != 0) {
+                    throw customPricingConflict(order, CustomPrintErrorCode.CONFIRMATION_PRICE_CHANGED, pricing);
+                }
+                return;
+            }
+        }
+
         String resolvedStatus = orderTransitionPolicy.validateAndResolveNextStatus(
                 OrderTransitionPolicy.OrderType.CUSTOM,
                 order.getStatus(),
-                target,
+                request.getEffectiveTarget(),
                 paymentMethod,
                 paymentStatus,
                 user,
@@ -530,38 +554,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         );
 
         if ("ACCEPTED".equals(resolvedStatus)) {
-            String method = request.paymentMethod();
-            if (method == null || !"PAYOS".equalsIgnoreCase(method)) {
-                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn in 3D cá nhân hóa chỉ hỗ trợ thanh toán trực tuyến PayOS.");
-            }
-            order.setPaymentMethod("PAYOS");
-            if (order.getCheckoutOrder() == null) {
-                BigDecimal lineSub = resolveLineTotal(order);
-                BigDecimal baseShip = order.getShippingFee() != null ? order.getShippingFee() : resolveDefaultShippingFee();
-                if (subscriptionBenefitService != null) {
-                    SubscriptionBenefitService.AppliedBenefitSnapshot snap = subscriptionBenefitService.reserveAndApplyBenefits(
-                            order.getBuyer(),
-                            SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER,
-                            order.getId(),
-                            SubscriptionBenefitService.BenefitScope.CUSTOM,
-                            lineSub,
-                            baseShip
-                    );
-                    order.setSubtotalAmount(snap.itemsSubtotal());
-                    order.setShippingFee(snap.baseShippingFee());
-                    order.setDiscountAmount(snap.discountAmount());
-                    order.setShippingDiscountAmount(snap.shippingDiscountAmount());
-                    order.setAppliedSubscriptionId(snap.appliedSubscriptionId());
-                    order.setAppliedSubscriptionName(snap.appliedSubscriptionName());
-                    order.setPriorityProduction(snap.priorityProduction());
-                } else {
-                    order.setSubtotalAmount(lineSub);
-                    order.setShippingFee(baseShip);
-                    order.setDiscountAmount(BigDecimal.ZERO);
-                    order.setShippingDiscountAmount(BigDecimal.ZERO);
-                    order.setPriorityProduction(false);
-                }
-            }
+            confirmCustomQuote(order, request);
         } else if ("CANCELLED".equals(resolvedStatus)) {
             boolean isAdminActor = user != null && user.getRole() == UserRole.ADMIN;
             String reason = request.getEffectiveCancelReason();
@@ -625,6 +618,55 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                         "/quotations");
             }
         }
+    }
+
+    private void confirmCustomQuote(CustomOrder order, CustomOrderStatusRequestDTO request) {
+        if (!"PAYOS".equalsIgnoreCase(request.paymentMethod())) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn in 3D chỉ hỗ trợ thanh toán trực tuyến PayOS.");
+        }
+        BigDecimal subtotal = resolveLineTotal(order);
+        if (subtotal.signum() <= 0) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Báo giá chưa có giá trị hợp lệ.");
+        }
+        BigDecimal shippingFee = order.getShippingFee() != null ? order.getShippingFee() : resolveDefaultShippingFee();
+        SubscriptionBenefitService.BenefitScope scope = SubscriptionBenefitService.BenefitScope.CUSTOM;
+        SubscriptionBenefitService.AppliedBenefitSnapshot snapshot;
+        if (subscriptionBenefitService != null) {
+            snapshot = subscriptionBenefitService.reserveAndApplyBenefits(order.getBuyer(),
+                    SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, order.getId(), scope, subtotal,
+                    shippingFee, subtotal, BigDecimal.ZERO, preview -> validateCustomPrice(order, request,
+                            OrderPricing.fromPreview(order.getQuoteVersion(), subtotal, BigDecimal.ZERO, preview)));
+        } else {
+            validateCustomPrice(order, request, OrderPricing.estimate(null, order.getBuyer(), scope,
+                    order.getQuoteVersion(), subtotal, BigDecimal.ZERO, shippingFee));
+            snapshot = SubscriptionBenefitService.AppliedBenefitSnapshot.empty(subtotal, shippingFee);
+        }
+        order.setPaymentMethod("PAYOS");
+        order.setSubtotalAmount(snapshot.itemsSubtotal());
+        order.setShippingFee(snapshot.baseShippingFee());
+        order.setDiscountAmount(snapshot.discountAmount());
+        order.setShippingDiscountAmount(snapshot.shippingDiscountAmount());
+        order.setAppliedSubscriptionId(snapshot.appliedSubscriptionId());
+        order.setAppliedSubscriptionName(snapshot.appliedSubscriptionName());
+        order.setPriorityProduction(snapshot.priorityProduction());
+
+        Payment payment = new Payment();
+        payment.setCustomOrder(order);
+        QuotePayment.prepare(paymentRepository, payment, snapshot.finalTotal());
+    }
+
+    private void validateCustomPrice(CustomOrder order, CustomOrderStatusRequestDTO request, PricingBreakdownDTO estimate) {
+        if (request.expectedTotalPayable() == null
+                || request.expectedTotalPayable().compareTo(estimate.totalPayable()) != 0) {
+            throw customPricingConflict(order, CustomPrintErrorCode.CONFIRMATION_PRICE_CHANGED, estimate);
+        }
+        QuotePayment.requirePayable(estimate.totalPayable());
+    }
+
+    private ApiException customPricingConflict(CustomOrder order, CustomPrintErrorCode error,
+                                               PricingBreakdownDTO pricing) {
+        return new ApiException(error, Map.of(
+                "id", order.getId(), "quoteVersion", order.getQuoteVersion(), "pricingBreakdown", pricing));
     }
 
     @Override

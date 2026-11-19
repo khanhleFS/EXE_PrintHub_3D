@@ -33,5 +33,18 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     List<Order> findByCheckoutOrderId(UUID checkoutOrderId);
 
+    interface ExpiryCandidate {
+        UUID getId();
+        UUID getCheckoutId();
+    }
+
+    @Query("""
+            SELECT o.id AS id, co.id AS checkoutId FROM Order o LEFT JOIN o.checkoutOrder co
+            WHERE o.status = 'PENDING' AND (o.paymentDueAt < :now
+                  OR (o.paymentDueAt IS NULL AND o.createdAt < :createdBefore))
+            """)
+    List<ExpiryCandidate> findPendingExpiryCandidates(@Param("now") Instant now,
+                                                       @Param("createdBefore") Instant createdBefore);
+
     boolean existsByBuyerId(UUID buyerId);
 }

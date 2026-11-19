@@ -7,6 +7,7 @@ import com.fpt.printhub_3d.entity.UserSubscription;
 
 import java.math.BigDecimal;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 public interface SubscriptionBenefitService {
 
@@ -91,6 +92,12 @@ public interface SubscriptionBenefitService {
     }
 
     void commitAppliedBenefits(UsageTargetType targetType, UUID targetId);
+
+    AppliedBenefitSnapshot reserveAndApplyBenefits(
+            User user, UsageTargetType targetType, UUID targetId, BenefitScope scope,
+            BigDecimal itemsSubtotal, BigDecimal baseShippingFee, BigDecimal customSubtotal,
+            BigDecimal marketplaceSubtotal, Consumer<BenefitPreviewResponseDTO> validatePrice
+    );
 
     void releaseReservedBenefits(UsageTargetType targetType, UUID targetId);
 

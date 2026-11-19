@@ -1,8 +1,10 @@
 package com.fpt.printhub_3d.job;
 
+import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.Payment;
 import com.fpt.printhub_3d.repository.OrderRepository;
+import com.fpt.printhub_3d.repository.CheckoutOrderRepository;
 import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.service.InventoryService;
 import com.fpt.printhub_3d.service.NotificationService;
@@ -14,7 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @Component
@@ -22,6 +24,7 @@ import java.util.List;
 public class OrderExpiryJob {
 
     private final OrderRepository orderRepository;
+    private final CheckoutOrderRepository checkoutOrderRepository;
     private final PaymentRepository paymentRepository;
     private final InventoryService inventoryService;
     private final NotificationService notificationService;
@@ -36,30 +39,20 @@ public class OrderExpiryJob {
     public void expirePendingOrders() {
         try {
             Instant now = Instant.now();
-            List<Order> pendingOrders = orderRepository.findAll().stream()
-                    .filter(o -> "PENDING".equals(o.getStatus()))
-                    .filter(o -> {
-                        String pMethod = o.getPaymentMethod() != null ? o.getPaymentMethod()
-                                : (o.getCheckoutOrder() != null ? o.getCheckoutOrder().getPaymentMethod() : null);
-                        // Đơn COD không có hạn thanh toán online trước, không tự động expire theo cổng thanh toán
-                        if ("COD".equalsIgnoreCase(pMethod)) {
-                            return false;
-                        }
-                        if (o.getPaymentDueAt() != null) {
-                            return o.getPaymentDueAt().isBefore(now);
-                        }
-                        // Fallback: nếu paymentDueAt null thì tính quá 15 phút kể từ lúc tạo cho đơn PAYOS
-                        return o.getCreatedAt() != null && o.getCreatedAt().isBefore(now.minus(15, ChronoUnit.MINUTES));
-                    })
-                    .toList();
-
-            if (pendingOrders.isEmpty()) {
-                return;
-            }
-
-            log.info("[OrderExpiryJob] Tìm thấy {} đơn hàng PENDING quá hạn thanh toán. Đang xử lý giải phóng tồn kho...", pendingOrders.size());
-
-            for (Order order : pendingOrders) {
+            for (var candidate : orderRepository.findPendingExpiryCandidates(now, now.minus(15, ChronoUnit.MINUTES))) {
+                CheckoutOrder checkout = candidate.getCheckoutId() != null
+                        ? checkoutOrderRepository.findLockedById(candidate.getCheckoutId()).orElse(null) : null;
+                if (checkout != null && !Set.of("PENDING_QUOTE", "QUOTED").contains(checkout.getStatus())) {
+                    // Checkout đã xác nhận dùng hạn của giao dịch PayOS cha.
+                    continue;
+                }
+                Order order = orderRepository.findLockedById(candidate.getId()).orElse(null);
+                if (order == null || !"PENDING".equals(order.getStatus())
+                        || "COD".equalsIgnoreCase(order.getPaymentMethod())
+                        || (checkout != null && "COD".equalsIgnoreCase(checkout.getPaymentMethod()))
+                        || (order.getPaymentDueAt() != null && !order.getPaymentDueAt().isBefore(now))) {
+                    continue;
+                }
                 Payment payment = paymentRepository.findByOrderId(order.getId()).orElse(null);
                 if (payment != null && "SUCCESS".equals(payment.getStatus())) {
                     log.info("[OrderExpiryJob] Đơn [{}] đã thanh toán thành công, bỏ qua expire.", order.getId());

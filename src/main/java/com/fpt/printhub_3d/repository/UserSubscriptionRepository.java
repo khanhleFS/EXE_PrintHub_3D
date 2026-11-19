@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -36,6 +37,10 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT us FROM UserSubscription us WHERE us.user = :user " +
            "AND us.isActive = true " +
-           "AND us.endDate > CURRENT_TIMESTAMP ORDER BY us.endDate DESC")
+           "AND us.endDate > CURRENT_TIMESTAMP ORDER BY us.id")
     List<UserSubscription> findLockedActiveSubscriptionsByUser(@Param("user") User user);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT us FROM UserSubscription us WHERE us.id IN :ids ORDER BY us.id")
+    List<UserSubscription> findLockedByIds(@Param("ids") Collection<UUID> ids);
 }

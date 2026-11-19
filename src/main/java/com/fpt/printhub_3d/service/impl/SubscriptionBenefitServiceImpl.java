@@ -20,6 +20,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.*;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -112,9 +114,13 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
                 marketplaceSubtotal
         );
 
+        return toPreview(user, eval);
+    }
+
+    private BenefitPreviewResponseDTO toPreview(User user, EvaluationResult eval) {
         UserSubscription mainSub = resolveMainSubscription(eval);
         UserSubscription appliedSub = resolveAppliedSubscription(eval);
-        boolean expired = activeSubs.isEmpty() && user != null
+        boolean expired = !eval.hasActiveSubscription() && user != null
                 && userSubscriptionRepository.hasExpiredSubscription(user);
         return BenefitPreviewResponseDTO.builder()
                 .hasActiveSubscription(eval.hasActiveSubscription())
@@ -167,6 +173,17 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
             BigDecimal customSubtotal,
             BigDecimal marketplaceSubtotal
     ) {
+        return reserveAndApplyBenefits(user, targetType, targetId, scope, itemsSubtotal, baseShippingFee,
+                customSubtotal, marketplaceSubtotal, null);
+    }
+
+    @Override
+    @Transactional
+    public AppliedBenefitSnapshot reserveAndApplyBenefits(
+            User user, UsageTargetType targetType, UUID targetId, BenefitScope scope,
+            BigDecimal itemsSubtotal, BigDecimal baseShippingFee, BigDecimal customSubtotal,
+            BigDecimal marketplaceSubtotal, Consumer<BenefitPreviewResponseDTO> validatePrice
+    ) {
         BigDecimal safeSubtotal = nonNegative(itemsSubtotal);
         BigDecimal safeShip = nonNegative(baseShippingFee);
         if (user == null || targetType == null || targetId == null) {
@@ -179,15 +196,33 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
                 List.of("RESERVED", "APPLIED")
         );
         if (!existingActive.isEmpty()) {
-            return snapshotFromExistingLogs(existingActive, safeSubtotal, safeShip);
+            AppliedBenefitSnapshot snapshot = snapshotFromExistingLogs(existingActive, safeSubtotal, safeShip);
+            if (validatePrice != null) {
+                validatePrice.accept(BenefitPreviewResponseDTO.builder()
+                        .itemsSubtotal(snapshot.itemsSubtotal())
+                        .discountAmount(snapshot.discountAmount())
+                        .baseShippingFee(snapshot.baseShippingFee())
+                        .shippingDiscountAmount(snapshot.shippingDiscountAmount())
+                        .finalShippingFee(snapshot.finalShippingFee())
+                        .finalTotal(snapshot.finalTotal())
+                        .appliedSubscriptionId(snapshot.appliedSubscriptionId())
+                        .appliedSubscriptionName(snapshot.appliedSubscriptionName())
+                        .priorityProduction(snapshot.priorityProduction())
+                        .benefitStatus(BenefitStatus.APPLIED)
+                        .build());
+            }
+            return snapshot;
         }
 
         List<UserSubscription> lockedSubs = safeList(
                 userSubscriptionRepository.findLockedActiveSubscriptionsByUser(user)
         );
-        if (lockedSubs.isEmpty()) {
+        if (lockedSubs.isEmpty() && validatePrice == null) {
             return AppliedBenefitSnapshot.empty(safeSubtotal, safeShip);
         }
+        lockedSubs = lockedSubs.stream()
+                .sorted(Comparator.comparing(UserSubscription::getEndDate, Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
 
         EvaluationResult eval = evaluate(
                 lockedSubs,
@@ -198,6 +233,9 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
                 marketplaceSubtotal
         );
 
+        if (validatePrice != null) {
+            validatePrice.accept(toPreview(user, eval));
+        }
         List<SubscriptionUsageLog> logsToSave = new ArrayList<>();
         if (eval.discountSub() != null && eval.discountAmount().compareTo(BigDecimal.ZERO) > 0) {
             UserSubscription dSub = eval.discountSub();
@@ -273,12 +311,18 @@ public class SubscriptionBenefitServiceImpl implements SubscriptionBenefitServic
             return;
         }
 
+        Set<UUID> subscriptionIds = reserved.stream().map(SubscriptionUsageLog::getUserSubscription)
+                .filter(Objects::nonNull).map(UserSubscription::getId).collect(Collectors.toSet());
+        Map<UUID, UserSubscription> lockedSubs = subscriptionIds.isEmpty() ? Map.of()
+                : userSubscriptionRepository.findLockedByIds(subscriptionIds).stream()
+                        .collect(Collectors.toMap(UserSubscription::getId, sub -> sub));
         Instant now = Instant.now();
         for (SubscriptionUsageLog entry : reserved) {
             entry.setStatus("RELEASED");
             entry.setReleasedAt(now);
 
-            UserSubscription sub = entry.getUserSubscription();
+            UserSubscription sub = entry.getUserSubscription() != null
+                    ? lockedSubs.get(entry.getUserSubscription().getId()) : null;
             if (sub == null) {
                 continue;
             }

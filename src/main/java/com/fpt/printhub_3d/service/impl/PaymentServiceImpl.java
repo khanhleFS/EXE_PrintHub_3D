@@ -27,7 +27,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import vn.payos.PayOS;
+import vn.payos.exception.APIException;
 import vn.payos.model.v2.paymentRequests.CreatePaymentLinkRequest;
+import vn.payos.model.v2.paymentRequests.PaymentLink;
+import vn.payos.model.v2.paymentRequests.PaymentLinkStatus;
 import vn.payos.model.webhooks.Webhook;
 import vn.payos.model.webhooks.WebhookData;
 
@@ -42,7 +45,6 @@ import java.util.UUID;
 @Transactional
 public class PaymentServiceImpl implements PaymentService {
 
-    private static final BigDecimal DEFAULT_CUSTOM_SHIPPING_FEE = new BigDecimal("30000");
     private static final BigDecimal PAYOS_MIN_AMOUNT = new BigDecimal("2000");
 
     private final OrderRepository orders;
@@ -131,6 +133,9 @@ public class PaymentServiceImpl implements PaymentService {
             if (!order.getBuyer().getId().equals(userId)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN);
             }
+            if (order.getCheckoutOrder() != null) {
+                throw bad("Vui lòng thanh toán theo đơn checkout.");
+            }
             if (!"PENDING".equals(order.getStatus())) {
                 throw bad("Đơn không ở trạng thái chờ thanh toán");
             }
@@ -143,44 +148,21 @@ public class PaymentServiceImpl implements PaymentService {
             if (!custom.getBuyer().getId().equals(userId)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN);
             }
+            if (custom.getCheckoutOrder() != null) {
+                throw bad("Vui lòng thanh toán theo đơn checkout.");
+            }
             if (!"ACCEPTED".equals(custom.getStatus())) {
                 throw bad("Hãy chấp nhận báo giá trước khi thanh toán");
             }
             BigDecimal lineTotal = custom.getQuotedPrice();
-            if ((lineTotal == null || lineTotal.compareTo(BigDecimal.ZERO) <= 0) && custom.getUnitQuotedPrice() != null) {
-                int qty = custom.getQuantity() != null && custom.getQuantity() > 0 ? custom.getQuantity() : 1;
-                lineTotal = custom.getUnitQuotedPrice().multiply(BigDecimal.valueOf(qty));
+            if ((lineTotal == null || lineTotal.signum() <= 0) && custom.getUnitQuotedPrice() != null) {
+                int quantity = custom.getQuantity() != null && custom.getQuantity() > 0 ? custom.getQuantity() : 1;
+                lineTotal = custom.getUnitQuotedPrice().multiply(BigDecimal.valueOf(quantity));
             }
-            if (custom.getCheckoutOrder() == null && subscriptionBenefitService != null) {
-                BigDecimal baseSub = custom.getSubtotalAmount() != null ? custom.getSubtotalAmount() : lineTotal;
-                BigDecimal baseShip = custom.getShippingFee() != null ? custom.getShippingFee() : DEFAULT_CUSTOM_SHIPPING_FEE;
-                SubscriptionBenefitService.AppliedBenefitSnapshot snap = subscriptionBenefitService.reserveAndApplyBenefits(
-                        custom.getBuyer(),
-                        SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER,
-                        custom.getId(),
-                        SubscriptionBenefitService.BenefitScope.CUSTOM,
-                        baseSub,
-                        baseShip
-                );
-                custom.setSubtotalAmount(snap.itemsSubtotal());
-                custom.setShippingFee(snap.baseShippingFee());
-                custom.setDiscountAmount(snap.discountAmount());
-                custom.setShippingDiscountAmount(snap.shippingDiscountAmount());
-                custom.setAppliedSubscriptionId(snap.appliedSubscriptionId());
-                custom.setAppliedSubscriptionName(snap.appliedSubscriptionName());
-                custom.setPriorityProduction(snap.priorityProduction());
-                custom.setUpdatedAt(Instant.now());
-                customs.save(custom);
-                total = snap.finalTotal();
-            } else if (custom.getSubtotalAmount() != null) {
-                BigDecimal sub = custom.getSubtotalAmount();
-                BigDecimal disc = custom.getDiscountAmount() != null ? custom.getDiscountAmount() : BigDecimal.ZERO;
-                BigDecimal ship = custom.getShippingFee() != null ? custom.getShippingFee() : BigDecimal.ZERO;
-                BigDecimal shipDisc = custom.getShippingDiscountAmount() != null ? custom.getShippingDiscountAmount() : BigDecimal.ZERO;
-                total = sub.subtract(disc).max(BigDecimal.ZERO).add(ship.subtract(shipDisc).max(BigDecimal.ZERO));
-            } else {
-                total = lineTotal;
-            }
+            total = custom.getSubtotalAmount() != null
+                    ? OrderPricing.totalPayable(custom.getSubtotalAmount(), custom.getDiscountAmount(),
+                            custom.getShippingFee(), custom.getShippingDiscountAmount())
+                    : lineTotal;
             payment = payments.findByCustomOrderId(custom.getId()).orElseGet(Payment::new);
 
         } else if ("CHECKOUT_ORDER".equals(request.orderType())) {
@@ -191,6 +173,9 @@ public class PaymentServiceImpl implements PaymentService {
             }
             if (!"CONFIRMED".equals(checkoutOrder.getStatus())) {
                 throw bad("Đơn không ở trạng thái có thể thanh toán");
+            }
+            if ("COD".equalsIgnoreCase(checkoutOrder.getPaymentMethod())) {
+                throw bad("Đơn đã chọn thanh toán khi nhận hàng");
             }
             List<CustomOrder> customsList = customs.findByCheckoutOrderId(checkoutOrder.getId());
             boolean hasUnacceptedCustom = customsList.stream()
@@ -234,7 +219,22 @@ public class PaymentServiceImpl implements PaymentService {
             throw bad("Đơn đã chọn thanh toán khi nhận hàng");
         }
 
-        if (payment.getCheckoutUrl() != null && "PENDING".equals(payment.getStatus())) {
+        boolean quotedPayment = checkoutOrder != null || custom != null;
+        if (quotedPayment) {
+            QuotePayment.requirePayable(total);
+            if ("CANCELLED".equals(payment.getStatus()) || "EXPIRED".equals(payment.getStatus())
+                    || (payment.getExpiresAt() != null && !payment.getExpiresAt().isAfter(Instant.now()))) {
+                throw bad("Giao dịch đã hủy hoặc hết hạn");
+            }
+            if ("PENDING".equals(payment.getStatus()) && payment.getTransactionId() != null) {
+                if (payment.getAmount().compareTo(total) != 0) {
+                    throw bad("Số tiền giao dịch không khớp giá đã xác nhận");
+                }
+                if (payment.getCheckoutUrl() != null) {
+                    return response(payment);
+                }
+            }
+        } else if (payment.getCheckoutUrl() != null && "PENDING".equals(payment.getStatus())) {
             try {
                 var live = payOS.paymentRequests().get(Long.valueOf(payment.getTransactionId()));
                 String liveStatus = live != null ? String.valueOf(live.getStatus()) : "UNKNOWN";
@@ -261,14 +261,10 @@ public class PaymentServiceImpl implements PaymentService {
             }
         }
 
-        long code = UUID.randomUUID().getMostSignificantBits() & 0x1FFFFFFFFFFFFFL;
-        if (code <= 0) {
-            code = System.currentTimeMillis();
-        }
-        while (payments.findByTransactionId(String.valueOf(code)).isPresent()) {
-            code = (UUID.randomUUID().getMostSignificantBits() & 0x1FFFFFFFFFFFFFL) + 1;
-        }
-        Instant expiry = Instant.now().plusSeconds(900);
+        boolean prepared = quotedPayment && "PENDING".equals(payment.getStatus()) && payment.getTransactionId() != null;
+        long code = prepared ? Long.parseLong(payment.getTransactionId()) : QuotePayment.nextOrderCode(payments);
+        Instant expiry = prepared && payment.getExpiresAt() != null
+                ? payment.getExpiresAt() : Instant.now().plusSeconds(900);
 
         String finalReturnUrl = (request.returnUrl() != null && !request.returnUrl().isBlank())
                 ? request.returnUrl() : (returnUrl != null ? returnUrl : "http://localhost:5173/payment-result");
@@ -282,14 +278,31 @@ public class PaymentServiceImpl implements PaymentService {
             description = description.substring(0, 25);
         }
 
-        var link = payOS.paymentRequests().create(CreatePaymentLinkRequest.builder()
+        var linkRequest = CreatePaymentLinkRequest.builder()
                 .orderCode(code)
                 .amount(total.setScale(0, java.math.RoundingMode.HALF_UP).longValue())
                 .description(description)
                 .returnUrl(finalReturnUrl.replace("/#/", "/"))
                 .cancelUrl(finalCancelUrl.replace("/#/", "/"))
                 .expiredAt(expiry.getEpochSecond())
-                .build());
+                .build();
+        String checkoutUrl;
+        try {
+            checkoutUrl = payOS.paymentRequests().create(linkRequest).getCheckoutUrl();
+        } catch (RuntimeException createFailure) {
+            if (!prepared) {
+                throw createFailure;
+            }
+            // A timed-out create can have succeeded remotely. Recover only the same order code.
+            PaymentLink live = payOS.paymentRequests().get(code);
+            if (live == null || !Long.valueOf(code).equals(live.getOrderCode())
+                    || !Long.valueOf(total.longValueExact()).equals(live.getAmount())
+                    || live.getStatus() != PaymentLinkStatus.PENDING || live.getId() == null
+                    || !live.getId().matches("[0-9a-fA-F-]{32,36}")) {
+                throw createFailure;
+            }
+            checkoutUrl = "https://pay.payos.vn/web/" + live.getId();
+        }
 
         payment.setOrder(order);
         payment.setCustomOrder(custom);
@@ -299,7 +312,7 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setGateway("PAYOS");
         payment.setStatus("PENDING");
         payment.setTransactionId(String.valueOf(code));
-        payment.setCheckoutUrl(link.getCheckoutUrl());
+        payment.setCheckoutUrl(checkoutUrl);
         payment.setExpiresAt(expiry);
 
         if (payment.getCreatedAt() == null) {
@@ -334,8 +347,7 @@ public class PaymentServiceImpl implements PaymentService {
                     .build();
         }
 
-        var existing = payments.findByTransactionId(String.valueOf(data.getOrderCode()));
-        if (existing.isEmpty()) {
+        if (!payments.existsByTransactionId(String.valueOf(data.getOrderCode()))) {
             return PayOSWebhookResponseDTO.builder()
                     .success(true)
                     .message("Webhook kiểm tra từ PayOS hoặc giao dịch không tồn tại: " + data.getOrderCode())
@@ -369,6 +381,10 @@ public class PaymentServiceImpl implements PaymentService {
 
                 if ("PAID".equals(liveStatus)) {
                     settle(payment, BigDecimal.valueOf(live.getAmountPaid()));
+                } else if (isQuotePayment(payment)) {
+                    if (canCloseQuote(live)) {
+                        closeQuotePayment(payment, "EXPIRED".equals(liveStatus) ? "EXPIRED" : "CANCELLED");
+                    }
                 } else if ("CANCELLED".equals(liveStatus)) {
                     payment.setStatus("CANCELLED");
                     payment.setUpdatedAt(Instant.now());
@@ -401,50 +417,6 @@ public class PaymentServiceImpl implements PaymentService {
                         }
                     }
 
-                    // Giải phóng ưu đãi tạm giữ cho CustomOrder đơn lẻ khi PayOS bị hủy
-                    if (payment.getCustomOrder() != null && subscriptionBenefitService != null) {
-                        subscriptionBenefitService.releaseReservedBenefits(
-                                SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER,
-                                payment.getCustomOrder().getId());
-                    }
-
-                    // Đồng bộ hủy CheckoutOrder và các đơn con
-                    if (payment.getCheckoutOrder() != null) {
-                        CheckoutOrder checkoutOrder = payment.getCheckoutOrder();
-                        if ("PENDING_QUOTE".equals(checkoutOrder.getStatus())
-                                || "QUOTED".equals(checkoutOrder.getStatus())
-                                || "CONFIRMED".equals(checkoutOrder.getStatus())) {
-                            checkoutOrder.setStatus("CANCELLED");
-                            checkoutOrder.setUpdatedAt(Instant.now());
-                            checkoutOrders.save(checkoutOrder);
-                            if (subscriptionBenefitService != null) {
-                                subscriptionBenefitService.releaseReservedBenefits(
-                                        SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER,
-                                        checkoutOrder.getId());
-                            }
-
-                            List<Order> childOrders = orders.findByCheckoutOrderId(checkoutOrder.getId());
-                            for (Order o : childOrders) {
-                                if ("PENDING".equals(o.getStatus())) {
-                                    o.setStatus("CANCELLED");
-                                    o.setUpdatedAt(Instant.now());
-                                    orders.save(o);
-                                    inventoryService.releaseActiveReservations(o.getId(), "Hủy giao dịch cổng PayOS", "PAYOS_CANCEL_" + payment.getId());
-                                }
-                            }
-                            List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());
-                            for (CustomOrder c : childCustoms) {
-                                if ("REQUESTED".equals(c.getStatus())
-                                        || "QUOTED".equals(c.getStatus())
-                                        || "ACCEPTED".equals(c.getStatus())) {
-                                    c.setStatus("CANCELLED");
-                                    c.setUpdatedAt(Instant.now());
-                                    customs.save(c);
-                                }
-                            }
-                            log.info("Đã đồng bộ hủy CheckoutOrder [{}] và đơn con theo cổng PayOS", checkoutOrder.getId());
-                        }
-                    }
                 }
             } catch (Exception ignored) {
                 // Tránh lỗi 500 nếu PayOS gặp gián đoạn tạm thời
@@ -486,18 +458,128 @@ public class PaymentServiceImpl implements PaymentService {
         return new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
     }
 
+    @Override
+    public void cancelQuotePayment(String orderCode, String reason) {
+        Payment payment = lockPayment(orderCode);
+        if (!isQuotePayment(payment) || !"PENDING".equals(payment.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Giao dịch không còn ở trạng thái chờ thanh toán.");
+        }
+        PaymentLink live = quoteLinkForClosing(orderCode, reason);
+        if (live != null && !canCloseQuote(live)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PayOS chưa xác nhận giao dịch có thể hủy.");
+        }
+        payment.setStatus("CANCELLED");
+        payment.setUpdatedAt(Instant.now());
+        payments.save(payment);
+    }
+
+    @Override
+    public void expireQuotePayment(String orderCode) {
+        Payment payment = lockPayment(orderCode);
+        if (!isQuotePayment(payment) || !"PENDING".equals(payment.getStatus())
+                || payment.getExpiresAt() == null || payment.getExpiresAt().isAfter(Instant.now())) {
+            return;
+        }
+        PaymentLink live = quoteLinkForClosing(orderCode, "Hết hạn thanh toán");
+        if (live != null && live.getStatus() == PaymentLinkStatus.PAID && live.getAmountPaid() != null) {
+            settle(payment, BigDecimal.valueOf(live.getAmountPaid()));
+        } else if (live == null || canCloseQuote(live)) {
+            closeQuotePayment(payment, "EXPIRED");
+        }
+    }
+
+    private PaymentLink quoteLinkForClosing(String orderCode, String reason) {
+        long code = Long.parseLong(orderCode);
+        PaymentLink live;
+        try {
+            live = payOS.paymentRequests().get(code);
+        } catch (APIException ex) {
+            if (ex.getStatusCode().orElse(0) == HttpStatus.NOT_FOUND.value()) {
+                return null;
+            }
+            throw ex;
+        }
+        if (live == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Chưa xác minh được trạng thái PayOS.");
+        }
+        if (live.getStatus() == PaymentLinkStatus.PENDING && Long.valueOf(0).equals(live.getAmountPaid())) {
+            PaymentLink cancelled = payOS.paymentRequests().cancel(code, reason);
+            if (cancelled == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Chưa xác minh được kết quả hủy PayOS.");
+            }
+            return cancelled;
+        }
+        return live;
+    }
+
+    private boolean isQuotePayment(Payment payment) {
+        return payment.getCheckoutOrder() != null || payment.getCustomOrder() != null;
+    }
+
+    private boolean canCloseQuote(PaymentLink live) {
+        return live != null && Long.valueOf(0).equals(live.getAmountPaid())
+                && (live.getStatus() == PaymentLinkStatus.CANCELLED || live.getStatus() == PaymentLinkStatus.EXPIRED
+                        || live.getStatus() == PaymentLinkStatus.FAILED);
+    }
+
+    private void closeQuotePayment(Payment payment, String status) {
+        if (!"PENDING".equals(payment.getStatus())) {
+            return;
+        }
+        Instant now = Instant.now();
+        payment.setStatus(status);
+        payment.setUpdatedAt(now);
+        payments.save(payment);
+
+        CheckoutOrder checkout = payment.getCheckoutOrder();
+        if (checkout != null && "CONFIRMED".equals(checkout.getStatus())) {
+            checkout.setStatus(status);
+            checkout.setUpdatedAt(now);
+            checkoutOrders.save(checkout);
+            if (subscriptionBenefitService != null) {
+                subscriptionBenefitService.releaseReservedBenefits(
+                        SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, checkout.getId());
+            }
+            for (Order order : orders.findByCheckoutOrderId(checkout.getId())) {
+                if ("PENDING".equals(order.getStatus())) {
+                    order.setStatus(status);
+                    order.setUpdatedAt(now);
+                    orders.save(order);
+                    inventoryService.releaseActiveReservations(order.getId(), "Giao dịch PayOS đã đóng", payment.getTransactionId());
+                }
+            }
+            for (CustomOrder custom : customs.findByCheckoutOrderId(checkout.getId())) {
+                if ("ACCEPTED".equals(custom.getStatus())) {
+                    custom.setStatus(status);
+                    custom.setUpdatedAt(now);
+                    customs.save(custom);
+                }
+            }
+        } else if (payment.getCustomOrder() != null && payment.getCustomOrder().getCheckoutOrder() == null
+                && "ACCEPTED".equals(payment.getCustomOrder().getStatus())) {
+            CustomOrder custom = payment.getCustomOrder();
+            custom.setStatus(status);
+            custom.setUpdatedAt(now);
+            customs.save(custom);
+            if (subscriptionBenefitService != null) {
+                subscriptionBenefitService.releaseReservedBenefits(
+                        SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, custom.getId());
+            }
+        }
+    }
+
     private Payment lockPayment(String code) {
-        Payment payment = payments.findByTransactionId(code)
+        PaymentRepository.PaymentTarget target = payments.findTargetByTransactionId(code)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy giao dịch"));
 
-        if (payment.getOrder() != null) {
-            orders.findLockedById(payment.getOrder().getId()).orElseThrow();
-        } else if (payment.getCustomOrder() != null) {
-            customs.findLockedById(payment.getCustomOrder().getId()).orElseThrow();
-        } else if (payment.getCheckoutOrder() != null) {
-            checkoutOrders.findLockedById(payment.getCheckoutOrder().getId()).orElseThrow();
-        } else if (payment.getSubscriptionPurchase() != null) {
-            subscriptionPurchases.findLockedById(payment.getSubscriptionPurchase().getId()).orElseThrow();
+        if (target.getOrderId() != null) {
+            orders.findLockedById(target.getOrderId()).orElseThrow();
+        } else if (target.getCustomOrderId() != null) {
+            customs.findLockedById(target.getCustomOrderId()).orElseThrow();
+        } else if (target.getCheckoutOrderId() != null) {
+            checkoutOrders.findLockedById(target.getCheckoutOrderId()).orElseThrow();
+        } else if (target.getSubscriptionPurchaseId() != null) {
+            subscriptionPurchases.findLockedById(target.getSubscriptionPurchaseId()).orElseThrow();
         }
 
         return payments.findByTransactionId(code).orElseThrow();

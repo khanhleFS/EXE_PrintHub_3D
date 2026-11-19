@@ -61,7 +61,7 @@ Giữ envelope `ApiResponse`, đường dẫn và trường hiện có. Bổ sun
 
 ### C1 xác nhận giá và chờ PayOS
 
-`POST /api/checkout-orders/{id}/confirm`. Trường mới `expectedTotalPayable` gửi kèm phiên bản để backend phát hiện tổng tăng vì quota thay đổi ngay cả khi xưởng chưa đổi báo giá. Backend tính lại từ dữ liệu của mình. Khi triển khai cần phối hợp FE gửi trường này và giữ khả năng đọc các DTO cũ trong thời gian chuyển đổi.
+`POST /api/checkout-orders/{id}/confirm`. FE gửi `expectedTotalPayable` kèm phiên bản cho lần xác nhận giá đầu tiên. Backend tính lại từ dữ liệu của mình. Nếu thiếu số tiền hoặc số tiền khác tổng vừa tính, backend trả HTTP 409 với bảng tiền mới. Các trường đọc cũ vẫn có trên DTO.
 
 ```json
 {
@@ -107,6 +107,8 @@ HTTP 200. Bảng tiền giữ cùng cấu trúc và số tiền như bản dự 
 ```
 
 Đơn custom lẻ dùng `PUT /api/custom-orders/{id}/status` với `status: ACCEPTED`, `paymentMethod: PAYOS`, `quoteVersion` và `expectedTotalPayable`. API đọc chi tiết `GET /api/custom-orders/{id}` trả bảng tiền đã chốt. Đây là luồng đơn lẻ. Với dòng thuộc checkout, FE xác nhận trên đơn cha.
+
+Khi checkout đã xác nhận nhưng `paymentLinkUrl` còn trống, FE có thể gọi lại `POST /api/payments/create-link` cho cùng đơn. Đơn custom lẻ gọi endpoint này sau khi chấp nhận. Backend dùng lại mã giao dịch và tổng đã chốt.
 
 ### C1 đã thu tiền
 
@@ -165,7 +167,7 @@ HTTP 409 trong ví dụ hai đơn tranh lượt freeship cuối. Cùng phiên b�
 }
 ```
 
-`checkout.price_changed` là mã đề xuất. Khi xưởng đổi báo giá, dùng `checkout.version_conflict` hiện có và trả phiên bản mới trong cùng cấu trúc `result`. Với custom lẻ, `result` dùng `quoteVersion` ở cấp đơn. Nếu API đọc bảng tiền lỗi, FE giữ trạng thái lỗi và cho thử lại.
+Khi xưởng đổi báo giá, backend dùng `checkout.version_conflict` và trả phiên bản mới trong cùng cấu trúc `result`. Với custom lẻ, mã tương ứng là `custom_print.price_changed` hoặc `custom_print.version_conflict`, và `result` dùng `quoteVersion` ở cấp đơn. Nếu API đọc bảng tiền lỗi, FE giữ trạng thái lỗi và cho thử lại.
 
 ## Hợp đồng cho BE2
 

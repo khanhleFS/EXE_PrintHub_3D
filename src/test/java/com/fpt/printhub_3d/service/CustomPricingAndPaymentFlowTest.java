@@ -2,12 +2,16 @@ package com.fpt.printhub_3d.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fpt.printhub_3d.common.exception.ApiException;
+import com.fpt.printhub_3d.common.exception.GlobalExceptionHandler;
 import com.fpt.printhub_3d.dto.cart.CartItemRequestDTO;
 import com.fpt.printhub_3d.dto.cart.CartUpdateRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderBatchQuoteRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderBatchQuoteRequestDTO.ItemQuote;
+import com.fpt.printhub_3d.dto.checkout.CheckoutOrderConfirmRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderCreateRequestDTO;
 import com.fpt.printhub_3d.dto.custom_prints.CustomOrderQuoteRequestDTO;
+import com.fpt.printhub_3d.dto.custom_prints.CustomOrderStatusRequestDTO;
+import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
 import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO.PricingStage;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.BenefitPreviewResponseDTO.BenefitStatus;
@@ -24,11 +28,18 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.server.ResponseStatusException;
 import vn.payos.PayOS;
+import vn.payos.model.v2.paymentRequests.CreatePaymentLinkRequest;
+import vn.payos.model.v2.paymentRequests.CreatePaymentLinkResponse;
+import vn.payos.model.v2.paymentRequests.PaymentLink;
+import vn.payos.model.v2.paymentRequests.PaymentLinkStatus;
+import vn.payos.service.blocking.v2.paymentRequests.PaymentRequestsService;
 
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -101,7 +112,8 @@ class CustomPricingAndPaymentFlowTest {
                 userSubscriptionService,
                 payOS,
                 notificationService,
-                mockInventoryService
+                mockInventoryService,
+                benefitService
         );
 
         testUser = new User();
@@ -111,6 +123,249 @@ class CustomPricingAndPaymentFlowTest {
         testCart = new Cart();
         testCart.setId(UUID.randomUUID());
         testCart.setUser(testUser);
+    }
+
+    @Test
+    void returnsFreshQuoteInHttp409WithoutHoldingQuota() {
+        CheckoutOrder checkout = stubQuotedCustomCheckout();
+        CustomOrder design = customLine("QUOTED", "120000");
+        when(customOrderRepository.findByCheckoutOrderId(checkout.getId())).thenReturn(List.of(design));
+        checkout.setSummaryVersion(3L);
+        stubFreeShippingPlan();
+
+        ApiException error = assertThrows(ApiException.class, () -> checkoutOrderService.confirmCheckoutOrder(
+                testUser, checkout.getId(), new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", new BigDecimal("90000"))));
+
+        var response = new GlobalExceptionHandler().handleApiException(error, new MockHttpServletRequest());
+        assertEquals(409, response.getStatusCode().value());
+        assertEquals(409, response.getBody().getCode());
+        assertEquals("checkout.version_conflict", response.getBody().getErrorKey());
+        Map<?, ?> result = (Map<?, ?>) response.getBody().getResult();
+        assertEquals(3L, result.get("summaryVersion"));
+        assertEquals(new BigDecimal("108000"), ((PricingBreakdownDTO) result.get("pricingBreakdown")).totalPayable());
+        verify(userSubscriptionRepository, never()).findLockedActiveSubscriptionsByUser(any());
+        verifyNoInteractions(usageLogRepository, mockPaymentService);
+        verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void exhaustedQuotaRequiresNewApprovalBeforeAnyWrites() {
+        UserSubscription subscription = stubFreeShippingPlan();
+        CheckoutOrder first = stubQuotedCustomCheckout();
+        CheckoutOrder checkout = stubQuotedCustomCheckout();
+        checkoutOrderService.confirmCheckoutOrder(testUser, first.getId(),
+                new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", new BigDecimal("90000")));
+        clearInvocations(usageLogRepository, checkoutOrderRepository, paymentRepository);
+
+        ApiException error = assertThrows(ApiException.class, () -> checkoutOrderService.confirmCheckoutOrder(
+                testUser, checkout.getId(), new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", new BigDecimal("90000"))));
+
+        assertEquals("checkout.price_changed", error.getErrorCode().getErrorKey());
+        Map<?, ?> result = (Map<?, ?>) error.getResult();
+        var updatedPrice = (PricingBreakdownDTO) result.get("pricingBreakdown");
+        assertEquals(BenefitStatus.QUOTA_EXHAUSTED, updatedPrice.benefitStatus());
+        assertEquals(new BigDecimal("120000"), updatedPrice.totalPayable());
+        assertEquals("QUOTED", checkout.getStatus());
+        assertEquals(1, subscription.getFreeShippingUsesUsed());
+        verify(usageLogRepository, never()).saveAll(any());
+        verify(checkoutOrderRepository, never()).save(any());
+        verify(paymentRepository, never()).save(any());
+
+        var accepted = checkoutOrderService.confirmCheckoutOrder(
+                testUser, checkout.getId(), new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", new BigDecimal("120000")));
+        assertEquals(new BigDecimal("120000"), accepted.pricingBreakdown().totalPayable());
+        assertEquals(1, subscription.getFreeShippingUsesUsed());
+    }
+
+    @Test
+    void repeatedConfirmationAndPaymentLinkReuseLockedPriceAndCode() {
+        CheckoutOrder checkout = stubQuotedCustomCheckout();
+        UserSubscription subscription = stubFreeShippingPlan();
+        var request = new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", new BigDecimal("90000"));
+
+        var confirmation = checkoutOrderService.confirmCheckoutOrder(testUser, checkout.getId(), request);
+        assertEquals(PricingStage.LOCKED, confirmation.pricingBreakdown().pricingStage());
+        assertEquals(new BigDecimal("90000"), confirmation.totalAmount());
+        assertEquals(2L, confirmation.summaryVersion());
+
+        ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
+        verify(paymentRepository).save(paymentCaptor.capture());
+        Payment pending = paymentCaptor.getValue();
+        when(paymentRepository.findByCheckoutOrderId(checkout.getId())).thenReturn(Optional.of(pending));
+
+        PaymentRequestsService gateway = mock(PaymentRequestsService.class);
+        when(payOS.paymentRequests()).thenReturn(gateway);
+        CreatePaymentLinkResponse created = mock(CreatePaymentLinkResponse.class);
+        when(created.getCheckoutUrl()).thenReturn("https://example.invalid/c1");
+        when(gateway.create(any(CreatePaymentLinkRequest.class))).thenReturn(created);
+
+        var linkRequest = CreatePaymentLinkRequestDTO.builder()
+                .orderId(checkout.getId()).orderType("CHECKOUT_ORDER").build();
+        var firstLink = paymentService.createPaymentLink(testUser.getId(), linkRequest);
+        var repeated = checkoutOrderService.confirmCheckoutOrder(testUser, checkout.getId(), request);
+        assertEquals(firstLink.paymentLinkUrl(), repeated.paymentLinkUrl());
+        assertEquals(firstLink, paymentService.createPaymentLink(testUser.getId(), linkRequest));
+
+        ArgumentCaptor<CreatePaymentLinkRequest> gatewayRequest = ArgumentCaptor.forClass(CreatePaymentLinkRequest.class);
+        verify(gateway).create(gatewayRequest.capture());
+        assertEquals(90000L, gatewayRequest.getValue().getAmount());
+        assertEquals(pending.getTransactionId(), String.valueOf(gatewayRequest.getValue().getOrderCode()));
+        assertEquals(1, subscription.getFreeShippingUsesUsed());
+        verify(usageLogRepository).saveAll(any());
+    }
+
+    @Test
+    void standaloneAcceptanceLocksQuoteForFuturePaymentRequests() {
+        stubFreeShippingPlan();
+        CustomOrder custom = customLine("QUOTED", "100000");
+        custom.setQuoteVersion(5L);
+        when(customOrderRepository.findLockedById(custom.getId())).thenReturn(Optional.of(custom));
+        when(customOrderRepository.findById(custom.getId())).thenReturn(Optional.of(custom));
+        CustomOrderService customService = new CustomOrderServiceImpl(customOrderRepository, null, paymentRepository,
+                null, notificationService, null, new OrderTransitionPolicy(), null, null,
+                checkoutOrderRepository, orderRepository, storeSettingRepository, benefitService);
+        var request = CustomOrderStatusRequestDTO.builder().status("ACCEPTED").paymentMethod("PAYOS")
+                .quoteVersion(5L).expectedTotalPayable(new BigDecimal("90000")).build();
+
+        customService.updateCustomOrderStatus(custom.getId(), request, testUser);
+        customService.updateCustomOrderStatus(custom.getId(), request, testUser);
+        var pricing = customService.getCustomOrderDetail(custom.getId(), testUser).pricingBreakdown();
+        assertEquals(PricingStage.LOCKED, pricing.pricingStage());
+        assertEquals(new BigDecimal("90000"), pricing.totalPayable());
+        ArgumentCaptor<Payment> confirmationPayment = ArgumentCaptor.forClass(Payment.class);
+        verify(paymentRepository).save(confirmationPayment.capture());
+        assertEquals(custom, confirmationPayment.getValue().getCustomOrder());
+        assertEquals(new BigDecimal("90000"), confirmationPayment.getValue().getAmount());
+        verify(usageLogRepository).saveAll(any());
+    }
+
+    @Test
+    void recoversSamePayosCodeWhenCreateResponseIsLost() {
+        CheckoutOrder checkout = stubQuotedCustomCheckout();
+        stubFreeShippingPlan();
+        checkoutOrderService.confirmCheckoutOrder(testUser, checkout.getId(),
+                new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", new BigDecimal("90000")));
+        ArgumentCaptor<Payment> pendingCaptor = ArgumentCaptor.forClass(Payment.class);
+        verify(paymentRepository).save(pendingCaptor.capture());
+        Payment pending = pendingCaptor.getValue();
+        long code = Long.parseLong(pending.getTransactionId());
+        when(paymentRepository.findByCheckoutOrderId(checkout.getId())).thenReturn(Optional.of(pending));
+        PaymentRequestsService gateway = mock(PaymentRequestsService.class);
+        when(payOS.paymentRequests()).thenReturn(gateway);
+        when(gateway.create(any(CreatePaymentLinkRequest.class))).thenThrow(new IllegalStateException("timeout"));
+        PaymentLink live = mockPaymentLink(PaymentLinkStatus.PENDING);
+        when(live.getOrderCode()).thenReturn(code);
+        when(live.getAmount()).thenReturn(90000L);
+        when(live.getId()).thenReturn("124c33293c934a85be5b7f8761a27a07");
+        when(gateway.get(code)).thenReturn(live);
+
+        var linkRequest = CreatePaymentLinkRequestDTO.builder()
+                .orderId(checkout.getId()).orderType("CHECKOUT_ORDER").build();
+        var recovered = paymentService.createPaymentLink(testUser.getId(), linkRequest);
+        assertEquals("https://pay.payos.vn/web/124c33293c934a85be5b7f8761a27a07", recovered.paymentLinkUrl());
+        assertEquals(Long.toString(code), recovered.orderCode());
+        assertEquals(recovered, paymentService.createPaymentLink(testUser.getId(), linkRequest));
+        verify(gateway).create(any(CreatePaymentLinkRequest.class));
+    }
+
+    @Test
+    void expiryReleasesFreeShippingOnlyOnce() {
+        CheckoutOrder checkout = stubQuotedCustomCheckout();
+        UserSubscription subscription = stubFreeShippingPlan();
+        checkoutOrderService.confirmCheckoutOrder(testUser, checkout.getId(),
+                new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", new BigDecimal("90000")));
+        ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
+        verify(paymentRepository).save(paymentCaptor.capture());
+        Payment payment = paymentCaptor.getValue();
+        payment.setExpiresAt(Instant.now().minusSeconds(10));
+        String code = payment.getTransactionId();
+        PaymentRepository.PaymentTarget source = mock(PaymentRepository.PaymentTarget.class);
+        when(source.getCheckoutOrderId()).thenReturn(checkout.getId());
+        when(paymentRepository.findTargetByTransactionId(code)).thenReturn(Optional.of(source));
+        when(paymentRepository.findByTransactionId(code)).thenReturn(Optional.of(payment));
+
+        SubscriptionUsageLog shipping = SubscriptionUsageLog.builder().userSubscription(subscription)
+                .benefitType("FREE_SHIPPING").status("RESERVED").amountSaved(new BigDecimal("30000")).build();
+        when(usageLogRepository.findByTargetTypeAndTargetIdAndStatus("CHECKOUT_ORDER", checkout.getId(), "RESERVED"))
+                .thenReturn(List.of(shipping));
+        when(userSubscriptionRepository.findLockedByIds(Set.of(subscription.getId()))).thenReturn(List.of(subscription));
+
+        PaymentRequestsService gateway = mock(PaymentRequestsService.class);
+        when(payOS.paymentRequests()).thenReturn(gateway);
+        PaymentLink expired = mockPaymentLink(PaymentLinkStatus.EXPIRED);
+        when(gateway.get(Long.valueOf(code))).thenReturn(expired);
+
+        paymentService.expireQuotePayment(code);
+        paymentService.expireQuotePayment(code);
+
+        assertEquals("EXPIRED", payment.getStatus());
+        assertEquals("EXPIRED", checkout.getStatus());
+        assertEquals("RELEASED", shipping.getStatus());
+        assertEquals(0, subscription.getFreeShippingUsesUsed());
+        verify(gateway).get(Long.valueOf(code));
+        verify(usageLogRepository).findByTargetTypeAndTargetIdAndStatus("CHECKOUT_ORDER", checkout.getId(), "RESERVED");
+    }
+
+    @Test
+    void cancelledStandalonePaymentReleasesQuotaAndCannotCreateAnotherLink() {
+        CustomOrder custom = customLine("ACCEPTED", "100000");
+        Payment payment = new Payment();
+        payment.setCustomOrder(custom);
+        payment.setTransactionId("12345");
+        payment.setStatus("PENDING");
+        payment.setAmount(new BigDecimal("90000"));
+        when(customOrderRepository.findLockedById(custom.getId())).thenReturn(Optional.of(custom));
+        PaymentRepository.PaymentTarget source = mock(PaymentRepository.PaymentTarget.class);
+        when(source.getCustomOrderId()).thenReturn(custom.getId());
+        when(paymentRepository.findTargetByTransactionId("12345")).thenReturn(Optional.of(source));
+        when(paymentRepository.findByTransactionId("12345")).thenReturn(Optional.of(payment));
+
+        UserSubscription subscription = stubFreeShippingPlan();
+        subscription.setFreeShippingUsesUsed(1);
+        var shipping = SubscriptionUsageLog.builder().userSubscription(subscription)
+                .benefitType("FREE_SHIPPING").status("RESERVED").amountSaved(new BigDecimal("30000")).build();
+        when(usageLogRepository.findByTargetTypeAndTargetIdAndStatus("CUSTOM_ORDER", custom.getId(), "RESERVED"))
+                .thenReturn(List.of(shipping));
+        when(userSubscriptionRepository.findLockedByIds(Set.of(subscription.getId()))).thenReturn(List.of(subscription));
+        PaymentRequestsService gateway = mock(PaymentRequestsService.class);
+        when(payOS.paymentRequests()).thenReturn(gateway);
+        PaymentLink cancelled = mockPaymentLink(PaymentLinkStatus.CANCELLED);
+        when(gateway.get(12345L)).thenReturn(cancelled);
+
+        paymentService.verify("12345", testUser.getId());
+        paymentService.verify("12345", testUser.getId());
+        assertEquals("CANCELLED", custom.getStatus());
+        assertEquals("CANCELLED", payment.getStatus());
+        assertEquals(0, subscription.getFreeShippingUsesUsed());
+        verify(usageLogRepository).findByTargetTypeAndTargetIdAndStatus("CUSTOM_ORDER", custom.getId(), "RESERVED");
+        var request = CreatePaymentLinkRequestDTO.builder().orderId(custom.getId()).orderType("CUSTOM_ORDER").build();
+        assertThrows(ResponseStatusException.class, () -> paymentService.createPaymentLink(testUser.getId(), request));
+        verify(gateway, never()).create(any(CreatePaymentLinkRequest.class));
+    }
+
+    private PaymentLink mockPaymentLink(PaymentLinkStatus status) {
+        PaymentLink link = mock(PaymentLink.class);
+        when(link.getStatus()).thenReturn(status);
+        when(link.getAmountPaid()).thenReturn(0L);
+        return link;
+    }
+
+    private CheckoutOrder stubQuotedCustomCheckout() {
+        CheckoutOrder checkout = quotedCheckout("CUSTOM", "30000");
+        checkout.setPaymentMethod("PAYOS");
+        when(checkoutOrderRepository.findLockedById(checkout.getId())).thenReturn(Optional.of(checkout));
+        when(customOrderRepository.findByCheckoutOrderId(checkout.getId()))
+                .thenReturn(List.of(customLine("QUOTED", "100000")));
+        return checkout;
+    }
+
+    private UserSubscription stubFreeShippingPlan() {
+        UserSubscription subscription = stubBenefitPlan("""
+                {"discount":{"percent":10,"appliesTo":["CUSTOM"]},
+                 "shipping":{"freeUsesPerTerm":1,"maxDiscountAmountPerUse":30000,"appliesTo":["CUSTOM"]}}
+                """);
+        when(userSubscriptionRepository.findLockedActiveSubscriptionsByUser(testUser)).thenReturn(List.of(subscription));
+        return subscription;
     }
 
     @Test

@@ -18,6 +18,9 @@ public interface CustomOrderRepository extends JpaRepository<CustomOrder, UUID> 
     @Query("select e from CustomOrder e where e.id = :id")
     Optional<CustomOrder> findLockedById(@Param("id") UUID id);
 
+    @Query("select co.id from CustomOrder c join c.checkoutOrder co where c.id = :id")
+    Optional<UUID> findCheckoutId(@Param("id") UUID id);
+
     long countByAttachmentUrl(String attachmentUrl);
 
     List<CustomOrder> findByBuyerIdOrderByCreatedAtDesc(UUID buyerId);

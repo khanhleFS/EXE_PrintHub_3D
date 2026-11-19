@@ -54,6 +54,11 @@ final class OrderPricing {
                     itemsSubtotal, BigDecimal.ZERO, shippingFee, BigDecimal.ZERO, shippingFee,
                     itemsSubtotal.add(shippingFee), false, null, null, null, null, false);
         }
+        return fromPreview(version, customSubtotal, marketplaceSubtotal, preview);
+    }
+
+    static PricingBreakdownDTO fromPreview(Long version, BigDecimal customSubtotal, BigDecimal marketplaceSubtotal,
+                                          BenefitPreviewResponseDTO preview) {
         return new PricingBreakdownDTO(PricingStage.ESTIMATED, version, customSubtotal, marketplaceSubtotal,
                 preview.getItemsSubtotal(), preview.getDiscountAmount(), preview.getBaseShippingFee(),
                 preview.getShippingDiscountAmount(), preview.getFinalShippingFee(), preview.getFinalTotal(),
@@ -69,13 +74,18 @@ final class OrderPricing {
         BigDecimal baseShipping = zeroIfMissing(shippingFee);
         BigDecimal discountShipping = zeroIfMissing(shippingDiscount);
         BigDecimal finalShipping = baseShipping.subtract(discountShipping).max(BigDecimal.ZERO);
-        BigDecimal payable = savedTotal != null
-                ? savedTotal
-                : itemsSubtotal.subtract(discount).max(BigDecimal.ZERO).add(finalShipping);
+        BigDecimal payable = savedTotal != null ? savedTotal
+                : totalPayable(itemsSubtotal, discount, baseShipping, discountShipping);
         return new PricingBreakdownDTO(PricingStage.LOCKED, version, customSubtotal, marketplaceSubtotal,
                 itemsSubtotal, discount, baseShipping, discountShipping, finalShipping, payable, false,
                 subscriptionId, subscriptionName, subscriptionId != null ? BenefitStatus.APPLIED : null,
                 null, Boolean.TRUE.equals(priorityProduction));
+    }
+
+    static BigDecimal totalPayable(BigDecimal itemsSubtotal, BigDecimal itemDiscount,
+                                  BigDecimal shippingFee, BigDecimal shippingDiscount) {
+        return itemsSubtotal.subtract(zeroIfMissing(itemDiscount)).max(BigDecimal.ZERO)
+                .add(zeroIfMissing(shippingFee).subtract(zeroIfMissing(shippingDiscount)).max(BigDecimal.ZERO));
     }
 
     private static BigDecimal zeroIfMissing(BigDecimal amount) {

@@ -17,8 +17,6 @@ import com.fpt.printhub_3d.dto.order.BlockedActionDTO;
 import com.fpt.printhub_3d.dto.order.OrderItemResponseDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
 import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
-import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
-import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkResponseDTO;
 import com.fpt.printhub_3d.entity.*;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.repository.*;
@@ -333,8 +331,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         checkoutOrder.setItemsSubtotal(marketSubtotal);
-        BigDecimal finalTotal = marketSubtotal.add(baseShipFee);
-        checkoutOrder.setTotalAmount(finalTotal);
+        checkoutOrder.setTotalAmount(marketSubtotal.add(baseShipFee));
 
         if (!customLines.isEmpty()) {
             checkoutOrder.setStatus("PENDING_QUOTE");
@@ -363,7 +360,6 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             checkoutOrder.setTotalAmount(snap.finalTotal());
             checkoutOrder.setUpdatedAt(Instant.now());
             checkoutOrder = checkoutOrderRepository.save(checkoutOrder);
-            finalTotal = snap.finalTotal();
         }
 
         // Tạo CustomOrder cho các dòng thiết kế custom
@@ -443,24 +439,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         cart.setUpdatedAt(Instant.now());
         cartRepository.save(cart);
 
-        String paymentLinkUrl = null;
         if ("CONFIRMED".equals(checkoutOrder.getStatus()) && "PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())) {
-            try {
-                CreatePaymentLinkRequestDTO payRequest = CreatePaymentLinkRequestDTO.builder()
-                        .orderId(checkoutOrder.getId())
-                        .orderType("CHECKOUT_ORDER")
-                        .paymentOption("FULL")
-                        .customAmount(finalTotal)
-                        .description("Don PrintHub " + checkoutOrder.getId().toString().substring(0, 8))
-                        .build();
-                CreatePaymentLinkResponseDTO payResp = paymentService.createPaymentLink(user.getId(), payRequest);
-                paymentLinkUrl = payResp.paymentLinkUrl();
-            } catch (Exception e) {
-                log.error("Lỗi tạo link PayOS khi tạo checkout order {}: {}", checkoutOrder.getId(), e.getMessage());
-            }
+            prepareCheckoutPayment(checkoutOrder);
         }
 
-        return toDTO(checkoutOrder, paymentLinkUrl);
+        return toDTO(checkoutOrder, null);
     }
 
     @Override
@@ -492,141 +475,152 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
 
-        if ("CANCELLED".equals(checkoutOrder.getStatus())) {
+        String status = checkoutOrder.getStatus();
+        if ("CANCELLED".equals(status) || "EXPIRED".equals(status)) {
             throw new ApiException(CheckoutOrderErrorCode.CHECKOUT_ORDER_NOT_FOUND);
         }
-        if (Set.of("PAID", "PREPARING", "PRINTING", "SHIPPING", "COMPLETED").contains(checkoutOrder.getStatus())) {
+
+        Long version = checkoutOrder.getSummaryVersion();
+        if (!Objects.equals(version, request.summaryVersion())) {
+            throw checkoutConflict(checkoutOrder, CheckoutOrderErrorCode.CONFIRMATION_VERSION_CONFLICT,
+                    toDTO(checkoutOrder, null).pricingBreakdown());
+        }
+
+        String storedMethod = checkoutOrder.getPaymentMethod() != null ? checkoutOrder.getPaymentMethod() : "PAYOS";
+        String paymentMethod = request.paymentMethod() != null && !request.paymentMethod().isBlank()
+                ? request.paymentMethod().trim().toUpperCase(Locale.ROOT) : storedMethod.toUpperCase(Locale.ROOT);
+        if (!"PAYOS".equals(paymentMethod) && !"COD".equals(paymentMethod)) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Phương thức thanh toán không hợp lệ");
+        }
+
+        if ("CONFIRMED".equals(status) || "PROCESSING".equals(status) || "PAID".equals(status)) {
+            if (!paymentMethod.equalsIgnoreCase(storedMethod)) {
+                throw new ApiException(CheckoutOrderErrorCode.INVALID_PAYMENT_STATE);
+            }
+            BigDecimal expected = request.expectedTotalPayable();
+            if (expected != null && (checkoutOrder.getTotalAmount() == null
+                    || expected.compareTo(checkoutOrder.getTotalAmount()) != 0)) {
+                throw checkoutConflict(checkoutOrder, CheckoutOrderErrorCode.CONFIRMATION_PRICE_CHANGED,
+                        toDTO(checkoutOrder, null).pricingBreakdown());
+            }
+            if ("CONFIRMED".equals(status) && "COD".equals(paymentMethod)) {
+                checkoutOrder.setStatus("PROCESSING");
+                checkoutOrder.setUpdatedAt(Instant.now());
+                checkoutOrderRepository.save(checkoutOrder);
+            }
+            return toDTO(checkoutOrder, null);
+        }
+        if (!"PENDING_QUOTE".equals(status) && !"QUOTED".equals(status)) {
             throw new ApiException(CheckoutOrderErrorCode.INVALID_PAYMENT_STATE);
         }
 
-        if (request.summaryVersion() != null && !checkoutOrder.getSummaryVersion().equals(request.summaryVersion())) {
-            throw new ApiException(CheckoutOrderErrorCode.CONFIRMATION_VERSION_CONFLICT);
-        }
-
-        List<CustomOrder> customList = customOrderRepository.findByCheckoutOrderId(checkoutOrder.getId());
-        List<CustomOrder> activeCustomList = customList.stream()
+        List<CustomOrder> customList = customOrderRepository.findByCheckoutOrderId(id);
+        List<CustomOrder> activeCustoms = customList.stream()
                 .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
                 .toList();
-        if (!customList.isEmpty() && activeCustomList.isEmpty()) {
-            throw new ApiException(CheckoutOrderErrorCode.CUSTOM_NOT_ALL_QUOTED,
-                    "Tất cả sản phẩm thiết kế trong đơn đã bị hủy");
+        if ((!customList.isEmpty() && activeCustoms.isEmpty())
+                || activeCustoms.stream().anyMatch(c -> !"QUOTED".equals(c.getStatus())
+                        || resolveCustomLineTotal(c).signum() <= 0)) {
+            throw new ApiException(CheckoutOrderErrorCode.CUSTOM_NOT_ALL_QUOTED);
         }
-        for (CustomOrder c : activeCustomList) {
-            if (resolveCustomLineTotal(c).compareTo(BigDecimal.ZERO) <= 0
-                    || "REQUESTED".equalsIgnoreCase(c.getStatus())) {
-                throw new ApiException(CheckoutOrderErrorCode.CUSTOM_NOT_ALL_QUOTED);
-            }
+        if (!activeCustoms.isEmpty() && !"PAYOS".equals(paymentMethod)) {
+            throw new ApiException(CheckoutOrderErrorCode.COD_NOT_ALLOWED_FOR_CUSTOM);
         }
 
-        List<Order> orderList = orderRepository.findByCheckoutOrderId(checkoutOrder.getId());
-        for (Order o : orderList) {
-            List<OrderItem> items = orderItemRepository.findByOrderId(o.getId());
-            for (OrderItem oi : items) {
-                Product p = productRepository.findById(oi.getProduct().getId())
+        List<Order> marketOrders = orderRepository.findByCheckoutOrderId(id).stream()
+                .filter(order -> !"CANCELLED".equalsIgnoreCase(order.getStatus()))
+                .toList();
+        for (Order order : marketOrders) {
+            if (!"PENDING".equals(order.getStatus())) {
+                throw new ApiException(CheckoutOrderErrorCode.MARKETPLACE_OUT_OF_STOCK);
+            }
+            for (OrderItem item : orderItemRepository.findByOrderId(order.getId())) {
+                Product product = productRepository.findById(item.getProduct().getId())
                         .orElseThrow(() -> new ApiException(CheckoutOrderErrorCode.MARKETPLACE_OUT_OF_STOCK));
-                if (p.getPrice().compareTo(oi.getUnitPrice()) != 0) {
+                if (product.getPrice().compareTo(item.getUnitPrice()) != 0) {
                     throw new ApiException(CheckoutOrderErrorCode.MARKETPLACE_PRICE_CHANGED);
                 }
-                if (p.getStock() < oi.getQuantity()) {
-                    throw new ApiException(CheckoutOrderErrorCode.MARKETPLACE_OUT_OF_STOCK);
-                }
             }
         }
 
-        // Xác nhận giữ chỗ tồn kho (ACTIVE -> CONFIRMED, không trừ thêm)
-        for (Order o : orderList) {
-            inventoryService.confirmReservation(o.getId());
-        }
-
-        if (!activeCustomList.isEmpty() && !"PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())) {
-            throw new ApiException(CheckoutOrderErrorCode.COD_NOT_ALLOWED_FOR_CUSTOM, "Đơn in theo yêu cầu chỉ hỗ trợ thanh toán trực tuyến PayOS");
-        }
-
-        // Tính tổng tiền sau báo giá (chỉ tính các đơn con chưa hủy; quotedPrice đã là lineTotal = unitQuotedPrice * quantity)
-        BigDecimal customTotal = activeCustomList.stream()
-                .map(this::resolveCustomLineTotal)
+        BigDecimal customSubtotal = activeCustoms.stream().map(this::resolveCustomLineTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        BigDecimal marketplaceTotal = OrderPricing.marketplaceSubtotal(orderList);
-
-        BigDecimal itemsSubtotal = customTotal.add(marketplaceTotal);
+        BigDecimal marketSubtotal = OrderPricing.marketplaceSubtotal(marketOrders);
+        BigDecimal subtotal = customSubtotal.add(marketSubtotal);
         BigDecimal shippingFee = OrderPricing.checkoutShippingFee(checkoutOrder, this::resolveDefaultShippingFee);
-        BigDecimal finalTotal = itemsSubtotal.add(shippingFee);
+        BenefitScope scope = activeCustoms.isEmpty() ? BenefitScope.MARKETPLACE
+                : (marketOrders.isEmpty() ? BenefitScope.CUSTOM : BenefitScope.MIXED);
 
-        SubscriptionBenefitService.AppliedBenefitSnapshot appliedSnap = null;
+        SubscriptionBenefitService.AppliedBenefitSnapshot snapshot;
         if (subscriptionBenefitService != null) {
-            SubscriptionBenefitService.BenefitScope scope = (!activeCustomList.isEmpty() && !orderList.isEmpty())
-                    ? SubscriptionBenefitService.BenefitScope.MIXED
-                    : (!activeCustomList.isEmpty()
-                            ? SubscriptionBenefitService.BenefitScope.CUSTOM
-                            : SubscriptionBenefitService.BenefitScope.MARKETPLACE);
-            appliedSnap = subscriptionBenefitService.reserveAndApplyBenefits(
-                    user,
-                    SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER,
-                    checkoutOrder.getId(),
-                    scope,
-                    itemsSubtotal,
-                    shippingFee,
-                    customTotal,
-                    marketplaceTotal
-            );
-            checkoutOrder.setItemsSubtotal(appliedSnap.itemsSubtotal());
-            checkoutOrder.setShippingFee(appliedSnap.baseShippingFee());
-            checkoutOrder.setDiscountAmount(appliedSnap.discountAmount());
-            checkoutOrder.setShippingDiscountAmount(appliedSnap.shippingDiscountAmount());
-            checkoutOrder.setAppliedSubscriptionId(appliedSnap.appliedSubscriptionId());
-            checkoutOrder.setAppliedSubscriptionName(appliedSnap.appliedSubscriptionName());
-            checkoutOrder.setPriorityProduction(appliedSnap.priorityProduction());
-            finalTotal = appliedSnap.finalTotal();
-            checkoutOrder.setTotalAmount(finalTotal);
+            snapshot = subscriptionBenefitService.reserveAndApplyBenefits(user,
+                    SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, id, scope, subtotal,
+                    shippingFee, customSubtotal, marketSubtotal, preview ->
+                            validateCheckoutPrice(checkoutOrder, request, paymentMethod,
+                                    OrderPricing.fromPreview(version, customSubtotal, marketSubtotal, preview)));
         } else {
-            checkoutOrder.setItemsSubtotal(itemsSubtotal);
-            checkoutOrder.setShippingFee(shippingFee);
-            checkoutOrder.setDiscountAmount(BigDecimal.ZERO);
-            checkoutOrder.setShippingDiscountAmount(BigDecimal.ZERO);
-            checkoutOrder.setPriorityProduction(false);
-            checkoutOrder.setTotalAmount(finalTotal);
+            PricingBreakdownDTO estimate = OrderPricing.estimate(null, user, scope, version, customSubtotal,
+                    marketSubtotal, shippingFee);
+            validateCheckoutPrice(checkoutOrder, request, paymentMethod, estimate);
+            snapshot = SubscriptionBenefitService.AppliedBenefitSnapshot.empty(subtotal, shippingFee);
         }
 
-        checkoutOrder.setStatus("CONFIRMED");
-        if (request.paymentMethod() != null) {
-            checkoutOrder.setPaymentMethod(request.paymentMethod().toUpperCase());
-        }
-        checkoutOrder.setSummaryVersion(checkoutOrder.getSummaryVersion() + 1);
+        checkoutOrder.setItemsSubtotal(snapshot.itemsSubtotal());
+        checkoutOrder.setShippingFee(snapshot.baseShippingFee());
+        checkoutOrder.setDiscountAmount(snapshot.discountAmount());
+        checkoutOrder.setShippingDiscountAmount(snapshot.shippingDiscountAmount());
+        checkoutOrder.setAppliedSubscriptionId(snapshot.appliedSubscriptionId());
+        checkoutOrder.setAppliedSubscriptionName(snapshot.appliedSubscriptionName());
+        checkoutOrder.setPriorityProduction(snapshot.priorityProduction());
+        checkoutOrder.setTotalAmount(snapshot.finalTotal());
+        checkoutOrder.setPaymentMethod(paymentMethod);
+        checkoutOrder.setStatus("PAYOS".equals(paymentMethod) ? "CONFIRMED" : "PROCESSING");
         checkoutOrder.setUpdatedAt(Instant.now());
+
+        if ("PAYOS".equals(paymentMethod)) {
+            prepareCheckoutPayment(checkoutOrder);
+        }
         checkoutOrderRepository.save(checkoutOrder);
+        distributeSnapshotToChildren(checkoutOrder, activeCustoms, marketOrders, snapshot);
 
-        distributeSnapshotToChildren(checkoutOrder, activeCustomList, orderList, appliedSnap);
-
-        for (CustomOrder c : activeCustomList) {
-            if (!"PAID".equals(c.getStatus())) {
-                c.setStatus("ACCEPTED");
-                c.setUpdatedAt(Instant.now());
-                customOrderRepository.save(c);
+        for (CustomOrder custom : activeCustoms) {
+            custom.setStatus("ACCEPTED");
+            custom.setUpdatedAt(Instant.now());
+            customOrderRepository.save(custom);
+        }
+        if ("COD".equals(paymentMethod)) {
+            for (Order order : marketOrders) {
+                inventoryService.confirmReservation(order.getId());
             }
         }
+        return toDTO(checkoutOrder, null);
+    }
 
-        String paymentLinkUrl = null;
-        if ("PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())) {
-            try {
-                CreatePaymentLinkRequestDTO payRequest = CreatePaymentLinkRequestDTO.builder()
-                        .orderId(checkoutOrder.getId())
-                        .orderType("CHECKOUT_ORDER")
-                        .paymentOption("FULL")
-                        .customAmount(finalTotal)
-                        .description("Don PrintHub " + checkoutOrder.getId().toString().substring(0, 8))
-                        .build();
-                CreatePaymentLinkResponseDTO payResp = paymentService.createPaymentLink(user.getId(), payRequest);
-                paymentLinkUrl = payResp.paymentLinkUrl();
-            } catch (Exception e) {
-                log.error("Lỗi tạo link PayOS cho checkout order {}: {}", checkoutOrder.getId(), e.getMessage());
-            }
-        } else if ("COD".equalsIgnoreCase(checkoutOrder.getPaymentMethod()) && activeCustomList.isEmpty()) {
-            checkoutOrder.setStatus("PROCESSING");
-            checkoutOrderRepository.save(checkoutOrder);
+    private void prepareCheckoutPayment(CheckoutOrder checkout) {
+        if (paymentRepository == null) {
+            return;
         }
+        Payment payment = new Payment();
+        payment.setCheckoutOrder(checkout);
+        QuotePayment.prepare(paymentRepository, payment, checkout.getTotalAmount());
+        checkout.setPaymentExpiresAt(payment.getExpiresAt());
+    }
 
-        return toDTO(checkoutOrder, paymentLinkUrl);
+    private void validateCheckoutPrice(CheckoutOrder checkout, CheckoutOrderConfirmRequestDTO request,
+                                       String paymentMethod, PricingBreakdownDTO estimate) {
+        if (request.expectedTotalPayable() == null
+                || request.expectedTotalPayable().compareTo(estimate.totalPayable()) != 0) {
+            throw checkoutConflict(checkout, CheckoutOrderErrorCode.CONFIRMATION_PRICE_CHANGED, estimate);
+        }
+        if ("PAYOS".equals(paymentMethod)) {
+            QuotePayment.requirePayable(estimate.totalPayable());
+        }
+    }
+
+    private ApiException checkoutConflict(CheckoutOrder checkout, CheckoutOrderErrorCode error,
+                                          PricingBreakdownDTO pricing) {
+        return pricing == null ? new ApiException(error) : new ApiException(error, Map.of(
+                "id", checkout.getId(), "summaryVersion", pricing.quoteVersion(), "pricingBreakdown", pricing));
     }
 
     private CheckoutOrderResponseDTO toDTO(CheckoutOrder order, String paymentLinkUrl) {
@@ -739,7 +733,12 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         boolean isOwner = currentUser != null && order.getUser() != null && currentUser.getId().equals(order.getUser().getId());
         OrderTransitionPolicy.TransitionEvaluation eval = evaluateParentActions(order, resolvedOrderType, paymentMethod, paymentStatus, isAdmin, isOwner);
 
-        String resolvedLink = paymentLinkUrl != null ? paymentLinkUrl : (payment != null ? payment.getCheckoutUrl() : null);
+        String resolvedLink = paymentLinkUrl;
+        if (resolvedLink == null && "CONFIRMED".equals(order.getStatus())
+                && payment != null && "PENDING".equals(payment.getStatus())
+                && payment.getExpiresAt() != null && payment.getExpiresAt().isAfter(Instant.now())) {
+            resolvedLink = payment.getCheckoutUrl();
+        }
 
         return CheckoutOrderResponseDTO.builder()
                 .id(order.getId())
@@ -998,6 +997,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT,
                         "Vui lòng nhập lý do hủy đơn (tối thiểu 5 ký tự).");
             }
+            if (payment != null && "PENDING".equals(payment.getStatus()) && "PAYOS".equals(payment.getGateway())
+                    && payment.getTransactionId() != null) {
+                paymentService.cancelQuotePayment(payment.getTransactionId(), reason);
+            }
             Instant cancelTime = Instant.now();
             co.setStatus("CANCELLED");
             co.setCancelReason(reason);
@@ -1027,6 +1030,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     o.setStatus("CANCELLED");
                     o.setUpdatedAt(cancelTime);
                     orderRepository.save(o);
+                    inventoryService.releaseActiveReservations(o.getId(), reason, "CHECKOUT_CANCEL_" + id);
                 }
             }
         } else {
