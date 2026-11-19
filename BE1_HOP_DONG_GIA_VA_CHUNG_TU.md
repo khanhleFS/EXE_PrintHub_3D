@@ -1,0 +1,282 @@
+# Hợp đồng BE1 cho FE và BE2
+
+Bản đề xuất cho việc 1, đối chiếu với nhánh `feat/fix` tại commit `7cdfdc6`. Các JSON dưới đây là dữ liệu mẫu bàn giao. Tên trường mới và hành vi minh họa sẽ được triển khai ở các việc tiếp theo.
+
+## Dữ liệu chung
+
+U1 mua gói G1 với giá 50.000đ trong giao dịch S1. G1 giảm 10% tiền hàng custom và có một lượt giảm phí giao tối đa 30.000đ. C1 là checkout của U1, có một thiết kế in một bản, đơn giá 100.000đ và phí giao 30.000đ. Tiền hàng sau giảm là 90.000đ, phí giao sau giảm là 0đ và tổng phải trả là 90.000đ.
+
+## Hợp đồng cho FE
+
+Giữ envelope `ApiResponse`, đường dẫn và trường hiện có. Bổ sung `pricingBreakdown` và `paymentEvidence` trên response checkout và chi tiết custom lẻ. Các mẫu chỉ liệt kê trường cần cho luồng này. FE dùng `pricingBreakdown.totalPayable` để hiển thị số phải trả.
+
+| Trường | Quy ước |
+|---|---|
+| `pricingStage` | `PENDING_QUOTE` khi còn dòng chưa báo giá, `ESTIMATED` khi đủ báo giá, `LOCKED` sau khi xác nhận. Khi còn chờ báo giá, `totalPayable` là `null`. |
+| `quoteVersion` | Trong bảng tiền checkout, lấy từ `summaryVersion`. Đơn custom lẻ dùng `quoteVersion` riêng. |
+| Các trường tiền | Số JSON theo đơn vị VND. Giảm giá là số dương. `totalPayable = itemsSubtotal - itemDiscountAmount + finalShippingFee`. Ship bằng 0 là giá trị hợp lệ. |
+| `benefitStatus` | `APPLIED`, `NO_SUBSCRIPTION`, `EXPIRED`, `INELIGIBLE`, `QUOTA_EXHAUSTED`, `CONFIG_REQUIRED`. `APPLIED` ở bản dự kiến nghĩa là đã tính vào bảng tiền xem trước. Trả thêm `ineligibleReason` khi có lý do, kể cả khi vẫn áp dụng được một quyền lợi khác. |
+| `paymentEvidence.status` | `NONE` khi chưa có chứng từ, `PENDING` khi đang chờ thu, `SETTLED` khi đã thu hợp lệ, `PENDING_RECONCILIATION` khi cần đối soát, `ZERO_AMOUNT_PROMO` khi đã xác nhận đơn ưu đãi toàn bộ. Đây là trạng thái chứng từ, tách khỏi tiến trình đơn và trường `paymentStatus` hiện có. |
+
+### C1 đã có báo giá
+
+`GET /api/checkout-orders/{id}`, HTTP 200. API danh sách `GET /api/checkout-orders/my` dùng cùng bảng tiền trên từng đơn. Xem dự kiến không tiêu lượt ưu đãi.
+
+```json
+{
+  "code": 200,
+  "result": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "status": "QUOTED",
+    "summaryVersion": 2,
+    "customOrders": [
+      {
+        "id": "20000000-0000-4000-8000-000000000001",
+        "unitQuotedPrice": 100000,
+        "quotedPrice": 100000
+      }
+    ],
+    "pricingBreakdown": {
+      "pricingStage": "ESTIMATED",
+      "quoteVersion": 2,
+      "customItemsSubtotal": 100000,
+      "marketplaceItemsSubtotal": 0,
+      "itemsSubtotal": 100000,
+      "itemDiscountAmount": 10000,
+      "baseShippingFee": 30000,
+      "shippingDiscountAmount": 30000,
+      "finalShippingFee": 0,
+      "totalPayable": 90000,
+      "zeroAmountSettlement": false,
+      "appliedSubscriptionId": "30000000-0000-4000-8000-000000000001",
+      "appliedSubscriptionName": "Gói G1",
+      "benefitStatus": "APPLIED",
+      "ineligibleReason": null,
+      "priorityProduction": false
+    },
+    "paymentEvidence": { "status": "NONE" }
+  }
+}
+```
+
+### C1 xác nhận giá và chờ PayOS
+
+`POST /api/checkout-orders/{id}/confirm`. FE gửi `expectedTotalPayable` kèm phiên bản cho lần xác nhận giá đầu tiên. Backend tính lại từ dữ liệu của mình. Nếu thiếu số tiền hoặc số tiền khác tổng vừa tính, backend trả HTTP 409 với bảng tiền mới. Các trường đọc cũ vẫn có trên DTO.
+
+```json
+{
+  "summaryVersion": 2,
+  "paymentMethod": "PAYOS",
+  "expectedTotalPayable": 90000
+}
+```
+
+HTTP 200. Bảng tiền giữ cùng cấu trúc và số tiền như bản dự kiến, chuyển sang `LOCKED` và được lưu tại thời điểm xác nhận. Link dùng số đã chốt. Xác nhận lặp cùng phiên bản và số tiền đã chốt dùng lại kết quả khi giao dịch vẫn còn hiệu lực.
+
+```json
+{
+  "code": 200,
+  "result": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "status": "CONFIRMED",
+    "summaryVersion": 2,
+    "paymentMethod": "PAYOS",
+    "paymentStatus": "PENDING",
+    "paymentLinkUrl": "https://example.invalid/payos/c1",
+    "pricingBreakdown": {
+      "pricingStage": "LOCKED",
+      "quoteVersion": 2,
+      "customItemsSubtotal": 100000,
+      "marketplaceItemsSubtotal": 0,
+      "itemsSubtotal": 100000,
+      "itemDiscountAmount": 10000,
+      "baseShippingFee": 30000,
+      "shippingDiscountAmount": 30000,
+      "finalShippingFee": 0,
+      "totalPayable": 90000,
+      "zeroAmountSettlement": false,
+      "appliedSubscriptionId": "30000000-0000-4000-8000-000000000001",
+      "appliedSubscriptionName": "Gói G1",
+      "benefitStatus": "APPLIED",
+      "ineligibleReason": null,
+      "priorityProduction": false
+    },
+    "paymentEvidence": { "status": "PENDING" }
+  }
+}
+```
+
+Đơn custom lẻ dùng `PUT /api/custom-orders/{id}/status` với `status: ACCEPTED`, `paymentMethod: PAYOS`, `quoteVersion` và `expectedTotalPayable`. API đọc chi tiết `GET /api/custom-orders/{id}` trả bảng tiền đã chốt. Đây là luồng đơn lẻ. Với dòng thuộc checkout, FE xác nhận trên đơn cha.
+
+Khi checkout đã xác nhận nhưng `paymentLinkUrl` còn trống, FE có thể gọi lại `POST /api/payments/create-link` cho cùng đơn. Đơn custom lẻ gọi endpoint này sau khi chấp nhận. Backend dùng lại mã giao dịch và tổng đã chốt.
+
+### C1 đã thu tiền
+
+`GET /api/checkout-orders/{id}`, HTTP 200. Ví dụ rút gọn phần đã thay đổi sau khi webhook hoặc `GET /api/payments/verify/{orderCode}` xác nhận thanh toán. Toàn bộ bảng tiền `LOCKED` vẫn được trả khi đọc đơn và giữ số phải trả 90.000đ.
+
+```json
+{
+  "code": 200,
+  "result": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "status": "PAID",
+    "summaryVersion": 2,
+    "paymentStatus": "SUCCESS",
+    "paymentEvidence": {
+      "status": "SETTLED",
+      "paymentId": "40000000-0000-4000-8000-000000000001",
+      "gateway": "PAYOS",
+      "paidAmount": 90000,
+      "paidAt": "2026-11-19T03:15:00Z"
+    }
+  }
+}
+```
+
+### Tổng thay đổi khi khách xác nhận
+
+HTTP 409 trong ví dụ hai đơn tranh lượt freeship cuối. Cùng phiên bản 2 nhưng giá tính lại là 120.000đ. FE hiển thị bảng mới và chờ khách xác nhận lại với phiên bản và số tiền mới. Yêu cầu bị từ chối không giữ lượt mới hay tạo link.
+
+```json
+{
+  "code": 409,
+  "errorKey": "checkout.price_changed",
+  "message": "Số tiền phải trả đã thay đổi. Vui lòng xem lại và xác nhận.",
+  "result": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "summaryVersion": 2,
+    "pricingBreakdown": {
+      "pricingStage": "ESTIMATED",
+      "quoteVersion": 2,
+      "customItemsSubtotal": 100000,
+      "marketplaceItemsSubtotal": 0,
+      "itemsSubtotal": 100000,
+      "itemDiscountAmount": 10000,
+      "baseShippingFee": 30000,
+      "shippingDiscountAmount": 0,
+      "finalShippingFee": 30000,
+      "totalPayable": 120000,
+      "zeroAmountSettlement": false,
+      "appliedSubscriptionId": "30000000-0000-4000-8000-000000000001",
+      "appliedSubscriptionName": "Gói G1",
+      "benefitStatus": "QUOTA_EXHAUSTED",
+      "ineligibleReason": "Gói hội viên đã hết lượt miễn phí giao hàng.",
+      "priorityProduction": false
+    }
+  }
+}
+```
+
+Khi xưởng đổi báo giá, backend dùng `checkout.version_conflict` và trả phiên bản mới trong cùng cấu trúc `result`. Với custom lẻ, mã tương ứng là `custom_print.price_changed` hoặc `custom_print.version_conflict`, và `result` dùng `quoteVersion` ở cấp đơn. Nếu API đọc bảng tiền lỗi, FE giữ trạng thái lỗi và cho thử lại.
+
+### Đơn được ưu đãi toàn bộ
+
+FE gửi `expectedTotalPayable: 0` khi xác nhận bảng tiền dự kiến 0đ. Backend kiểm tra lại phiên bản và quota như các đơn khác. Khi xác nhận thành công, đơn vào trạng thái `PAID`, bảng tiền `LOCKED` có `totalPayable: 0` và `zeroAmountSettlement: true`. FE hiển thị “Được ưu đãi toàn bộ” và bỏ qua bước mở PayOS. Trường `paymentEvidence` dùng cấu trúc dưới đây. `paidAt` là mốc xác nhận miễn phí đã lưu. Đơn custom lẻ đọc lại chi tiết sau khi gọi API chấp nhận báo giá.
+
+Mốc này nằm ở cột nullable `zero_amount_settled_at` của `checkout_orders` hoặc `custom_orders` cho đơn custom lẻ. Các dòng thuộc checkout dùng mốc của đơn cha.
+
+```json
+{
+  "status": "ZERO_AMOUNT_PROMO",
+  "gateway": "ZERO_AMOUNT_PROMO",
+  "paidAmount": 0,
+  "paidAt": "2026-11-19T03:15:00Z"
+}
+```
+
+### Thu COD và tiền chờ đối soát
+
+Admin gửi `{"status":"COMPLETED","codCollectedAmount":140000}` trên API chuyển trạng thái của đơn COD độc lập hoặc checkout cha. Bỏ trường `codCollectedAmount` thì thao tác chỉ đánh dấu giao xong. Admin có thể gửi lại `COMPLETED` kèm số tiền sau đó. Số tiền COD phải dương và bằng số phải thu đã chốt. Gửi lặp đúng số tiền trả lại cùng chứng từ. Chứng từ của mọi dòng thuộc checkout được tra theo checkout cha.
+
+Webhook và `verify` dùng số tiền PayOS xác nhận đã nhận theo mã giao dịch. Số phải thu lúc tạo link vẫn nằm ở `payments.amount`. Khoản chưa đủ căn cứ quyết toán lưu riêng ở `reconciliation_amount`, `reconciliation_received_at` và `reconciliation_reason`. Với khoản về muộn hoặc lệch trước quyết toán, `status` là `PENDING_RECONCILIATION` và `paidAt` trống. Khoản thu thêm sau khi đã quyết toán giữ chứng từ gốc ở `SUCCESS` và chỉ phần vượt nằm trong các trường đối soát.
+
+Checkout và chi tiết custom trả thông tin chứng từ trong `paymentEvidence`. API `verify` trả thêm `reconciliationAmount`, `reconciliationReceivedAt` và `reconciliationReason` khi cần. Mốc nhận tiền ưu tiên dữ liệu giao dịch của PayOS. Khi PayOS không cung cấp thời điểm đọc được, backend dùng mốc quan sát khoản thu.
+
+### Báo cáo tài chính dùng chung
+
+`GET /api/admin/dashboard` và `GET /api/admin/finance/summary` trả `result.financialSummary` cùng cấu trúc. Cả hai nhận `from` và `to`, ví dụ `?from=2026-11-19&to=2026-11-20` cho trọn ngày 19/11 giờ Việt Nam. Có thể gửi thời điểm ISO-8601 kèm múi giờ. Kỳ là `[from, to)`. Bỏ mốc nào thì kỳ mở về phía đó, bỏ cả hai thì xem toàn thời gian.
+
+| Field mới | Cách đọc |
+|---|---|
+| `orderCashVnd`, `subscriptionCashVnd`, `totalCashVnd` | Tiền từ chứng từ thu hợp lệ theo `paidAt`. Tiền gói cần đơn mua `PAID` và chứng từ PayOS `SUCCESS` khớp số tiền. |
+| `shippingCashVnd` | Phần phí giao thực thu đã nằm trong `orderCashVnd`, tính khi bảng phí giao đã chốt có đủ dữ liệu. |
+| `completedGoodsValueVnd` | Tiền hàng sau giảm theo `completedAt`, loại phí giao, tính một lần theo checkout cha hoặc theo đơn độc lập. |
+| `pendingReconciliationVnd`, `reconciliationItems` | Số tiền chờ đối soát có mốc trong kỳ và các dòng cần kiểm tra theo mã đơn, mã giao dịch, lý do. Dòng thiếu mốc vẫn hiện để tra. |
+| `completionIssues` | Đơn hoàn tất thiếu `completedAt`, bảng giá hoặc chứng từ cần kiểm tra. Đơn thiếu mốc giao hiển thị trong danh sách, không được gán vào kỳ hiện tại. |
+
+`paidAmount` và `totalRevenue` của Dashboard admin dùng tổng thực thu mới. `totalGmv` của Finance Summary dùng giá trị hàng hoàn tất. Hoa hồng, tiền trả xưởng và số dư ví giữ phạm vi toàn thời gian. Nhật ký Finance trả tối đa 20 dòng theo kỳ. Tổng hợp tài chính đọc toàn bộ chứng từ liên quan trước khi áp dụng giới hạn nhật ký.
+
+`completed_at` là cột nullable trên `checkout_orders`, `orders` và `custom_orders`. Luồng hoàn tất ghi lần đầu. Dữ liệu cũ thiếu mốc giữ giá trị trống để đối soát.
+
+## Lịch sử giao dịch hội viên dành cho admin
+
+`GET /api/admin/subscriptions/transactions` yêu cầu vai trò `ADMIN`. Mọi bộ lọc đều tùy chọn.
+
+| Tham số | Giá trị |
+|---|---|
+| `q` | Họ tên, email, mã khách, mã giao dịch, mã chứng từ hoặc mã đơn PayOS. |
+| `userId`, `planId` | UUID của khách và gói. |
+| `method` | `CASH`, `POINTS_REDEEM`. |
+| `status` | `PAID`, `PENDING`, `CANCELLED`, `EXPIRED`, `PENDING_RECONCILIATION`, `REDEEMED`. |
+| `from`, `to` | Ngày `YYYY-MM-DD` theo giờ Việt Nam hoặc thời điểm ISO 8601 có múi giờ. Bao gồm `from`, kết thúc trước `to`. Ví dụ chọn ngày 19/11 thì dùng `from=2026-11-19&to=2026-11-20`. |
+| `page`, `size` | Trang bắt đầu từ 0. Mặc định 20 dòng, tối đa 100. |
+
+- `result` gồm `items`, `totalElements`, `page`, `size` và `summary`. `summary.subscriptionCashVnd`, `cashCount` và `pointsRedeemCount` tính trên toàn bộ tập sau lọc. Với S1 thu 50.000đ, S2 đổi 80 xu, S3 hủy, mỗi trang đều có `totalElements=3` và `subscriptionCashVnd=50000`. Lọc `POINTS_REDEEM` trả một dòng `pointsSpent=80` và tổng tiền 0đ.
+- Các dòng có `buyerName`, `buyerEmail`, `userId`, `planId`, `planName`, `transactionAt`, `method`, `status` và `referenceId`. `amountVnd` là tiền thực thu theo Finance và Dashboard. `purchaseAmountVnd` là giá chốt của lượt mua tiền. Dòng cần đối soát giữ `purchaseStatus` gốc và cung cấp `reconciliationReason`. Dòng đổi xu cung cấp `subscriptionId` nếu bút toán đã lưu liên kết.
+- `transactionAt` dùng `paidAt` cho tiền đã quyết toán, mốc trừ ví cho lượt đổi và mốc tạo cho yêu cầu mua còn lại. API sắp xếp giảm dần theo thời điểm và ID. Khi chưa xác minh được tên hoặc mã gói, `planVerified=false` và các trường thiếu giữ `null`. Dòng đổi xu cũ giữ mô tả gốc. `legacyTimestamp=true` cho biết mốc giờ cũ được diễn giải theo `app.membership-history.legacy-points-zone`, mặc định là múi giờ của JVM. Khi chuyển môi trường, đặt thuộc tính này theo múi giờ JVM từng ghi dữ liệu cũ.
+- Lược đồ thêm hai cột nullable `subscription_purchases.plan_name_snapshot` và `point_transactions.occurred_at`, tăng chiều dài `point_transactions.reference_plan_name` lên 255 và `description` lên 320. Dữ liệu lịch sử được đọc trực tiếp theo ID mua hoặc ID bút toán. Không cần chạy chuyển dữ liệu để tạo dòng lịch sử.
+
+## Hợp đồng cho BE2
+
+### Chứng từ và mốc hoàn tất
+
+Dùng chữ ký Java hiện có trong `PaymentEvidenceService`.
+
+```java
+Optional<PaymentEvidence> findSettledEvidence(SourceType sourceType, UUID sourceId);
+PaymentEvidence recordCodCollection(SourceType sourceType, UUID sourceId,
+                                    BigDecimal collectedAmount, User admin);
+```
+
+- Đơn con thuộc checkout tra chứng từ của cha `CHECKOUT_ORDER`. Đơn độc lập tra theo `ORDER` hoặc `CUSTOM_ORDER`. Chứng từ hợp lệ trả ID, nguồn, cổng, số tiền và `paidAt`. Khoản chờ thu hoặc đang đối soát trả `Optional.empty()`.
+- Đơn ưu đãi toàn bộ trả căn cứ có `zeroAmountPromo = true`, `paidAmount = 0`, `paymentId = null`, `gateway = ZERO_AMOUNT_PROMO` và `paidAt` lấy từ mốc xác nhận miễn phí đã lưu. BE2 tính tiền hàng đủ điều kiện từ bảng giá đã chốt, loại phí giao. Interface hiện tại không có trường tiền hàng sau giảm. C1 có cơ sở tính xu 90.000đ và nhận 9 xu sau giao. Đơn ưu đãi toàn bộ được xét 0 xu.
+- BE2 gọi `recordCodCollection` khi admin xác nhận đã thu trên đơn hỗ trợ COD. BE1 ghi một chứng từ theo nguồn thu và trả cùng `paymentId` khi gọi lặp. Giá trị COD bàn giao là số thực thu do thao tác xác nhận cung cấp.
+- Theo phân công đề xuất, BE2 ghi `completedAt` ở lần đầu chuyển sang `COMPLETED`, ưu tiên checkout cha khi tính theo đơn cha. BE1 đọc mốc đó cho báo cáo. `paidAt` là mốc thu tiền. Dữ liệu cũ thiếu ngày giao đáng tin cậy được đưa vào đối soát.
+
+### Sự kiện email
+
+Dùng các record và phương thức hiện có trong `EmailOutboxService`.
+
+| Điểm gọi của BE1 | Dữ liệu và khóa chống lặp |
+|---|---|
+| `enqueueQuotationIssued(QuotationEmailEvent)` | Gọi trong transaction phát hành báo giá checkout đủ dòng, qua báo giá theo lô hoặc qua dòng cuối cùng, và khi báo giá đơn custom lẻ. Gửi bảng tiền dự kiến cùng các dòng custom còn hiệu lực. Khóa gồm `sourceType`, `sourceId`, `quoteVersion`. Yêu cầu lặp nguyên giá và ghi chú giữ cùng phiên bản. |
+| `enqueuePaymentReceipt(PaymentReceiptEmailEvent)` | Gọi trong transaction xác nhận thu PayOS/COD hợp lệ lần đầu. Dùng `paymentId` đã lưu làm khóa. C1 dùng nguồn `CHECKOUT_ORDER`, S1 dùng `SUBSCRIPTION_PURCHASE` và tên gói đã lưu lúc mua. Chỉ ghi sự kiện với khoản thu tiền hợp lệ lớn hơn 0. |
+
+BE2 phụ trách worker gửi và thử lại. Khi nghiệm thu C1 và S1, kỳ vọng một email báo giá C1 và hai biên nhận tương ứng 90.000đ và 50.000đ.
+
+## Nghiệm thu E2E-01
+
+Chạy `E2e01AcceptanceTest` trên JDK 21 bằng Maven. Test dùng MockMvc, Spring Security, JPA và H2 trong bộ nhớ. Khách, admin, gói G1 và checkout một dòng custom được tạo riêng cho test. PayOS trả trạng thái giả lập. Test xác minh bản ghi outbox và HTML của email. Worker gửi thư được tắt trong lần chạy cô lập.
+
+| Mốc | Điều kiện kiểm tra |
+|---|---|
+| Báo giá và chốt C1 | Tiền hàng 100.000đ, giảm hàng 10.000đ, giảm ship 30.000đ. Báo giá, bảng tiền chốt và yêu cầu tạo link PayOS cùng ra 90.000đ. Gửi lại báo giá giữ phiên bản. |
+| Trước giao | Dashboard và Finance cùng báo thực thu 140.000đ, trong đó C1 là 90.000đ và S1 là 50.000đ. Giá trị hàng hoàn tất là 0đ, ví U1 là 0 xu. |
+| Sau giao | Thực thu vẫn 140.000đ. Giá trị hàng hoàn tất lên 90.000đ. Checkout cha ghi 9 xu một lần, kể cả khi lặp trạng thái hoàn tất hoặc gọi API thưởng của dòng con. |
+| Lịch sử hội viên | Ba trang kích thước 1 có ba giao dịch riêng và cùng tổng 50.000đ. S2 đổi 80 xu, S3 hủy. Khách gọi API admin nhận HTTP 403. |
+| Email | Ba bản ghi chờ gửi gồm báo giá C1, biên nhận C1 và biên nhận S1. Đối chiếu theo phiên bản báo giá và ID chứng từ. |
+
+Test in dòng `E2E-01` chứa ID checkout, đơn mua, chứng từ, bút toán và bản ghi email trong báo cáo Surefire. Để nghiệm thu trên môi trường chung, BE1 và BE2 đối chiếu các mốc tương tự trên PostgreSQL và hộp thư test, còn FE đối chiếu ba màn báo cáo và lịch sử với JSON API.
+
+Lần chạy JDK 21 ngày 19/11/2026 có 76 ca đạt, 0 lỗi, 0 ca bỏ qua. Các mã dưới đây thuộc cơ sở dữ liệu H2 của lần chạy đó.
+
+| Dữ liệu | ID |
+|---|---|
+| Checkout C1 | `74b7af6a-02a5-491a-95bb-a5f5d2a7bc94` |
+| Chứng từ C1 | `22855b62-519b-44e2-a769-ef2d1131944f` |
+| Đơn mua S1 | `06fea4d9-5223-4c27-9d6d-09bf72b9415d` |
+| Chứng từ S1 | `286f3f77-b541-4df6-81b4-e64dc6d9f167` |
+| Bút toán đổi 80 xu S2 | `1` |
+| Đơn mua đã hủy S3 | `114a4d70-24b8-4046-b947-5c4274a9db05` |
+| Bút toán cộng 9 xu C1 | `2` |
+| Ba bản ghi outbox | `e15e8f01-2b8c-47f6-b023-a90dd26f5a29`, `e47582df-3cfe-4df5-88ad-4c07c2c8e6ad`, `1a2d16ce-3fdf-4963-b1a5-b662cdc2ac0f` |

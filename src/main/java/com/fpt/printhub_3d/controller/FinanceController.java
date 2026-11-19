@@ -3,6 +3,7 @@ package com.fpt.printhub_3d.controller;
 import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.controller.api.FinanceAPI;
 import com.fpt.printhub_3d.dto.finance.CommissionFundResponseDTO;
+import com.fpt.printhub_3d.dto.finance.FinancialReportPeriod;
 import com.fpt.printhub_3d.dto.finance.RevenueAnalyticsResponseDTO;
 import com.fpt.printhub_3d.service.FinanceService;
 import lombok.RequiredArgsConstructor;
@@ -46,8 +47,8 @@ public class FinanceController implements FinanceAPI {
 
     @Override
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO>> getFinanceSummary() {
-        var response = financeService.getFinanceSummary();
+    public ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO>> getFinanceSummary(String from, String to) {
+        var response = financeService.getFinanceSummary(FinancialReportPeriod.parse(from, to));
         return ResponseEntity.ok(ApiResponse.<com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO>builder()
                 .code(200)
                 .message("Lấy tổng quan tài chính sàn thành công")

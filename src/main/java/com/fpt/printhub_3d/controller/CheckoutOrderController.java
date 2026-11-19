@@ -6,8 +6,10 @@ import com.fpt.printhub_3d.controller.api.CheckoutOrderAPI;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderConfirmRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderCreateRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderResponseDTO;
+import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.service.CheckoutOrderService;
+import com.fpt.printhub_3d.service.PaymentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -25,12 +27,13 @@ import java.util.UUID;
 public class CheckoutOrderController implements CheckoutOrderAPI {
 
     private final CheckoutOrderService checkoutOrderService;
+    private final PaymentService paymentService;
 
     @Override
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<CheckoutOrderResponseDTO>> createCheckoutOrder(CheckoutOrderCreateRequestDTO request) {
         User user = SecurityUtils.getCurrentUser();
-        CheckoutOrderResponseDTO response = checkoutOrderService.createCheckoutOrder(user, request);
+        CheckoutOrderResponseDTO response = attachPayosLink(user, checkoutOrderService.createCheckoutOrder(user, request));
         return ResponseEntity.ok(ApiResponse.<CheckoutOrderResponseDTO>builder()
                 .code(200)
                 .message("Tạo đơn hàng thành công")
@@ -66,11 +69,32 @@ public class CheckoutOrderController implements CheckoutOrderAPI {
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<CheckoutOrderResponseDTO>> confirmCheckoutOrder(UUID id, CheckoutOrderConfirmRequestDTO request) {
         User user = SecurityUtils.getCurrentUser();
-        CheckoutOrderResponseDTO response = checkoutOrderService.confirmCheckoutOrder(user, id, request);
+        CheckoutOrderResponseDTO response = attachPayosLink(user, checkoutOrderService.confirmCheckoutOrder(user, id, request));
         return ResponseEntity.ok(ApiResponse.<CheckoutOrderResponseDTO>builder()
                 .code(200)
                 .message("Xác nhận đơn hàng thành công")
                 .result(response)
                 .build());
+    }
+
+    private CheckoutOrderResponseDTO attachPayosLink(User user, CheckoutOrderResponseDTO response) {
+        if ("CONFIRMED".equals(response.status()) && "PAYOS".equals(response.paymentMethod())
+                && response.paymentLinkUrl() == null) {
+            // The order version and payment code are already committed before contacting PayOS.
+            UUID id = response.id();
+            try {
+                var link = paymentService.createPaymentLink(user.getId(), CreatePaymentLinkRequestDTO.builder()
+                        .orderId(id)
+                        .orderType("CHECKOUT_ORDER")
+                        .paymentOption("FULL")
+                        .customAmount(response.totalAmount())
+                        .description("Don PrintHub " + id.toString().substring(0, 8))
+                        .build());
+                response = response.toBuilder().paymentLinkUrl(link.paymentLinkUrl()).build();
+            } catch (RuntimeException ex) {
+                log.warn("Checkout {} đã xác nhận, chưa lấy được liên kết PayOS: {}", id, ex.getMessage());
+            }
+        }
+        return response;
     }
 }

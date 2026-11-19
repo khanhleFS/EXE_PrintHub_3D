@@ -16,8 +16,8 @@ import com.fpt.printhub_3d.dto.custom_prints.CustomOrderResponseDTO;
 import com.fpt.printhub_3d.dto.order.BlockedActionDTO;
 import com.fpt.printhub_3d.dto.order.OrderItemResponseDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
-import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
-import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkResponseDTO;
+import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
+import com.fpt.printhub_3d.dto.payment.PaymentEvidenceResponseDTO;
 import com.fpt.printhub_3d.entity.*;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.repository.*;
@@ -25,9 +25,12 @@ import com.fpt.printhub_3d.service.CheckoutOrderService;
 import com.fpt.printhub_3d.service.CloudinaryService;
 import com.fpt.printhub_3d.service.InventoryService;
 import com.fpt.printhub_3d.service.NotificationService;
+import com.fpt.printhub_3d.service.OrderRewardService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import com.fpt.printhub_3d.service.PaymentService;
+import com.fpt.printhub_3d.service.PaymentEvidenceService;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
+import com.fpt.printhub_3d.service.SubscriptionBenefitService.BenefitScope;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -42,6 +45,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -68,6 +72,26 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private final CloudinaryService cloudinaryService;
     private final StoreSettingRepository storeSettingRepository;
     private final SubscriptionBenefitService subscriptionBenefitService;
+    private final OrderEmailEvents emailEvents;
+
+    @Autowired(required = false)
+    private PaymentEvidenceService paymentEvidenceService;
+
+    @Autowired(required = false)
+    private OrderRewardService orderRewardService;
+
+    @Autowired(required = false)
+    private CustomOrderReviewRepository customOrderReviewRepository;
+
+    @Autowired(required = false)
+    private ReviewRepository reviewRepository;
+
+    @Autowired(required = false)
+    private OrderRewardRecordRepository orderRewardRecordRepository;
+
+    @Autowired(required = false)
+    private Clock clock;
+
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
     @Autowired
@@ -88,7 +112,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             ObjectMapper objectMapper,
             CloudinaryService cloudinaryService,
             StoreSettingRepository storeSettingRepository,
-            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService,
+            OrderEmailEvents emailEvents
     ) {
         this.checkoutOrderRepository = checkoutOrderRepository;
         this.cartRepository = cartRepository;
@@ -107,6 +132,48 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         this.cloudinaryService = cloudinaryService;
         this.storeSettingRepository = storeSettingRepository;
         this.subscriptionBenefitService = subscriptionBenefitService;
+        this.emailEvents = emailEvents;
+    }
+
+    public CheckoutOrderServiceImpl(
+            CheckoutOrderRepository checkoutOrderRepository,
+            CartRepository cartRepository,
+            CartItemRepository cartItemRepository,
+            ProductRepository productRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            CustomOrderRepository customOrderRepository,
+            PaymentService paymentService,
+            InventoryService inventoryService,
+            UserRepository userRepository,
+            PaymentRepository paymentRepository,
+            OrderTransitionPolicy orderTransitionPolicy,
+            NotificationService notificationService,
+            ObjectMapper objectMapper,
+            CloudinaryService cloudinaryService,
+            StoreSettingRepository storeSettingRepository,
+            SubscriptionBenefitService subscriptionBenefitService
+    ) {
+        this(
+                checkoutOrderRepository,
+                cartRepository,
+                cartItemRepository,
+                productRepository,
+                orderRepository,
+                orderItemRepository,
+                customOrderRepository,
+                paymentService,
+                inventoryService,
+                userRepository,
+                paymentRepository,
+                orderTransitionPolicy,
+                notificationService,
+                objectMapper,
+                cloudinaryService,
+                storeSettingRepository,
+                subscriptionBenefitService,
+                null
+        );
     }
 
     public CheckoutOrderServiceImpl(
@@ -144,6 +211,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 objectMapper,
                 cloudinaryService,
                 storeSettingRepository,
+                null,
                 null
         );
     }
@@ -181,7 +249,6 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 notificationService,
                 objectMapper,
                 cloudinaryService,
-                null,
                 null
         );
     }
@@ -213,8 +280,6 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 new OrderTransitionPolicy(),
                 null,
                 new ObjectMapper(),
-                null,
-                null,
                 null
         );
     }
@@ -225,7 +290,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 var feeOpt = storeSettingRepository.findById("shippingFee");
                 if (feeOpt.isPresent() && feeOpt.get().getValue() != null) {
                     BigDecimal configured = new BigDecimal(feeOpt.get().getValue().trim());
-                    if (configured.compareTo(BigDecimal.ZERO) > 0) {
+                    if (configured.signum() >= 0) {
                         return configured;
                     }
                 }
@@ -235,15 +300,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     }
 
     private BigDecimal resolveCustomLineTotal(CustomOrder c) {
-        if (c == null) return BigDecimal.ZERO;
-        if (c.getQuotedPrice() != null && c.getQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
-            return c.getQuotedPrice();
-        }
-        int qty = c.getQuantity() != null && c.getQuantity() > 0 ? c.getQuantity() : 1;
-        if (c.getUnitQuotedPrice() != null && c.getUnitQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
-            return c.getUnitQuotedPrice().multiply(BigDecimal.valueOf(qty));
-        }
-        return BigDecimal.ZERO;
+        return c != null ? OrderPricing.quotedLineTotal(c) : BigDecimal.ZERO;
     }
 
     @Override
@@ -331,8 +388,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         checkoutOrder.setItemsSubtotal(marketSubtotal);
-        BigDecimal finalTotal = marketSubtotal.add(baseShipFee);
-        checkoutOrder.setTotalAmount(finalTotal);
+        checkoutOrder.setTotalAmount(marketSubtotal.add(baseShipFee));
 
         if (!customLines.isEmpty()) {
             checkoutOrder.setStatus("PENDING_QUOTE");
@@ -360,8 +416,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             checkoutOrder.setPriorityProduction(snap.priorityProduction());
             checkoutOrder.setTotalAmount(snap.finalTotal());
             checkoutOrder.setUpdatedAt(Instant.now());
+            if (snap.fullyDiscounted()) {
+                settleZeroAmountCheckout(checkoutOrder, checkoutOrder.getUpdatedAt());
+            }
             checkoutOrder = checkoutOrderRepository.save(checkoutOrder);
-            finalTotal = snap.finalTotal();
         }
 
         // Tạo CustomOrder cho các dòng thiết kế custom
@@ -374,6 +432,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             notifyAdminsNewCustomCheckout(checkoutOrder, user, customLines.size());
         }
 
+        boolean zeroAmountSettlement = checkoutOrder.getZeroAmountSettledAt() != null;
         // Tạo Order cho các dòng sản phẩm Marketplace
         if (!marketplaceLines.isEmpty()) {
             User fallbackSeller = userRepository.findAll().stream()
@@ -404,9 +463,14 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 order.setSeller(seller);
                 order.setCheckoutOrder(checkoutOrder);
                 order.setPaymentMethod(checkoutOrder.getPaymentMethod());
-                order.setStatus("PENDING");
+                order.setStatus(zeroAmountSettlement ? "PAID" : "PENDING");
                 order.setSubtotalAmount(sellerTotal);
-                order.setTotalAmount(sellerTotal);
+                order.setTotalAmount(zeroAmountSettlement ? BigDecimal.ZERO : sellerTotal);
+                if (zeroAmountSettlement) {
+                    order.setDiscountAmount(sellerTotal);
+                    order.setAppliedSubscriptionId(checkoutOrder.getAppliedSubscriptionId());
+                    order.setAppliedSubscriptionName(checkoutOrder.getAppliedSubscriptionName());
+                }
                 order.setPriorityProduction(checkoutOrder.getPriorityProduction());
                 order.setCommissionFee(BigDecimal.ZERO);
                 order.setCreatedAt(Instant.now());
@@ -427,9 +491,12 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 for (CartItem ci : entry.getValue()) {
                     sellerProductQuantities.merge(ci.getProduct().getId(), ci.getQuantity(), Integer::sum);
                 }
-                Instant expiresAt = "PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod()) ? Instant.now().plus(15, java.time.temporal.ChronoUnit.MINUTES) : null;
+                Instant expiresAt = !zeroAmountSettlement && "PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())
+                        ? Instant.now().plus(15, java.time.temporal.ChronoUnit.MINUTES) : null;
                 inventoryService.reserveForOrder(order.getId(), sellerProductQuantities, "CHECKOUT_ORDER_" + checkoutOrder.getId(), expiresAt);
-                if (expiresAt != null) {
+                if (zeroAmountSettlement) {
+                    inventoryService.confirmReservation(order.getId());
+                } else if (expiresAt != null) {
                     order.setPaymentDueAt(expiresAt);
                     orderRepository.save(order);
                 }
@@ -441,24 +508,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         cart.setUpdatedAt(Instant.now());
         cartRepository.save(cart);
 
-        String paymentLinkUrl = null;
         if ("CONFIRMED".equals(checkoutOrder.getStatus()) && "PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())) {
-            try {
-                CreatePaymentLinkRequestDTO payRequest = CreatePaymentLinkRequestDTO.builder()
-                        .orderId(checkoutOrder.getId())
-                        .orderType("CHECKOUT_ORDER")
-                        .paymentOption("FULL")
-                        .customAmount(finalTotal)
-                        .description("Don PrintHub " + checkoutOrder.getId().toString().substring(0, 8))
-                        .build();
-                CreatePaymentLinkResponseDTO payResp = paymentService.createPaymentLink(user.getId(), payRequest);
-                paymentLinkUrl = payResp.paymentLinkUrl();
-            } catch (Exception e) {
-                log.error("Lỗi tạo link PayOS khi tạo checkout order {}: {}", checkoutOrder.getId(), e.getMessage());
-            }
+            prepareCheckoutPayment(checkoutOrder);
         }
 
-        return toDTO(checkoutOrder, paymentLinkUrl);
+        return toDTO(checkoutOrder, null);
     }
 
     @Override
@@ -490,145 +544,177 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
 
-        if ("CANCELLED".equals(checkoutOrder.getStatus())) {
+        String status = checkoutOrder.getStatus();
+        if ("CANCELLED".equals(status) || "EXPIRED".equals(status)) {
             throw new ApiException(CheckoutOrderErrorCode.CHECKOUT_ORDER_NOT_FOUND);
         }
-        if (Set.of("PAID", "PREPARING", "PRINTING", "SHIPPING", "COMPLETED").contains(checkoutOrder.getStatus())) {
+
+        Long version = checkoutOrder.getSummaryVersion();
+        if (!Objects.equals(version, request.summaryVersion())) {
+            throw checkoutConflict(checkoutOrder, CheckoutOrderErrorCode.CONFIRMATION_VERSION_CONFLICT,
+                    toDTO(checkoutOrder, null).pricingBreakdown());
+        }
+
+        String storedMethod = checkoutOrder.getPaymentMethod() != null ? checkoutOrder.getPaymentMethod() : "PAYOS";
+        String paymentMethod = request.paymentMethod() != null && !request.paymentMethod().isBlank()
+                ? request.paymentMethod().trim().toUpperCase(Locale.ROOT) : storedMethod.toUpperCase(Locale.ROOT);
+        if (!"PAYOS".equals(paymentMethod) && !"COD".equals(paymentMethod)) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Phương thức thanh toán không hợp lệ");
+        }
+
+        if ("CONFIRMED".equals(status) || "PROCESSING".equals(status) || "PAID".equals(status)) {
+            if (!paymentMethod.equalsIgnoreCase(storedMethod)) {
+                throw new ApiException(CheckoutOrderErrorCode.INVALID_PAYMENT_STATE);
+            }
+            BigDecimal expected = request.expectedTotalPayable();
+            if (expected != null && (checkoutOrder.getTotalAmount() == null
+                    || expected.compareTo(checkoutOrder.getTotalAmount()) != 0)) {
+                throw checkoutConflict(checkoutOrder, CheckoutOrderErrorCode.CONFIRMATION_PRICE_CHANGED,
+                        toDTO(checkoutOrder, null).pricingBreakdown());
+            }
+            if ("CONFIRMED".equals(status) && "COD".equals(paymentMethod)) {
+                checkoutOrder.setStatus("PROCESSING");
+                checkoutOrder.setUpdatedAt(Instant.now());
+                checkoutOrderRepository.save(checkoutOrder);
+            }
+            return toDTO(checkoutOrder, null);
+        }
+        if (!"PENDING_QUOTE".equals(status) && !"QUOTED".equals(status)) {
             throw new ApiException(CheckoutOrderErrorCode.INVALID_PAYMENT_STATE);
         }
 
-        if (request.summaryVersion() != null && !checkoutOrder.getSummaryVersion().equals(request.summaryVersion())) {
-            throw new ApiException(CheckoutOrderErrorCode.CONFIRMATION_VERSION_CONFLICT);
-        }
-
-        List<CustomOrder> customList = customOrderRepository.findByCheckoutOrderId(checkoutOrder.getId());
-        List<CustomOrder> activeCustomList = customList.stream()
+        List<CustomOrder> customList = customOrderRepository.findByCheckoutOrderId(id);
+        List<CustomOrder> activeCustoms = customList.stream()
                 .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
                 .toList();
-        if (!customList.isEmpty() && activeCustomList.isEmpty()) {
-            throw new ApiException(CheckoutOrderErrorCode.CUSTOM_NOT_ALL_QUOTED,
-                    "Tất cả sản phẩm thiết kế trong đơn đã bị hủy");
+        if ((!customList.isEmpty() && activeCustoms.isEmpty())
+                || activeCustoms.stream().anyMatch(c -> !"QUOTED".equals(c.getStatus())
+                        || resolveCustomLineTotal(c).signum() <= 0)) {
+            throw new ApiException(CheckoutOrderErrorCode.CUSTOM_NOT_ALL_QUOTED);
         }
-        for (CustomOrder c : activeCustomList) {
-            if (resolveCustomLineTotal(c).compareTo(BigDecimal.ZERO) <= 0
-                    || "REQUESTED".equalsIgnoreCase(c.getStatus())) {
-                throw new ApiException(CheckoutOrderErrorCode.CUSTOM_NOT_ALL_QUOTED);
-            }
+        if (!activeCustoms.isEmpty() && !"PAYOS".equals(paymentMethod)) {
+            throw new ApiException(CheckoutOrderErrorCode.COD_NOT_ALLOWED_FOR_CUSTOM);
         }
 
-        List<Order> orderList = orderRepository.findByCheckoutOrderId(checkoutOrder.getId());
-        for (Order o : orderList) {
-            List<OrderItem> items = orderItemRepository.findByOrderId(o.getId());
-            for (OrderItem oi : items) {
-                Product p = productRepository.findById(oi.getProduct().getId())
+        List<Order> marketOrders = orderRepository.findByCheckoutOrderId(id).stream()
+                .filter(order -> !"CANCELLED".equalsIgnoreCase(order.getStatus()))
+                .toList();
+        for (Order order : marketOrders) {
+            if (!"PENDING".equals(order.getStatus())) {
+                throw new ApiException(CheckoutOrderErrorCode.MARKETPLACE_OUT_OF_STOCK);
+            }
+            for (OrderItem item : orderItemRepository.findByOrderId(order.getId())) {
+                Product product = productRepository.findById(item.getProduct().getId())
                         .orElseThrow(() -> new ApiException(CheckoutOrderErrorCode.MARKETPLACE_OUT_OF_STOCK));
-                if (p.getPrice().compareTo(oi.getUnitPrice()) != 0) {
+                if (product.getPrice().compareTo(item.getUnitPrice()) != 0) {
                     throw new ApiException(CheckoutOrderErrorCode.MARKETPLACE_PRICE_CHANGED);
                 }
-                if (p.getStock() < oi.getQuantity()) {
-                    throw new ApiException(CheckoutOrderErrorCode.MARKETPLACE_OUT_OF_STOCK);
-                }
             }
         }
 
-        // Xác nhận giữ chỗ tồn kho (ACTIVE -> CONFIRMED, không trừ thêm)
-        for (Order o : orderList) {
-            inventoryService.confirmReservation(o.getId());
-        }
-
-        if (!activeCustomList.isEmpty() && !"PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())) {
-            throw new ApiException(CheckoutOrderErrorCode.COD_NOT_ALLOWED_FOR_CUSTOM, "Đơn in theo yêu cầu chỉ hỗ trợ thanh toán trực tuyến PayOS");
-        }
-
-        // Tính tổng tiền sau báo giá (chỉ tính các đơn con chưa hủy; quotedPrice đã là lineTotal = unitQuotedPrice * quantity)
-        BigDecimal customTotal = activeCustomList.stream()
-                .map(this::resolveCustomLineTotal)
+        BigDecimal customSubtotal = activeCustoms.stream().map(this::resolveCustomLineTotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal marketSubtotal = OrderPricing.marketplaceSubtotal(marketOrders);
+        BigDecimal subtotal = customSubtotal.add(marketSubtotal);
+        BigDecimal shippingFee = OrderPricing.checkoutShippingFee(checkoutOrder, this::resolveDefaultShippingFee);
+        BenefitScope scope = activeCustoms.isEmpty() ? BenefitScope.MARKETPLACE
+                : (marketOrders.isEmpty() ? BenefitScope.CUSTOM : BenefitScope.MIXED);
 
-        BigDecimal marketplaceTotal = orderList.stream()
-                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        BigDecimal itemsSubtotal = customTotal.add(marketplaceTotal);
-        BigDecimal shippingFee = (checkoutOrder.getShippingFee() != null && checkoutOrder.getShippingFee().compareTo(BigDecimal.ZERO) > 0)
-                ? checkoutOrder.getShippingFee()
-                : resolveDefaultShippingFee();
-        BigDecimal finalTotal = itemsSubtotal.add(shippingFee);
-
-        SubscriptionBenefitService.AppliedBenefitSnapshot appliedSnap = null;
+        SubscriptionBenefitService.AppliedBenefitSnapshot snapshot;
         if (subscriptionBenefitService != null) {
-            SubscriptionBenefitService.BenefitScope scope = (!activeCustomList.isEmpty() && !orderList.isEmpty())
-                    ? SubscriptionBenefitService.BenefitScope.MIXED
-                    : (!activeCustomList.isEmpty()
-                            ? SubscriptionBenefitService.BenefitScope.CUSTOM
-                            : SubscriptionBenefitService.BenefitScope.MARKETPLACE);
-            appliedSnap = subscriptionBenefitService.reserveAndApplyBenefits(
-                    user,
-                    SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER,
-                    checkoutOrder.getId(),
-                    scope,
-                    itemsSubtotal,
-                    shippingFee,
-                    customTotal,
-                    marketplaceTotal
-            );
-            checkoutOrder.setItemsSubtotal(appliedSnap.itemsSubtotal());
-            checkoutOrder.setShippingFee(appliedSnap.baseShippingFee());
-            checkoutOrder.setDiscountAmount(appliedSnap.discountAmount());
-            checkoutOrder.setShippingDiscountAmount(appliedSnap.shippingDiscountAmount());
-            checkoutOrder.setAppliedSubscriptionId(appliedSnap.appliedSubscriptionId());
-            checkoutOrder.setAppliedSubscriptionName(appliedSnap.appliedSubscriptionName());
-            checkoutOrder.setPriorityProduction(appliedSnap.priorityProduction());
-            finalTotal = appliedSnap.finalTotal();
-            checkoutOrder.setTotalAmount(finalTotal);
+            snapshot = subscriptionBenefitService.reserveAndApplyBenefits(user,
+                    SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, id, scope, subtotal,
+                    shippingFee, customSubtotal, marketSubtotal, preview ->
+                            validateCheckoutPrice(checkoutOrder, request, paymentMethod,
+                                    OrderPricing.fromPreview(version, customSubtotal, marketSubtotal, preview)));
         } else {
-            checkoutOrder.setItemsSubtotal(itemsSubtotal);
-            checkoutOrder.setShippingFee(shippingFee);
-            checkoutOrder.setDiscountAmount(BigDecimal.ZERO);
-            checkoutOrder.setShippingDiscountAmount(BigDecimal.ZERO);
-            checkoutOrder.setPriorityProduction(false);
-            checkoutOrder.setTotalAmount(finalTotal);
+            PricingBreakdownDTO estimate = OrderPricing.estimate(null, user, scope, version, customSubtotal,
+                    marketSubtotal, shippingFee);
+            validateCheckoutPrice(checkoutOrder, request, paymentMethod, estimate);
+            snapshot = SubscriptionBenefitService.AppliedBenefitSnapshot.empty(subtotal, shippingFee);
         }
 
-        checkoutOrder.setStatus("CONFIRMED");
-        if (request.paymentMethod() != null) {
-            checkoutOrder.setPaymentMethod(request.paymentMethod().toUpperCase());
-        }
-        checkoutOrder.setSummaryVersion(checkoutOrder.getSummaryVersion() + 1);
-        checkoutOrder.setUpdatedAt(Instant.now());
-        checkoutOrderRepository.save(checkoutOrder);
+        checkoutOrder.setItemsSubtotal(snapshot.itemsSubtotal());
+        checkoutOrder.setShippingFee(snapshot.baseShippingFee());
+        checkoutOrder.setDiscountAmount(snapshot.discountAmount());
+        checkoutOrder.setShippingDiscountAmount(snapshot.shippingDiscountAmount());
+        checkoutOrder.setAppliedSubscriptionId(snapshot.appliedSubscriptionId());
+        checkoutOrder.setAppliedSubscriptionName(snapshot.appliedSubscriptionName());
+        checkoutOrder.setPriorityProduction(snapshot.priorityProduction());
+        checkoutOrder.setTotalAmount(snapshot.finalTotal());
+        checkoutOrder.setPaymentMethod(paymentMethod);
+        Instant now = Instant.now();
+        checkoutOrder.setUpdatedAt(now);
 
-        distributeSnapshotToChildren(checkoutOrder, activeCustomList, orderList, appliedSnap);
-
-        for (CustomOrder c : activeCustomList) {
-            if (!"PAID".equals(c.getStatus())) {
-                c.setStatus("ACCEPTED");
-                c.setUpdatedAt(Instant.now());
-                customOrderRepository.save(c);
-            }
-        }
-
-        String paymentLinkUrl = null;
-        if ("PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())) {
-            try {
-                CreatePaymentLinkRequestDTO payRequest = CreatePaymentLinkRequestDTO.builder()
-                        .orderId(checkoutOrder.getId())
-                        .orderType("CHECKOUT_ORDER")
-                        .paymentOption("FULL")
-                        .customAmount(finalTotal)
-                        .description("Don PrintHub " + checkoutOrder.getId().toString().substring(0, 8))
-                        .build();
-                CreatePaymentLinkResponseDTO payResp = paymentService.createPaymentLink(user.getId(), payRequest);
-                paymentLinkUrl = payResp.paymentLinkUrl();
-            } catch (Exception e) {
-                log.error("Lỗi tạo link PayOS cho checkout order {}: {}", checkoutOrder.getId(), e.getMessage());
-            }
-        } else if ("COD".equalsIgnoreCase(checkoutOrder.getPaymentMethod()) && activeCustomList.isEmpty()) {
+        boolean zeroAmountSettlement = snapshot.fullyDiscounted();
+        if (zeroAmountSettlement) {
+            settleZeroAmountCheckout(checkoutOrder, now);
+        } else if ("PAYOS".equals(paymentMethod)) {
+            checkoutOrder.setStatus("CONFIRMED");
+            prepareCheckoutPayment(checkoutOrder);
+        } else {
             checkoutOrder.setStatus("PROCESSING");
-            checkoutOrderRepository.save(checkoutOrder);
         }
+        checkoutOrderRepository.save(checkoutOrder);
+        distributeSnapshotToChildren(checkoutOrder, activeCustoms, marketOrders, snapshot);
 
-        return toDTO(checkoutOrder, paymentLinkUrl);
+        for (CustomOrder custom : activeCustoms) {
+            custom.setStatus(zeroAmountSettlement ? "PAID" : "ACCEPTED");
+            custom.setUpdatedAt(now);
+            customOrderRepository.save(custom);
+        }
+        if (zeroAmountSettlement || "COD".equals(paymentMethod)) {
+            for (Order order : marketOrders) {
+                if (zeroAmountSettlement) {
+                    order.setStatus("PAID");
+                    if (order.getSubtotalAmount() == null) {
+                        order.setSubtotalAmount(order.getTotalAmount());
+                    }
+                    order.setTotalAmount(BigDecimal.ZERO);
+                    order.setPaymentDueAt(null);
+                    order.setUpdatedAt(now);
+                    orderRepository.save(order);
+                }
+                inventoryService.confirmReservation(order.getId());
+            }
+        }
+        return toDTO(checkoutOrder, null);
+    }
+
+    private void settleZeroAmountCheckout(CheckoutOrder checkout, Instant settledAt) {
+        checkout.setZeroAmountSettledAt(settledAt);
+        checkout.setStatus("PAID");
+        checkout.setPaymentExpiresAt(null);
+        checkout.setReservationExpiresAt(null);
+        subscriptionBenefitService.commitAppliedBenefits(
+                SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, checkout.getId());
+    }
+
+    private void prepareCheckoutPayment(CheckoutOrder checkout) {
+        if (paymentRepository == null) {
+            return;
+        }
+        Payment payment = new Payment();
+        payment.setCheckoutOrder(checkout);
+        QuotePayment.prepare(paymentRepository, payment, checkout.getTotalAmount());
+        checkout.setPaymentExpiresAt(payment.getExpiresAt());
+    }
+
+    private void validateCheckoutPrice(CheckoutOrder checkout, CheckoutOrderConfirmRequestDTO request,
+                                       String paymentMethod, PricingBreakdownDTO estimate) {
+        if (request.expectedTotalPayable() == null
+                || request.expectedTotalPayable().compareTo(estimate.totalPayable()) != 0) {
+            throw checkoutConflict(checkout, CheckoutOrderErrorCode.CONFIRMATION_PRICE_CHANGED, estimate);
+        }
+        if ("PAYOS".equals(paymentMethod) && estimate.totalPayable().signum() != 0) {
+            QuotePayment.requirePayable(estimate.totalPayable());
+        }
+    }
+
+    private ApiException checkoutConflict(CheckoutOrder checkout, CheckoutOrderErrorCode error,
+                                          PricingBreakdownDTO pricing) {
+        return pricing == null ? new ApiException(error) : new ApiException(error, Map.of(
+                "id", checkout.getId(), "summaryVersion", pricing.quoteVersion(), "pricingBreakdown", pricing));
     }
 
     private CheckoutOrderResponseDTO toDTO(CheckoutOrder order, String paymentLinkUrl) {
@@ -641,19 +727,81 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         String paymentMethod = order.getPaymentMethod() != null
                 ? order.getPaymentMethod()
                 : (payment != null ? payment.getGateway() : "PAYOS");
-        String paymentStatus = payment != null
+        boolean zeroAmountSettlement = order.getZeroAmountSettledAt() != null;
+        String paymentStatus = zeroAmountSettlement ? "SUCCESS" : payment != null
                 ? payment.getStatus()
                 : ("PAID".equals(order.getStatus()) ? "SUCCESS" : "PENDING");
 
-        String resolvedOrderType = order.getOrderType();
-        if (resolvedOrderType == null || resolvedOrderType.isBlank()) {
-            if (!customs.isEmpty() && !orders.isEmpty()) resolvedOrderType = "MIXED";
-            else if (!customs.isEmpty()) resolvedOrderType = "CUSTOM";
-            else resolvedOrderType = "MARKETPLACE";
+        String resolvedOrderType = OrderPricing.checkoutOrderType(order, !customs.isEmpty(), !orders.isEmpty());
+        Instant now = (clock != null ? clock : Clock.systemUTC()).instant();
+        User currentUser = getCurrentUserSafely();
+        boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
+        boolean isOwner = currentUser != null && order.getUser() != null && currentUser.getId().equals(order.getUser().getId());
+
+        Map<UUID, CustomOrderReview> customReviewMap = Map.of();
+        if (customOrderReviewRepository != null && !customs.isEmpty()) {
+            List<UUID> customIds = customs.stream().map(CustomOrder::getId).toList();
+            customReviewMap = customOrderReviewRepository.findByCustomOrderIdIn(customIds).stream()
+                    .collect(Collectors.toMap(r -> r.getCustomOrder().getId(), r -> r, (r1, r2) -> r1));
         }
 
+        Map<UUID, Map<Long, Review>> itemReviewsByOrderId = new HashMap<>();
+        if (reviewRepository != null && !orders.isEmpty()) {
+            List<UUID> orderIds = orders.stream().map(Order::getId).toList();
+            for (Review r : reviewRepository.findByOrderIdIn(orderIds)) {
+                if (r.getOrder() != null && r.getOrderItem() != null) {
+                    itemReviewsByOrderId
+                            .computeIfAbsent(r.getOrder().getId(), k -> new HashMap<>())
+                            .putIfAbsent(r.getOrderItem().getId(), r);
+                }
+            }
+        }
+
+        OrderRewardRecord parentRewardRecord = orderRewardRecordRepository != null
+                ? orderRewardRecordRepository.findBySourceTypeAndSourceIdAndRewardType(
+                        "CHECKOUT_ORDER", order.getId(), OrderRewardRecord.REWARD_TYPE_COMPLETION).orElse(null)
+                : null;
+
+        List<CustomOrder> activeCustoms = customs.stream()
+                .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
+                .toList();
+        boolean allCustomQuoted = !customs.isEmpty()
+                ? (!activeCustoms.isEmpty() && activeCustoms.stream().allMatch(c -> resolveCustomLineTotal(c).compareTo(BigDecimal.ZERO) > 0 && !"REQUESTED".equalsIgnoreCase(c.getStatus())))
+                : true;
+        boolean readyForConfirm = ("PENDING_QUOTE".equals(order.getStatus()) || "QUOTED".equals(order.getStatus())) && allCustomQuoted;
+
+        BigDecimal computedCustomSubtotal = activeCustoms.stream()
+                .map(this::resolveCustomLineTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal computedMarketSubtotal = OrderPricing.marketplaceSubtotal(orders);
+        BigDecimal resolvedItemsSubtotal = order.getItemsSubtotal() != null
+                ? order.getItemsSubtotal()
+                : computedCustomSubtotal.add(computedMarketSubtotal);
+        PricingBreakdownDTO pricing = checkoutPricing(order, readyForConfirm, computedCustomSubtotal,
+                computedMarketSubtotal, resolvedItemsSubtotal, resolvedOrderType);
+
+        BigDecimal checkoutDiscount = order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO;
+        BigDecimal checkoutNetGoods = (pricing != null && pricing.itemsSubtotal() != null && pricing.itemDiscountAmount() != null)
+                ? pricing.itemsSubtotal().subtract(pricing.itemDiscountAmount()).max(BigDecimal.ZERO)
+                : resolvedItemsSubtotal.subtract(checkoutDiscount).max(BigDecimal.ZERO);
+        int legacyPoints = customs.stream().filter(c -> Boolean.TRUE.equals(c.getRewardProcessed()))
+                .mapToInt(c -> c.getRewardPointsEarned() != null ? c.getRewardPointsEarned() : 0).sum()
+                + orders.stream().filter(o -> Boolean.TRUE.equals(o.getRewardProcessed()))
+                .mapToInt(o -> o.getRewardPointsEarned() != null ? o.getRewardPointsEarned() : 0).sum();
+        OrderDisplayMetadata.RewardSnapshot checkoutRewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                order.getStatus(),
+                zeroAmountSettlement,
+                checkoutNetGoods,
+                parentRewardRecord,
+                legacyPoints > 0,
+                legacyPoints,
+                orderRewardService
+        );
+
+        final Map<UUID, CustomOrderReview> finalCustomReviewMap = customReviewMap;
         List<CustomOrderDetailResponseDTO> customDetailDTOs = customs.stream()
-                .map(c -> toCustomDetailDTO(c, paymentStatus))
+                .map(c -> toCustomDetailDTO(c, paymentStatus, payment, zeroAmountSettlement,
+                        finalCustomReviewMap.get(c.getId()), parentRewardRecord, now))
                 .toList();
 
         List<CustomOrderResponseDTO> customDTOs = customs.stream().map(c -> CustomOrderResponseDTO.builder()
@@ -685,16 +833,38 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
         List<OrderResponseDTO> orderDTOs = orders.stream().map(o -> {
             List<OrderItem> oItems = orderItemRepository.findByOrderId(o.getId());
-            List<OrderItemResponseDTO> itemDTOs = oItems.stream().map(oi -> OrderItemResponseDTO.builder()
-                    .id(oi.getId())
-                    .productId(oi.getProduct() != null ? oi.getProduct().getId() : null)
-                    .productTitle(oi.getProduct() != null ? oi.getProduct().getTitle() : "Sản phẩm")
-                    .quantity(oi.getQuantity())
-                    .unitPrice(oi.getUnitPrice())
-                    .subTotal(oi.getUnitPrice() != null ? oi.getUnitPrice().multiply(BigDecimal.valueOf(oi.getQuantity())) : BigDecimal.ZERO)
-                    .color(oi.getColor())
-                    .engravingText(oi.getEngravingText())
-                    .build()).toList();
+            Map<Long, Review> itemReviews = itemReviewsByOrderId.getOrDefault(o.getId(), Map.of());
+            boolean orderBuyerOwner = currentUser != null && o.getBuyer() != null && currentUser.getId().equals(o.getBuyer().getId());
+            List<OrderItemResponseDTO> itemDTOs = oItems.stream().map(oi -> {
+                OrderDisplayMetadata.ItemReviewMeta reviewMeta =
+                        OrderDisplayMetadata.computeItemReviewMeta(o, itemReviews.get(oi.getId()), orderBuyerOwner, now);
+                return OrderItemResponseDTO.builder()
+                        .id(oi.getId())
+                        .productId(oi.getProduct() != null ? oi.getProduct().getId() : null)
+                        .productTitle(oi.getProduct() != null ? oi.getProduct().getTitle() : "Sản phẩm")
+                        .quantity(oi.getQuantity())
+                        .unitPrice(oi.getUnitPrice())
+                        .subTotal(oi.getUnitPrice() != null ? oi.getUnitPrice().multiply(BigDecimal.valueOf(oi.getQuantity())) : BigDecimal.ZERO)
+                        .color(oi.getColor())
+                        .engravingText(oi.getEngravingText())
+                        .reviewId(reviewMeta.reviewId())
+                        .reviewRating(reviewMeta.reviewRating())
+                        .canReview(reviewMeta.canReview())
+                        .canEditReview(reviewMeta.canEditReview())
+                        .reviewComment(reviewMeta.reviewComment())
+                        .reviewCreatedAt(reviewMeta.reviewCreatedAt())
+                        .build();
+            }).toList();
+
+            OrderDisplayMetadata.RewardSnapshot orderRewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                    o.getStatus(),
+                    zeroAmountSettlement,
+                    OrderDisplayMetadata.resolveStandaloneOrderNetGoods(o),
+                    parentRewardRecord,
+                    o.getRewardProcessed(),
+                    o.getRewardPointsEarned(),
+                    orderRewardService
+            );
 
             return OrderResponseDTO.builder()
                     .id(o.getId())
@@ -705,6 +875,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     .totalAmount(o.getTotalAmount())
                     .commissionFee(o.getCommissionFee())
                     .status(o.getStatus())
+                    .paymentStatus(o.resolveZeroAmountSettledAt() != null ? "SUCCESS" : null)
                     .items(itemDTOs)
                     .createdAt(o.getCreatedAt())
                     .updatedAt(o.getUpdatedAt())
@@ -715,33 +886,19 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     .appliedSubscriptionId(o.getAppliedSubscriptionId())
                     .appliedSubscriptionName(o.getAppliedSubscriptionName())
                     .priorityProduction(o.getPriorityProduction())
+                    .estimatedRewardPoints(orderRewardSnap.estimatedRewardPoints())
+                    .rewardStatus(orderRewardSnap.rewardStatus())
                     .build();
         }).toList();
 
-        List<CustomOrder> activeCustoms = customs.stream()
-                .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
-                .toList();
-        boolean allCustomQuoted = !customs.isEmpty()
-                ? (!activeCustoms.isEmpty() && activeCustoms.stream().allMatch(c -> resolveCustomLineTotal(c).compareTo(BigDecimal.ZERO) > 0 && !"REQUESTED".equalsIgnoreCase(c.getStatus())))
-                : true;
-        boolean readyForConfirm = ("PENDING_QUOTE".equals(order.getStatus()) || "QUOTED".equals(order.getStatus())) && allCustomQuoted;
-
-        BigDecimal computedCustomSubtotal = activeCustoms.stream()
-                .map(this::resolveCustomLineTotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal computedMarketSubtotal = orders.stream()
-                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal resolvedItemsSubtotal = order.getItemsSubtotal() != null
-                ? order.getItemsSubtotal()
-                : computedCustomSubtotal.add(computedMarketSubtotal);
-
-        User currentUser = getCurrentUserSafely();
-        boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
-        boolean isOwner = currentUser != null && order.getUser() != null && currentUser.getId().equals(order.getUser().getId());
         OrderTransitionPolicy.TransitionEvaluation eval = evaluateParentActions(order, resolvedOrderType, paymentMethod, paymentStatus, isAdmin, isOwner);
 
-        String resolvedLink = paymentLinkUrl != null ? paymentLinkUrl : (payment != null ? payment.getCheckoutUrl() : null);
+        String resolvedLink = paymentLinkUrl;
+        if (resolvedLink == null && "CONFIRMED".equals(order.getStatus())
+                && payment != null && "PENDING".equals(payment.getStatus())
+                && payment.getExpiresAt() != null && payment.getExpiresAt().isAfter(Instant.now())) {
+            resolvedLink = payment.getCheckoutUrl();
+        }
 
         return CheckoutOrderResponseDTO.builder()
                 .id(order.getId())
@@ -778,7 +935,33 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .priorityProduction(order.getPriorityProduction())
                 .cancelledByRole(order.getCancelledByRole())
                 .cancelledAt(order.getCancelledAt())
+                .pricingBreakdown(pricing)
+                .paymentEvidence(PaymentEvidenceResponseDTO.from(payment, order.getZeroAmountSettledAt()))
+                .estimatedRewardPoints(checkoutRewardSnap.estimatedRewardPoints())
+                .rewardStatus(checkoutRewardSnap.rewardStatus())
                 .build();
+    }
+
+    private PricingBreakdownDTO checkoutPricing(CheckoutOrder order, boolean readyForConfirm,
+                                                BigDecimal customSubtotal, BigDecimal marketSubtotal,
+                                                BigDecimal itemsSubtotal, String orderType) {
+        String status = order.getStatus();
+        if (status == null || "CANCELLED".equalsIgnoreCase(status)) {
+            return null;
+        }
+        Long version = order.getSummaryVersion() != null ? order.getSummaryVersion() : 1L;
+        if (Set.of("PENDING_QUOTE", "QUOTED").contains(status)) {
+            BigDecimal shippingFee = OrderPricing.checkoutShippingFee(order, this::resolveDefaultShippingFee);
+            if (!readyForConfirm) {
+                return OrderPricing.pendingQuote(version, customSubtotal, marketSubtotal, shippingFee);
+            }
+            return OrderPricing.estimateCheckout(subscriptionBenefitService, order, orderType,
+                    version, customSubtotal, marketSubtotal, shippingFee);
+        }
+        return OrderPricing.locked(version, customSubtotal, marketSubtotal, itemsSubtotal, order.getDiscountAmount(),
+                order.getShippingFee(), order.getShippingDiscountAmount(), order.getTotalAmount(),
+                order.getAppliedSubscriptionId(), order.getAppliedSubscriptionName(), order.getPriorityProduction(),
+                order.getZeroAmountSettledAt() != null);
     }
 
     @Override
@@ -885,12 +1068,18 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
         Instant now = Instant.now();
         BigDecimal customSubtotal = BigDecimal.ZERO;
+        boolean quoteChanged = !"QUOTED".equals(currentParentStatus);
         for (CheckoutOrderBatchQuoteRequestDTO.ItemQuote itemQuote : request.items()) {
             CustomOrder target = activeMap.get(itemQuote.customOrderId());
-            int qty = target.getQuantity() != null && target.getQuantity() > 0 ? target.getQuantity() : 1;
+            int qty = OrderPricing.quoteQuantity(target);
             BigDecimal unitPrice = itemQuote.unitPrice();
             BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(qty));
             String normalizedNote = itemQuote.note() != null && !itemQuote.note().isBlank() ? itemQuote.note().trim() : null;
+            customSubtotal = customSubtotal.add(lineTotal);
+            if (!OrderPricing.quoteChanged(target, unitPrice, lineTotal, normalizedNote)) {
+                continue;
+            }
+            quoteChanged = true;
 
             target.setUnitQuotedPrice(unitPrice);
             target.setQuotedPrice(lineTotal);
@@ -900,19 +1089,16 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             target.setStatus("QUOTED");
             target.setUpdatedAt(now);
             customOrderRepository.save(target);
-
-            customSubtotal = customSubtotal.add(lineTotal);
         }
 
+        if (!quoteChanged) {
+            return toDTO(co, null);
+        }
         List<Order> marketOrders = orderRepository.findByCheckoutOrderId(id);
-        BigDecimal marketSubtotal = marketOrders.stream()
-                .map(o -> o.getTotalAmount() != null ? o.getTotalAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal marketSubtotal = OrderPricing.marketplaceSubtotal(marketOrders);
 
         BigDecimal itemsSubtotal = customSubtotal.add(marketSubtotal);
-        BigDecimal shippingFee = (co.getShippingFee() != null && co.getShippingFee().compareTo(BigDecimal.ZERO) > 0)
-                ? co.getShippingFee()
-                : resolveDefaultShippingFee();
+        BigDecimal shippingFee = OrderPricing.checkoutShippingFee(co, this::resolveDefaultShippingFee);
         BigDecimal totalAmount = itemsSubtotal.add(shippingFee);
 
         co.setItemsSubtotal(itemsSubtotal);
@@ -923,6 +1109,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         co.setUpdatedAt(now);
         checkoutOrderRepository.save(co);
 
+        CheckoutOrderResponseDTO response = toDTO(co, null);
+        if (emailEvents != null) {
+            emailEvents.enqueueQuotation("CHECKOUT_ORDER", id, co.getUser(), response.pricingBreakdown(), activeCustoms);
+        }
         if (notificationService != null && co.getUser() != null) {
             notificationService.sendNotification(
                     co.getUser(),
@@ -933,7 +1123,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             );
         }
 
-        return toDTO(co, null);
+        return response;
     }
 
     @Override
@@ -959,16 +1149,26 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
         String nextStatus = normalizeCheckoutTarget(request.getEffectiveTarget());
         String current = co.getStatus() != null ? co.getStatus().toUpperCase() : "PENDING_QUOTE";
+        BigDecimal codCollectedAmount = request.codCollectedAmount();
+        if (codCollectedAmount != null && (!"COD".equalsIgnoreCase(paymentMethod) || !"COMPLETED".equals(nextStatus))) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chỉ xác nhận thu COD khi hoàn tất đơn COD.");
+        }
 
         if (current.equals(nextStatus)) {
+            if (codCollectedAmount != null) {
+                evaluateCompletionReward(id, codCollectedAmount, admin);
+            }
             return toDTO(co, null);
         }
 
-        boolean isPaid = "PAID".equals(current)
+        boolean isPaid = co.getZeroAmountSettledAt() != null || "PAID".equals(current)
                 || Set.of("PREPARING", "PRINTING", "SHIPPING", "COMPLETED").contains(current)
                 || (payment != null && "SUCCESS".equalsIgnoreCase(paymentStatus));
 
         if ("CANCELLED".equals(nextStatus)) {
+            if (payment != null && Payment.PENDING_RECONCILIATION.equals(payment.getStatus())) {
+                throw new ApiException(CommonErrorCode.CONFLICT, "Giao dịch đang chờ đối soát.");
+            }
             if (isPaid) {
                 throw new ApiException(CheckoutOrderErrorCode.CANNOT_CANCEL_CONFIRMED_ORDER);
             }
@@ -976,6 +1176,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             if (reason == null || reason.length() < 5) {
                 throw new ApiException(CommonErrorCode.INVALID_INPUT,
                         "Vui lòng nhập lý do hủy đơn (tối thiểu 5 ký tự).");
+            }
+            if (payment != null && "PENDING".equals(payment.getStatus()) && "PAYOS".equals(payment.getGateway())
+                    && payment.getTransactionId() != null) {
+                paymentService.cancelQuotePayment(payment.getTransactionId(), reason);
             }
             Instant cancelTime = Instant.now();
             co.setStatus("CANCELLED");
@@ -1006,6 +1210,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     o.setStatus("CANCELLED");
                     o.setUpdatedAt(cancelTime);
                     orderRepository.save(o);
+                    inventoryService.releaseActiveReservations(o.getId(), reason, "CHECKOUT_CANCEL_" + id);
                 }
             }
         } else {
@@ -1015,14 +1220,21 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             }
             validateParentForwardTransition(current, nextStatus);
 
+            Instant transitionAt = Instant.now();
             co.setStatus(nextStatus);
-            co.setUpdatedAt(Instant.now());
+            co.setUpdatedAt(transitionAt);
+            if ("COMPLETED".equals(nextStatus) && co.getCompletedAt() == null) {
+                co.setCompletedAt(transitionAt);
+            }
             checkoutOrderRepository.save(co);
 
             for (CustomOrder c : customs) {
                 if (!"CANCELLED".equalsIgnoreCase(c.getStatus())) {
                     c.setStatus(nextStatus);
-                    c.setUpdatedAt(Instant.now());
+                    c.setUpdatedAt(transitionAt);
+                    if ("COMPLETED".equals(nextStatus) && c.getCompletedAt() == null) {
+                        c.setCompletedAt(transitionAt);
+                    }
                     customOrderRepository.save(c);
                 }
             }
@@ -1030,9 +1242,15 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             for (Order o : orders) {
                 if (!"CANCELLED".equalsIgnoreCase(o.getStatus())) {
                     o.setStatus(marketplaceTarget);
-                    o.setUpdatedAt(Instant.now());
+                    o.setUpdatedAt(transitionAt);
+                    if ("COMPLETED".equals(marketplaceTarget) && o.getCompletedAt() == null) {
+                        o.setCompletedAt(transitionAt);
+                    }
                     orderRepository.save(o);
                 }
+            }
+            if ("COMPLETED".equals(nextStatus)) {
+                evaluateCompletionReward(id, codCollectedAmount, admin);
             }
         }
 
@@ -1058,6 +1276,20 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
 
         return toDTO(co, null);
+    }
+
+    private void evaluateCompletionReward(UUID checkoutId, BigDecimal collectedAmount, User admin) {
+        if (orderRewardService != null) {
+            if (collectedAmount == null) {
+                orderRewardService.processCompletionReward(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, checkoutId);
+            } else {
+                orderRewardService.completeCodAndReward(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, checkoutId,
+                        collectedAmount, admin);
+            }
+        } else if (collectedAmount != null) {
+            paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, checkoutId,
+                    collectedAmount, admin);
+        }
     }
 
     private CustomOrder createChildCustomOrder(User user, CheckoutOrder checkoutOrder, CheckoutOrderCreateRequestDTO request, CartItem cItem) {
@@ -1151,12 +1383,23 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
     }
 
-    private CustomOrderDetailResponseDTO toCustomDetailDTO(CustomOrder order, String parentPaymentStatus) {
+    private CustomOrderDetailResponseDTO toCustomDetailDTO(
+            CustomOrder order,
+            String parentPaymentStatus,
+            Payment parentPayment,
+            boolean zeroAmountSettlement,
+            CustomOrderReview customReview,
+            OrderRewardRecord parentRewardRecord,
+            Instant now
+    ) {
         String pMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : "PAYOS";
-        String pStatus = parentPaymentStatus != null ? parentPaymentStatus : "PENDING";
+        Instant zeroAmountSettledAt = order.resolveZeroAmountSettledAt();
+        String pStatus = parentPaymentStatus != null && (!zeroAmountSettlement || zeroAmountSettledAt != null)
+                ? parentPaymentStatus : "PENDING";
         User currentUser = getCurrentUserSafely();
         boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
         boolean isOwner = currentUser == null || (order.getBuyer() != null && currentUser.getId().equals(order.getBuyer().getId()));
+        boolean buyerOwner = currentUser != null && order.getBuyer() != null && currentUser.getId().equals(order.getBuyer().getId());
         OrderTransitionPolicy.TransitionEvaluation eval = orderTransitionPolicy.evaluateActions(
                 OrderTransitionPolicy.OrderType.CUSTOM,
                 order.getStatus(),
@@ -1164,6 +1407,17 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 pStatus,
                 isAdmin,
                 isOwner
+        );
+        OrderDisplayMetadata.CustomReviewMeta reviewMeta =
+                OrderDisplayMetadata.computeCustomReviewMeta(order, customReview, buyerOwner, now);
+        OrderDisplayMetadata.RewardSnapshot rewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                order.getStatus(),
+                zeroAmountSettlement || zeroAmountSettledAt != null,
+                OrderDisplayMetadata.resolveCustomLineNetGoods(order),
+                parentRewardRecord,
+                order.getRewardProcessed(),
+                order.getRewardPointsEarned(),
+                orderRewardService
         );
         return CustomOrderDetailResponseDTO.builder()
                 .id(order.getId())
@@ -1200,6 +1454,12 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .cancelReason(order.getCancelReason())
                 .cancelledByRole(order.getCancelledByRole())
                 .cancelledAt(order.getCancelledAt())
+                .paymentEvidence(PaymentEvidenceResponseDTO.from(parentPayment, zeroAmountSettledAt))
+                .canReview(reviewMeta.canReview())
+                .canEditReview(reviewMeta.canEditReview())
+                .review(reviewMeta.review())
+                .estimatedRewardPoints(rewardSnap.estimatedRewardPoints())
+                .rewardStatus(rewardSnap.rewardStatus())
                 .build();
     }
 
@@ -1278,6 +1538,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     ) {
         String st = order.getStatus() != null ? order.getStatus().toUpperCase() : "PENDING_QUOTE";
         if ("MARKETPLACE".equals(orderType)) {
+            if (isAdmin && "COD".equalsIgnoreCase(paymentMethod) && Set.of("CONFIRMED", "PROCESSING").contains(st)) {
+                return new OrderTransitionPolicy.TransitionEvaluation(List.of("START_PREPARATION", "CANCEL"), List.of());
+            }
             return orderTransitionPolicy.evaluateActions(
                     OrderTransitionPolicy.OrderType.MARKETPLACE,
                     st,

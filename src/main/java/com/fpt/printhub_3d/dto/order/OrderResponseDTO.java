@@ -84,6 +84,12 @@ public record OrderResponseDTO(
         String appliedSubscriptionName,
 
         @Schema(description = "Ưu tiên xử lý / in ấn")
-        Boolean priorityProduction
+        Boolean priorityProduction,
+
+        @Schema(description = "Số xu dự kiến / đã nhận (loại phí giao hàng)")
+        Integer estimatedRewardPoints,
+
+        @Schema(description = "Trạng thái xét thưởng xu: ESTIMATED | PENDING_PAYMENT_EVIDENCE | GRANTED | EVALUATED_ZERO")
+        String rewardStatus
 ) {
 }

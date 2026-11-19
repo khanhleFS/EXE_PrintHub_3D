@@ -81,6 +81,14 @@ public class CustomOrder {
     @Column(name = "quoted_at")
     private java.time.Instant quotedAt;
 
+    @Column(name = "quote_version")
+    @ColumnDefault("1")
+    private Long quoteVersion = 1L;
+
+    public Long getQuoteVersion() {
+        return quoteVersion != null ? quoteVersion : 1L;
+    }
+
     @Size(max = 20)
     @NotNull
     @ColumnDefault("'PENDING'")
@@ -110,6 +118,20 @@ public class CustomOrder {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "checkout_order_id")
     private CheckoutOrder checkoutOrder;
+
+    @Column(name = "zero_amount_settled_at")
+    private Instant zeroAmountSettledAt;
+
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
+    public Instant resolveZeroAmountSettledAt() {
+        if (checkoutOrder == null) {
+            return zeroAmountSettledAt;
+        }
+        return !"CANCELLED".equalsIgnoreCase(status) && !"EXPIRED".equalsIgnoreCase(status)
+                ? checkoutOrder.getZeroAmountSettledAt() : null;
+    }
 
     @Column(name = "subtotal_amount", precision = 18, scale = 2)
     private BigDecimal subtotalAmount;

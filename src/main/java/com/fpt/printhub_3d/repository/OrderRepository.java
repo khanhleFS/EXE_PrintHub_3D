@@ -23,8 +23,14 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query(value = "select coalesce(sum(commission_fee), cast(0 as decimal(18,2))) from orders", nativeQuery = true)
     BigDecimal sumCommissionFee();
 
-    @Query(value = "select coalesce(sum(commission_fee), cast(0 as decimal(18,2))) from orders where (:from is null or created_at >= :from) and (:to is null or created_at <= :to)", nativeQuery = true)
-    BigDecimal sumCommissionFeeBetween(Instant from, Instant to);
+    @Query("select sum(o.commissionFee) from Order o where o.createdAt >= :from and o.createdAt < :to")
+    BigDecimal sumCommissionFeeBetween(@Param("from") Instant from, @Param("to") Instant to);
+
+    @Query("select sum(o.commissionFee) from Order o where o.createdAt >= :from")
+    BigDecimal sumCommissionFeeFrom(@Param("from") Instant from);
+
+    @Query("select sum(o.commissionFee) from Order o where o.createdAt < :to")
+    BigDecimal sumCommissionFeeBefore(@Param("to") Instant to);
 
     @Query(value = "select count(*) from orders", nativeQuery = true)
     Long countOrders();
@@ -32,6 +38,24 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     List<Order> findByBuyerIdOrderByCreatedAtDesc(UUID buyerId);
 
     List<Order> findByCheckoutOrderId(UUID checkoutOrderId);
+
+    List<Order> findByStatusAndCheckoutOrderIsNull(String status);
+
+    @Query("select co.id from Order o join o.checkoutOrder co where o.id = :id")
+    Optional<UUID> findCheckoutId(@Param("id") UUID id);
+
+    interface ExpiryCandidate {
+        UUID getId();
+        UUID getCheckoutId();
+    }
+
+    @Query("""
+            SELECT o.id AS id, co.id AS checkoutId FROM Order o LEFT JOIN o.checkoutOrder co
+            WHERE o.status = 'PENDING' AND (o.paymentDueAt < :now
+                  OR (o.paymentDueAt IS NULL AND o.createdAt < :createdBefore))
+            """)
+    List<ExpiryCandidate> findPendingExpiryCandidates(@Param("now") Instant now,
+                                                       @Param("createdBefore") Instant createdBefore);
 
     boolean existsByBuyerId(UUID buyerId);
 }

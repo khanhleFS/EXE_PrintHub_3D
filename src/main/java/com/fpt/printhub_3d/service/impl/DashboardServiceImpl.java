@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.service.impl;
 
 import com.fpt.printhub_3d.dto.custom_prints.CustomOrderDetailResponseDTO;
 import com.fpt.printhub_3d.dto.dashboard.DashboardResponseDTO;
+import com.fpt.printhub_3d.dto.finance.FinancialReportPeriod;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.repository.DisputeRepository;
@@ -18,6 +19,8 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.fpt.printhub_3d.service.PaymentEvidenceService.ZERO_AMOUNT_PROMO;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -28,9 +31,10 @@ public class DashboardServiceImpl implements DashboardService {
     private final CustomOrderService customOrderService;
     private final DisputeRepository disputeRepository;
     private final UserRepository userRepository;
+    private final FinancialReportingService financialReporting;
 
     @Override
-    public DashboardResponseDTO getDashboard(User user, boolean all) {
+    public DashboardResponseDTO getDashboard(User user, boolean all, FinancialReportPeriod period) {
         List<OrderResponseDTO> orders = all ? orderService.getAllOrders() : orderService.getMyOrders(user.getId());
         List<CustomOrderDetailResponseDTO> customOrders = all ? customOrderService.getAllCustomOrders() : customOrderService.getMyCustomOrders(user);
 
@@ -40,7 +44,7 @@ public class DashboardServiceImpl implements DashboardService {
         List<DashboardResponseDTO.RecentPrintJobDTO> recentJobs = new ArrayList<>();
 
         for (OrderResponseDTO o : orders) {
-            if ("SUCCESS".equals(o.paymentStatus()) || "PAID".equals(o.status()) || "COMPLETED".equals(o.status())) {
+            if (!all && ("SUCCESS".equals(o.paymentStatus()) || "PAID".equals(o.status()) || "COMPLETED".equals(o.status()))) {
                 paid = paid.add(o.totalAmount() != null ? o.totalAmount() : BigDecimal.ZERO);
             }
             if ("COMPLETED".equals(o.status())) {
@@ -77,7 +81,8 @@ public class DashboardServiceImpl implements DashboardService {
                 customInProduction++;
             }
 
-            if ("PAID".equals(st) || "COMPLETED".equals(st)) {
+            boolean zeroAmountPromo = c.paymentEvidence() != null && ZERO_AMOUNT_PROMO.equals(c.paymentEvidence().status());
+            if (!all && !zeroAmountPromo && ("PAID".equals(st) || "COMPLETED".equals(st))) {
                 if (c.quotedPrice() != null) {
                     paid = paid.add(c.quotedPrice());
                 }
@@ -107,20 +112,23 @@ public class DashboardServiceImpl implements DashboardService {
 
         int pendingDisputes = (int) disputeRepository.countByStatusIn(List.of("OPEN", "PENDING"));
         long totalUsers = userRepository.count();
+        var financialSummary = all ? financialReporting.summarize(period) : null;
+        BigDecimal paidAmount = financialSummary != null ? financialSummary.totalCashVnd() : paid;
 
         return DashboardResponseDTO.builder()
                 .orderCount(orders.size())
                 .completedCount(completed)
-                .paidAmount(paid)
+                .paidAmount(paidAmount)
                 .customCount(customOrders.size())
                 .customRequestedCount(customRequested)
                 .customQuotedCount(customQuoted)
                 .customInProductionCount(customInProduction)
-                .totalRevenue(paid)
+                .totalRevenue(paidAmount)
                 .activePrintingOrders(activePrinting)
                 .pendingDisputesCount(pendingDisputes)
                 .totalUsersCount(totalUsers)
                 .recentJobs(recentJobs)
+                .financialSummary(financialSummary)
                 .build();
     }
 }

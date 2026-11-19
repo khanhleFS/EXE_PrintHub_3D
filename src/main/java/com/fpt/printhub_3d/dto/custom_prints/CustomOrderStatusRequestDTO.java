@@ -2,7 +2,10 @@ package com.fpt.printhub_3d.dto.custom_prints;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Builder;
+
+import java.math.BigDecimal;
 
 @Builder
 @Schema(description = "Yêu cầu cập nhật trạng thái đơn in custom")
@@ -25,10 +28,20 @@ public record CustomOrderStatusRequestDTO(
 
         @Schema(description = "Trường dự phòng tương thích cũ cho cancelReason")
         @Size(max = 1000)
-        String reason
+        String reason,
+
+        Long quoteVersion,
+
+        @PositiveOrZero
+        BigDecimal expectedTotalPayable
 ) {
     public CustomOrderStatusRequestDTO(String status, String action, String idempotencyKey, String paymentMethod) {
-        this(status, action, idempotencyKey, paymentMethod, null, null);
+        this(status, action, idempotencyKey, paymentMethod, null, null, null, null);
+    }
+
+    public CustomOrderStatusRequestDTO(String status, String action, String idempotencyKey, String paymentMethod,
+                                       String cancelReason, String reason) {
+        this(status, action, idempotencyKey, paymentMethod, cancelReason, reason, null, null);
     }
 
     public String getEffectiveTarget() {

@@ -69,12 +69,20 @@ public class Order {
     @JoinColumn(name = "checkout_order_id")
     private CheckoutOrder checkoutOrder;
 
+    public Instant resolveZeroAmountSettledAt() {
+        return checkoutOrder != null && !"CANCELLED".equalsIgnoreCase(status) && !"EXPIRED".equalsIgnoreCase(status)
+                ? checkoutOrder.getZeroAmountSettledAt() : null;
+    }
+
     @Size(max = 20)
     @Column(name = "payment_method", length = 20)
     private String paymentMethod;
 
     @Column(name = "payment_due_at")
     private Instant paymentDueAt;
+
+    @Column(name = "completed_at")
+    private Instant completedAt;
 
     @Column(name = "subtotal_amount", precision = 18, scale = 2)
     private BigDecimal subtotalAmount;

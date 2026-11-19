@@ -9,8 +9,8 @@ import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
 import com.fpt.printhub_3d.entity.PointTransaction;
 import com.fpt.printhub_3d.repository.PointTransactionRepository;
 import com.fpt.printhub_3d.service.ReviewService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -18,8 +18,10 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,10 +30,13 @@ import java.util.UUID;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ReviewServiceImpl implements ReviewService {
 
     public static final int MAX_PUBLIC_REVIEWS = 10;
+    public static final int MAX_COMMENT_LENGTH = 2000;
+    public static final int MAX_IMAGES = 5;
+    public static final String REVIEW_PHOTO_SOURCE_TYPE = "ORDER_ITEM";
+    public static final String REVIEW_PHOTO_REWARD_TYPE = "REVIEW_PHOTO_BONUS";
 
     private final ReviewRepository reviewRepository;
     private final OrderRepository orderRepository;
@@ -39,10 +44,58 @@ public class ReviewServiceImpl implements ReviewService {
     private final ProductRepository productRepository;
     private final PointWalletRepository pointWalletRepository;
     private final PointTransactionRepository pointTransactionRepository;
+    private final PointWalletLockHelper pointWalletLockHelper;
+    private final Clock clock;
+
+    @Autowired
+    public ReviewServiceImpl(
+            ReviewRepository reviewRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            ProductRepository productRepository,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository,
+            @Autowired(required = false) PointWalletLockHelper pointWalletLockHelper,
+            @Autowired(required = false) Clock clock
+    ) {
+        this.reviewRepository = reviewRepository;
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.productRepository = productRepository;
+        this.pointWalletRepository = pointWalletRepository;
+        this.pointTransactionRepository = pointTransactionRepository;
+        this.pointWalletLockHelper = pointWalletLockHelper;
+        this.clock = clock != null ? clock : Clock.systemUTC();
+    }
+
+    public ReviewServiceImpl(
+            ReviewRepository reviewRepository,
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            ProductRepository productRepository,
+            PointWalletRepository pointWalletRepository,
+            PointTransactionRepository pointTransactionRepository
+    ) {
+        this(reviewRepository, orderRepository, orderItemRepository, productRepository,
+                pointWalletRepository, pointTransactionRepository, null, Clock.systemUTC());
+    }
 
     @Override
     @Transactional
     public ProductReviewResponseDTO createOrUpdateProductReview(ProductReviewCreateRequestDTO request, User reviewer) {
+        if (request == null || request.rating() == null || request.rating() < 1 || request.rating() > 5) {
+            throw new ApiException(ReviewDisputeErrorCode.INVALID_REVIEW_INPUT,
+                    "Số sao đánh giá phải là số nguyên từ 1 đến 5");
+        }
+        if (request.comment() != null && request.comment().length() > MAX_COMMENT_LENGTH) {
+            throw new ApiException(ReviewDisputeErrorCode.INVALID_REVIEW_INPUT,
+                    "Nội dung nhận xét tối đa " + MAX_COMMENT_LENGTH + " ký tự");
+        }
+        if (request.imageUrls() != null && request.imageUrls().size() > MAX_IMAGES) {
+            throw new ApiException(ReviewDisputeErrorCode.INVALID_REVIEW_INPUT,
+                    "Tối đa " + MAX_IMAGES + " hình ảnh đính kèm");
+        }
+
         OrderItem orderItem = orderItemRepository.findById(request.orderItemId())
                 .orElseThrow(() -> new ApiException(ReviewDisputeErrorCode.ORDER_ITEM_NOT_FOUND));
 
@@ -50,6 +103,9 @@ public class ReviewServiceImpl implements ReviewService {
         if (order == null) {
             throw new ApiException(ReviewDisputeErrorCode.ORDER_NOT_FOUND);
         }
+
+        // Khóa đơn hàng để chống race condition tạo trùng đánh giá & thưởng ảnh (DG-06)
+        order = orderRepository.findLockedById(order.getId()).orElse(order);
 
         if (!order.getBuyer().getId().equals(reviewer.getId())) {
             throw new ApiException(ReviewDisputeErrorCode.NOT_ORDER_BUYER);
@@ -59,13 +115,14 @@ public class ReviewServiceImpl implements ReviewService {
             throw new ApiException(ReviewDisputeErrorCode.ORDER_NOT_COMPLETED);
         }
 
+        Instant now = clock.instant();
         Optional<Review> existingOpt = reviewRepository.findByOrderItemId(orderItem.getId());
         Review savedReview;
 
         if (existingOpt.isPresent()) {
             Review existing = existingOpt.get();
-            // Cho phép chỉnh sửa trong vòng 7 ngày kể từ ngày tạo
-            if (existing.getCreatedAt().plus(7, ChronoUnit.DAYS).isBefore(Instant.now())) {
+            // Cho phép chỉnh sửa trong vòng 7 ngày kể từ ngày tạo (DG-05)
+            if (now.isAfter(existing.getCreatedAt().plus(7, ChronoUnit.DAYS))) {
                 throw new ApiException(ReviewDisputeErrorCode.REVIEW_EDIT_EXPIRED);
             }
 
@@ -74,7 +131,7 @@ public class ReviewServiceImpl implements ReviewService {
             if (request.imageUrls() != null) {
                 existing.setImageUrls(new ArrayList<>(request.imageUrls()));
             }
-            existing.setUpdatedAt(Instant.now());
+            existing.setUpdatedAt(now);
             savedReview = reviewRepository.save(existing);
             log.info("Cập nhật đánh giá [{}] cho orderItem [{}]", savedReview.getId(), orderItem.getId());
         } else {
@@ -89,14 +146,16 @@ public class ReviewServiceImpl implements ReviewService {
                 review.setImageUrls(new ArrayList<>(request.imageUrls()));
             }
             review.setIsPublic(false);
-            review.setCreatedAt(Instant.now());
+            review.setCreatedAt(now);
             savedReview = reviewRepository.save(review);
             log.info("Tạo đánh giá mới [{}] cho sản phẩm [{}] từ orderItem [{}]",
                     savedReview.getId(), orderItem.getProduct().getId(), orderItem.getId());
 
-            // Thưởng 20 điểm tích lũy khi đánh giá kèm hình ảnh thực tế
-            if (request.imageUrls() != null && !request.imageUrls().isEmpty()) {
-                rewardPointsForReview(reviewer, 20);
+            // Thưởng 20 điểm tích lũy DUY NHẤT 1 lần khi tạo mới đánh giá có hình ảnh thực tế (DG-08)
+            boolean hasValidImage = request.imageUrls() != null
+                    && request.imageUrls().stream().anyMatch(u -> u != null && !u.isBlank());
+            if (hasValidImage) {
+                rewardPointsForReview(reviewer, orderItem.getId(), 20, now);
             }
         }
 
@@ -292,22 +351,33 @@ public class ReviewServiceImpl implements ReviewService {
         log.info("Tính lại rating cho sản phẩm [{}]: avg={}, count={}", product.getId(), roundedAvg, count);
     }
 
-    private void rewardPointsForReview(User reviewer, int points) {
-        if (points <= 0) return;
-        PointWallet wallet = pointWalletRepository.findByUserIdForUpdate(reviewer.getId()).orElseGet(() -> {
-            PointWallet newWallet = PointWallet.builder()
-                    .userId(reviewer.getId())
-                    .user(reviewer)
-                    .balance(0)
-                    .isNew(true)
-                    .updatedAt(LocalDateTime.now())
-                    .build();
-            reviewer.setPointWallet(newWallet);
-            return pointWalletRepository.save(newWallet);
-        });
+    private void rewardPointsForReview(User reviewer, Long orderItemId, int points, Instant now) {
+        if (points <= 0 || orderItemId == null) return;
+        String sourceId = orderItemId.toString();
+        if (pointTransactionRepository.existsBySourceTypeAndSourceIdAndRewardType(
+                REVIEW_PHOTO_SOURCE_TYPE, sourceId, REVIEW_PHOTO_REWARD_TYPE)) {
+            log.info("Bỏ qua thưởng review ảnh trùng lặp cho orderItem [{}]", orderItemId);
+            return;
+        }
+
+        LocalDateTime nowUtc = LocalDateTime.ofInstant(now, ZoneOffset.UTC);
+        PointWallet wallet = pointWalletLockHelper != null
+                ? pointWalletLockHelper.lockOrCreateWallet(reviewer, clock)
+                : pointWalletRepository.findByUserIdForUpdate(reviewer.getId()).orElseGet(() -> {
+                    PointWallet newWallet = PointWallet.builder()
+                            .userId(reviewer.getId())
+                            .user(reviewer)
+                            .balance(0)
+                            .isNew(true)
+                            .updatedAt(nowUtc)
+                            .build();
+                    reviewer.setPointWallet(newWallet);
+                    return pointWalletRepository.save(newWallet);
+                });
+
         int currentBalance = wallet.getBalance() != null ? wallet.getBalance() : 0;
         wallet.setBalance(currentBalance + points);
-        wallet.setUpdatedAt(LocalDateTime.now());
+        wallet.setUpdatedAt(nowUtc);
         wallet = pointWalletRepository.save(wallet);
         reviewer.setPointWallet(wallet);
 
@@ -315,11 +385,15 @@ public class ReviewServiceImpl implements ReviewService {
                 .pointWallet(wallet)
                 .amount(points)
                 .type(PointTransactionType.EARN)
+                .sourceType(REVIEW_PHOTO_SOURCE_TYPE)
+                .sourceId(sourceId)
+                .rewardType(REVIEW_PHOTO_REWARD_TYPE)
                 .description("Thưởng điểm đánh giá sản phẩm có hình ảnh")
-                .createdAt(LocalDateTime.now())
+                .createdAt(nowUtc)
                 .build());
 
-        log.info("Thưởng [{}] điểm tích lũy cho người dùng [{}] vì gửi review kèm ảnh", points, reviewer.getId());
+        log.info("Thưởng [{}] điểm tích lũy cho người dùng [{}] vì gửi review kèm ảnh (orderItem={})",
+                points, reviewer.getId(), orderItemId);
     }
 
     private ProductReviewResponseDTO toProductReviewResponse(Review review) {

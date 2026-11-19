@@ -15,7 +15,8 @@ public record FinanceSummaryResponseDTO(
         BigDecimal factoryPayout,
         BigDecimal studentWalletBalance,
         long totalOrders,
-        List<FinancialTransactionDTO> recentTransactions
+        List<FinancialTransactionDTO> recentTransactions,
+        FinancialReportDTO financialSummary
 ) {
     @Builder
     public record FinancialTransactionDTO(

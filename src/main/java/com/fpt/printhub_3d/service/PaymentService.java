@@ -23,6 +23,10 @@ public interface PaymentService {
      */
     CreatePaymentLinkResponseDTO createPaymentLink(UUID userId, CreatePaymentLinkRequestDTO request);
 
+    void cancelQuotePayment(String orderCode, String reason);
+
+    void expireQuotePayment(String orderCode);
+
     /**
      * Xử lý webhook IPN từ PayOS.
      * Xác minh chữ ký, cập nhật trạng thái Payment, chuyển trạng thái đơn hàng,

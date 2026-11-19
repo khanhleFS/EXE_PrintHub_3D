@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -220,23 +221,32 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                             " pts) không đủ để đổi gói " + plan.getName() + " (" + plan.getRequiredPoints() + " pts).");
         }
 
-        // 6. Trừ điểm và ghi nhận lịch sử giao dịch (Ledger audit)
+        // 6. Trừ điểm, kích hoạt/gia hạn gói và ghi nhận lịch sử giao dịch kèm liên kết gói (Ledger audit)
         wallet.setBalance(wallet.getBalance() - plan.getRequiredPoints());
         wallet.setUpdatedAt(LocalDateTime.now());
         pointWalletRepository.save(wallet);
 
+        // 7. Kích hoạt hoặc gia hạn gói dịch vụ trước khi lưu bút toán để gắn đầy đủ referenceSubscriptionId
+        UserSubscription userSub = processSubscriptionActivation(user, plan);
+
+        UUID subId = userSub != null ? userSub.getId() : null;
+        Instant redeemedAt = Instant.now();
         PointTransaction tx = PointTransaction.builder()
                 .pointWallet(wallet)
                 .amount(-plan.getRequiredPoints())
                 .type(PointTransactionType.REDEEM)
                 .description("Đổi điểm lấy gói hội viên: " + plan.getName())
-                .createdAt(LocalDateTime.now())
+                .sourceType("SUBSCRIPTION_REDEEM")
+                .sourceId(subId != null ? subId.toString() : plan.getId().toString())
+                .rewardType("SUBSCRIPTION_REDEEM")
+                .referencePlanId(plan.getId())
+                .referencePlanName(plan.getName())
+                .referenceSubscriptionId(subId)
+                .createdAt(LocalDateTime.ofInstant(redeemedAt, ZoneId.systemDefault()))
+                .occurredAt(redeemedAt)
                 .build();
         pointTransactionRepository.save(tx);
         log.info("Đã trừ [{}] điểm của User [{}]. Số dư mới: [{}] pts", plan.getRequiredPoints(), userId, wallet.getBalance());
-
-        // 7. Kích hoạt hoặc gia hạn gói dịch vụ
-        UserSubscription userSub = processSubscriptionActivation(user, plan);
 
         // 8. Lưu Idempotency record nếu có
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
@@ -384,6 +394,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .user(user)
                 .plan(plan)
                 .amount(plan.getPrice())
+                .planNameSnapshot(plan.getName())
                 .durationDays(durationDays)
                 .status("PENDING")
                 .idempotencyKey(key != null && !key.isBlank() ? key.trim() : null)
@@ -419,7 +430,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     }
 
     @Override
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public UserSubscription activateSubscriptionFromPurchase(SubscriptionPurchase purchase) {
         log.info("Kích hoạt gói dịch vụ từ đơn mua [{}] cho người dùng [{}]", purchase.getId(), purchase.getUser().getId());
 
@@ -432,7 +443,8 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
         }
 
         // Kích hoạt hoặc gia hạn gói dịch vụ
-        UserSubscription userSub = processSubscriptionActivation(purchase.getUser(), purchase.getPlan());
+        User buyer = userRepository.findLockedById(purchase.getUser().getId()).orElse(purchase.getUser());
+        UserSubscription userSub = processSubscriptionActivation(buyer, purchase.getPlan());
 
         purchase.setStatus("PAID");
         purchase.setSettledAt(Instant.now());
@@ -535,7 +547,8 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                 .purchaseId(purchase.getId())
                 .userId(purchase.getUser().getId())
                 .planId(purchase.getPlan().getId())
-                .planName(purchase.getPlan().getName())
+                .planName(purchase.getPlanNameSnapshot() != null
+                        ? purchase.getPlanNameSnapshot() : purchase.getPlan().getName())
                 .amount(purchase.getAmount())
                 .durationDays(purchase.getDurationDays())
                 .status(purchase.getStatus())

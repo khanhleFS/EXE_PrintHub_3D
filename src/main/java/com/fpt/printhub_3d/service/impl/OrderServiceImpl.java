@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.service.impl;
 
 import com.fpt.printhub_3d.common.exception.ApiException;
 import com.fpt.printhub_3d.common.exception.CommonErrorCode;
+import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.exception.OrderErrorCode;
 import com.fpt.printhub_3d.dto.order.*;
 import com.fpt.printhub_3d.entity.*;
@@ -10,6 +11,9 @@ import com.fpt.printhub_3d.repository.*;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
+import com.fpt.printhub_3d.service.PaymentEvidenceService;
+import com.fpt.printhub_3d.service.OrderRewardService;
+import com.fpt.printhub_3d.entity.Enumeration.OrderRewardStatus;
 import lombok.RequiredArgsConstructor;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import com.fpt.printhub_3d.entity.Enumeration.PointTransactionType;
@@ -42,6 +47,18 @@ public class OrderServiceImpl implements OrderService {
     private final com.fpt.printhub_3d.service.InventoryService inventoryService;
     private final com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy;
     private final SubscriptionBenefitService subscriptionBenefitService;
+
+    @Autowired(required = false)
+    private PaymentEvidenceService paymentEvidenceService;
+
+    @Autowired(required = false)
+    private OrderRewardService orderRewardService;
+
+    @Autowired(required = false)
+    private OrderRewardRecordRepository orderRewardRecordRepository;
+
+    @Autowired(required = false)
+    private Clock clock;
 
     @Autowired
     public OrderServiceImpl(
@@ -282,6 +299,16 @@ public class OrderServiceImpl implements OrderService {
                 orderRepository.save(savedOrder);
             }
 
+            OrderDisplayMetadata.RewardSnapshot createRewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                    savedOrder.getStatus(),
+                    savedOrder.resolveZeroAmountSettledAt() != null,
+                    OrderDisplayMetadata.resolveStandaloneOrderNetGoods(savedOrder),
+                    null,
+                    savedOrder.getRewardProcessed(),
+                    savedOrder.getRewardPointsEarned(),
+                    orderRewardService
+            );
+
             createdOrders.add(OrderResponseDTO.builder()
                     .id(savedOrder.getId())
                     .buyerId(buyer.getId())
@@ -312,6 +339,8 @@ public class OrderServiceImpl implements OrderService {
                     .appliedSubscriptionId(savedOrder.getAppliedSubscriptionId())
                     .appliedSubscriptionName(savedOrder.getAppliedSubscriptionName())
                     .priorityProduction(savedOrder.getPriorityProduction())
+                    .estimatedRewardPoints(createRewardSnap.estimatedRewardPoints())
+                    .rewardStatus(createRewardSnap.rewardStatus())
                     .build());
         }
 
@@ -328,10 +357,27 @@ public class OrderServiceImpl implements OrderService {
             throw new ApiException(OrderErrorCode.ORDER_NOT_COMPLETED, "Đơn hàng chưa ở trạng thái COMPLETED");
         }
 
-        Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
-        if (payment == null && order.getCheckoutOrder() != null) {
-            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
+        if (orderRewardService != null) {
+            PaymentEvidenceService.SourceType targetType = order.getCheckoutOrder() != null
+                    ? PaymentEvidenceService.SourceType.CHECKOUT_ORDER
+                    : PaymentEvidenceService.SourceType.ORDER;
+            UUID targetId = order.getCheckoutOrder() != null
+                    ? order.getCheckoutOrder().getId()
+                    : orderId;
+            var reward = orderRewardService.processCompletionReward(targetType, targetId);
+            if (reward.status() == OrderRewardStatus.PENDING_PAYMENT_EVIDENCE) {
+                throw new ApiException(OrderErrorCode.PAYMENT_REQUIRED, "Đơn hàng chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
+            }
+            return reward.toLegacyResponse().withOrderId(orderId);
         }
+
+        if (order.resolveZeroAmountSettledAt() != null) {
+            User buyer = order.getBuyer();
+            return RewardCompletionResponseDTO.forZeroAmountPromo(
+                    order.getId(), buyer.getId(), buyer.getFullName(), buyer.getRewardPoints());
+        }
+
+        Payment payment = findOrderPayment(order);
         if (payment == null || !"SUCCESS".equalsIgnoreCase(payment.getStatus())) {
             throw new ApiException(OrderErrorCode.PAYMENT_REQUIRED, "Đơn hàng chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
         }
@@ -398,16 +444,26 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private OrderResponseDTO mapOrderToDTO(Order order, ShippingInfo shippingInfo, List<OrderItem> items) {
-        Payment payment = paymentRepository.findByOrderId(order.getId()).orElse(null);
-        if (payment == null && order.getCheckoutOrder() != null) {
-            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
-        }
+        List<Review> reviews = reviewRepository.findByOrderId(order.getId());
+        OrderRewardRecord rewardRecord = resolveSingleOrderRewardRecord(order);
+        return mapOrderToDTO(order, shippingInfo, items, reviews, rewardRecord);
+    }
+
+    private OrderResponseDTO mapOrderToDTO(
+            Order order,
+            ShippingInfo shippingInfo,
+            List<OrderItem> items,
+            List<Review> orderReviews,
+            OrderRewardRecord rewardRecord
+    ) {
+        Payment payment = findOrderPayment(order);
 
         String pMethod = order.getPaymentMethod() != null ? order.getPaymentMethod()
                 : (order.getCheckoutOrder() != null && order.getCheckoutOrder().getPaymentMethod() != null
                         ? order.getCheckoutOrder().getPaymentMethod()
                         : (payment != null ? payment.getGateway() : "PAYOS"));
-        String pStatus = payment != null ? payment.getStatus() : ("COD".equalsIgnoreCase(pMethod) ? "UNPAID" : "PENDING");
+        String pStatus = order.resolveZeroAmountSettledAt() != null ? "SUCCESS"
+                : payment != null ? payment.getStatus() : ("COD".equalsIgnoreCase(pMethod) ? "UNPAID" : "PENDING");
 
         User current = getCurrentUserSafely();
         boolean isAdmin = current != null && current.getRole() == UserRole.ADMIN;
@@ -436,7 +492,8 @@ public class OrderServiceImpl implements OrderService {
                     .build();
         }
 
-        List<Review> reviews = reviewRepository.findByOrderId(order.getId());
+        Instant now = (clock != null ? clock : Clock.systemUTC()).instant();
+        List<Review> reviews = orderReviews != null ? orderReviews : List.of();
         Map<Long, Review> reviewByItem = reviews.stream()
                 .filter(r -> r.getOrderItem() != null)
                 .collect(Collectors.toMap(r -> r.getOrderItem().getId(), r -> r, (r1, r2) -> r1));
@@ -444,6 +501,8 @@ public class OrderServiceImpl implements OrderService {
         List<OrderItemResponseDTO> itemDTOs = items != null ? items.stream()
                 .map(item -> {
                     Review itemReview = reviewByItem.get(item.getId());
+                    OrderDisplayMetadata.ItemReviewMeta reviewMeta =
+                            OrderDisplayMetadata.computeItemReviewMeta(order, itemReview, isOwner, now);
                     return OrderItemResponseDTO.builder()
                             .id(item.getId())
                             .productId(item.getProduct() != null ? item.getProduct().getId() : null)
@@ -453,11 +512,25 @@ public class OrderServiceImpl implements OrderService {
                             .subTotal(item.getUnitPrice() != null ? item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())) : BigDecimal.ZERO)
                             .color(item.getColor())
                             .engravingText(item.getEngravingText())
-                            .reviewId(itemReview != null ? itemReview.getId() : null)
-                            .reviewRating(itemReview != null ? itemReview.getRating() : null)
+                            .reviewId(reviewMeta.reviewId())
+                            .reviewRating(reviewMeta.reviewRating())
+                            .canReview(reviewMeta.canReview())
+                            .canEditReview(reviewMeta.canEditReview())
+                            .reviewComment(reviewMeta.reviewComment())
+                            .reviewCreatedAt(reviewMeta.reviewCreatedAt())
                             .build();
                 })
                 .toList() : List.of();
+
+        OrderDisplayMetadata.RewardSnapshot rewardSnap = OrderDisplayMetadata.computeRewardSnapshot(
+                order.getStatus(),
+                order.resolveZeroAmountSettledAt() != null,
+                OrderDisplayMetadata.resolveStandaloneOrderNetGoods(order),
+                rewardRecord,
+                order.getRewardProcessed(),
+                order.getRewardPointsEarned(),
+                orderRewardService
+        );
 
         return OrderResponseDTO.builder()
                 .id(order.getId())
@@ -485,27 +558,66 @@ public class OrderServiceImpl implements OrderService {
                 .appliedSubscriptionId(order.getAppliedSubscriptionId())
                 .appliedSubscriptionName(order.getAppliedSubscriptionName())
                 .priorityProduction(order.getPriorityProduction())
+                .estimatedRewardPoints(rewardSnap.estimatedRewardPoints())
+                .rewardStatus(rewardSnap.rewardStatus())
                 .build();
+    }
+
+    private OrderRewardRecord resolveSingleOrderRewardRecord(Order order) {
+        if (orderRewardRecordRepository == null || order == null) {
+            return null;
+        }
+        String srcType = order.getCheckoutOrder() != null ? "CHECKOUT_ORDER" : "ORDER";
+        UUID srcId = order.getCheckoutOrder() != null ? order.getCheckoutOrder().getId() : order.getId();
+        return orderRewardRecordRepository.findBySourceTypeAndSourceIdAndRewardType(
+                srcType, srcId, OrderRewardRecord.REWARD_TYPE_COMPLETION).orElse(null);
+    }
+
+    private List<OrderResponseDTO> mapOrdersBatch(List<Order> orders) {
+        if (orders.isEmpty()) return List.of();
+        List<UUID> orderIds = orders.stream().map(Order::getId).toList();
+        Map<UUID, ShippingInfo> shippingMap = shippingInfoRepository.findByIdIn(orderIds).stream()
+                .collect(Collectors.toMap(ShippingInfo::getId, s -> s));
+        Map<UUID, List<OrderItem>> itemsMap = orderItemRepository.findByOrderIn(orders).stream()
+                .collect(Collectors.groupingBy(item -> item.getOrder().getId()));
+        Map<UUID, List<Review>> reviewsMap = reviewRepository.findByOrderIdIn(orderIds).stream()
+                .collect(Collectors.groupingBy(r -> r.getOrder().getId()));
+
+        Map<UUID, OrderRewardRecord> standaloneRewards = new HashMap<>();
+        Map<UUID, OrderRewardRecord> parentRewards = new HashMap<>();
+        if (orderRewardRecordRepository != null) {
+            List<UUID> standaloneIds = orders.stream()
+                    .filter(o -> o.getCheckoutOrder() == null).map(Order::getId).toList();
+            if (!standaloneIds.isEmpty()) {
+                orderRewardRecordRepository.findBySourceTypeAndSourceIdInAndRewardType(
+                        "ORDER", standaloneIds, OrderRewardRecord.REWARD_TYPE_COMPLETION)
+                        .forEach(r -> standaloneRewards.put(r.getSourceId(), r));
+            }
+            List<UUID> checkoutIds = orders.stream()
+                    .filter(o -> o.getCheckoutOrder() != null)
+                    .map(o -> o.getCheckoutOrder().getId()).distinct().toList();
+            if (!checkoutIds.isEmpty()) {
+                orderRewardRecordRepository.findBySourceTypeAndSourceIdInAndRewardType(
+                        "CHECKOUT_ORDER", checkoutIds, OrderRewardRecord.REWARD_TYPE_COMPLETION)
+                        .forEach(r -> parentRewards.put(r.getSourceId(), r));
+            }
+        }
+
+        return orders.stream().map(o -> {
+            OrderRewardRecord rec = o.getCheckoutOrder() != null
+                    ? parentRewards.get(o.getCheckoutOrder().getId())
+                    : standaloneRewards.get(o.getId());
+            return mapOrderToDTO(o, shippingMap.get(o.getId()),
+                    itemsMap.getOrDefault(o.getId(), List.of()),
+                    reviewsMap.getOrDefault(o.getId(), List.of()),
+                    rec);
+        }).toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<OrderResponseDTO> getMyOrders(UUID buyerId) {
-        List<Order> orders = orderRepository.findByBuyerIdOrderByCreatedAtDesc(buyerId);
-        if (orders.isEmpty()) return List.of();
-
-        List<UUID> orderIds = orders.stream().map(Order::getId).toList();
-        List<ShippingInfo> shippingInfos = shippingInfoRepository.findByIdIn(orderIds);
-        Map<UUID, ShippingInfo> shippingMap = shippingInfos.stream()
-                .collect(Collectors.toMap(ShippingInfo::getId, s -> s));
-
-        List<OrderItem> orderItems = orderItemRepository.findByOrderIn(orders);
-        Map<UUID, List<OrderItem>> itemsMap = orderItems.stream()
-                .collect(Collectors.groupingBy(item -> item.getOrder().getId()));
-
-        return orders.stream()
-                .map(o -> mapOrderToDTO(o, shippingMap.get(o.getId()), itemsMap.getOrDefault(o.getId(), List.of())))
-                .toList();
+        return mapOrdersBatch(orderRepository.findByBuyerIdOrderByCreatedAtDesc(buyerId));
     }
 
     @Override
@@ -527,41 +639,56 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional(readOnly = true)
     public List<OrderResponseDTO> getAllOrders() {
-        List<Order> orders = orderRepository.findAll();
-        if (orders.isEmpty()) return List.of();
-
-        List<UUID> orderIds = orders.stream().map(Order::getId).toList();
-        List<ShippingInfo> shippingInfos = shippingInfoRepository.findByIdIn(orderIds);
-        Map<UUID, ShippingInfo> shippingMap = shippingInfos.stream()
-                .collect(Collectors.toMap(ShippingInfo::getId, s -> s));
-
-        List<OrderItem> orderItems = orderItemRepository.findByOrderIn(orders);
-        Map<UUID, List<OrderItem>> itemsMap = orderItems.stream()
-                .collect(Collectors.groupingBy(item -> item.getOrder().getId()));
-
-        return orders.stream()
+        List<Order> orders = orderRepository.findAll().stream()
                 .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
-                .map(o -> mapOrderToDTO(o, shippingMap.get(o.getId()), itemsMap.getOrDefault(o.getId(), List.of())))
                 .toList();
+        return mapOrdersBatch(orders);
     }
 
     @Override
     @Transactional
     public void updateOrderStatus(UUID id, String nextStatus, User currentUser) {
-        Order order = orderRepository.findById(id)
+        updateOrderStatus(id, nextStatus, currentUser, null);
+    }
+
+    @Override
+    @Transactional
+    public void updateOrderStatus(UUID id, String nextStatus, User currentUser, BigDecimal codCollectedAmount) {
+        Order order = orderRepository.findLockedById(id)
                 .orElseThrow(() -> new ApiException(OrderErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn hàng"));
 
         String currentStatus = order.getStatus();
-        Payment payment = paymentRepository.findByOrderId(id).orElse(null);
-        if (payment == null && order.getCheckoutOrder() != null) {
-            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
-        }
+        Payment payment = findOrderPayment(order);
 
         String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod()
                 : (order.getCheckoutOrder() != null && order.getCheckoutOrder().getPaymentMethod() != null
                         ? order.getCheckoutOrder().getPaymentMethod()
                         : (payment != null ? payment.getGateway() : "PAYOS"));
-        String paymentStatus = payment != null ? payment.getStatus() : ("COD".equalsIgnoreCase(paymentMethod) ? "UNPAID" : "PENDING");
+        boolean zeroAmountSettlement = order.resolveZeroAmountSettledAt() != null;
+        String paymentStatus = zeroAmountSettlement ? "SUCCESS" : payment != null ? payment.getStatus()
+                : ("COD".equalsIgnoreCase(paymentMethod) ? "UNPAID" : "PENDING");
+
+        boolean cod = "COD".equalsIgnoreCase(paymentMethod);
+        if (codCollectedAmount != null) {
+            if (!cod || order.getCheckoutOrder() != null
+                    || !"COMPLETED".equals(orderTransitionPolicy.normalizeTargetStatus(nextStatus))) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT,
+                        "Xác nhận tiền COD khi hoàn tất đúng cấp đơn thu tiền.");
+            }
+            if ("COMPLETED".equals(currentStatus)) {
+                if (orderRewardService != null) {
+                    orderRewardService.completeCodAndReward(PaymentEvidenceService.SourceType.ORDER, id,
+                            codCollectedAmount, currentUser);
+                } else {
+                    if (paymentEvidenceService != null) {
+                        paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.ORDER, id,
+                                codCollectedAmount, currentUser);
+                    }
+                    completeRewards(id);
+                }
+                return;
+            }
+        }
 
         String resolvedStatus = orderTransitionPolicy.validateAndResolveNextStatus(
                 OrderTransitionPolicy.OrderType.MARKETPLACE,
@@ -574,6 +701,9 @@ public class OrderServiceImpl implements OrderService {
         );
 
         if ("CANCELLED".equals(resolvedStatus)) {
+            if (payment != null && Payment.PENDING_RECONCILIATION.equals(payment.getStatus())) {
+                throw new ApiException(CommonErrorCode.CONFLICT, "Giao dịch đang chờ đối soát.");
+            }
             if (payment != null && "PAYOS".equalsIgnoreCase(payment.getGateway()) && payment.getTransactionId() != null) {
                 payment.setStatus("CANCELLED");
                 payment.setUpdatedAt(Instant.now());
@@ -589,25 +719,33 @@ public class OrderServiceImpl implements OrderService {
             if ("PREPARING".equals(resolvedStatus) || "PRINTING".equals(resolvedStatus)) {
                 inventoryService.confirmReservation(order.getId());
             }
-            if ("COMPLETED".equals(resolvedStatus) && "COD".equalsIgnoreCase(paymentMethod)) {
-                Payment codPayment = payment != null ? payment : new Payment();
-                codPayment.setOrder(order);
-                codPayment.setAmount(order.getTotalAmount() != null ? order.getTotalAmount() : BigDecimal.ZERO);
-                codPayment.setGateway("COD");
-                codPayment.setStatus("SUCCESS");
-                codPayment.setPaidAt(Instant.now());
-                if (codPayment.getCreatedAt() == null) codPayment.setCreatedAt(Instant.now());
-                codPayment.setUpdatedAt(Instant.now());
-                paymentRepository.save(codPayment);
-            }
         }
 
+        Instant transitionAt = Instant.now();
         order.setStatus(resolvedStatus);
-        order.setUpdatedAt(Instant.now());
+        order.setUpdatedAt(transitionAt);
+        if ("COMPLETED".equals(resolvedStatus) && order.getCompletedAt() == null) {
+            order.setCompletedAt(transitionAt);
+        }
         orderRepository.save(order);
 
         if ("COMPLETED".equals(resolvedStatus)) {
-            completeRewards(id);
+            if (orderRewardService != null) {
+                if (codCollectedAmount != null) {
+                    orderRewardService.completeCodAndReward(PaymentEvidenceService.SourceType.ORDER, id,
+                            codCollectedAmount, currentUser);
+                } else {
+                    orderRewardService.processCompletionReward(PaymentEvidenceService.SourceType.ORDER, id);
+                }
+            } else {
+                if (codCollectedAmount != null && paymentEvidenceService != null) {
+                    paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.ORDER, id,
+                            codCollectedAmount, currentUser);
+                }
+                if (!cod || zeroAmountSettlement || codCollectedAmount != null || "SUCCESS".equals(paymentStatus)) {
+                    completeRewards(id);
+                }
+            }
         }
 
         notificationService.sendNotification(order.getBuyer(),
@@ -615,5 +753,11 @@ public class OrderServiceImpl implements OrderService {
                 "Đơn hàng " + id + " đã chuyển sang trạng thái: " + resolvedStatus,
                 "ORDER",
                 "/orders");
+    }
+
+    private Payment findOrderPayment(Order order) {
+        return order.getCheckoutOrder() != null
+                ? paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null)
+                : paymentRepository.findByOrderId(order.getId()).orElse(null);
     }
 }

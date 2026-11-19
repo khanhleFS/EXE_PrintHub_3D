@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 @Builder
@@ -37,6 +38,18 @@ public record OrderItemResponseDTO(
         Long reviewId,
 
         @Schema(description = "Số sao đánh giá nếu đã đánh giá")
-        Short reviewRating
+        Short reviewRating,
+
+        @Schema(description = "Người mua hiện tại có thể gửi đánh giá mới cho dòng sản phẩm này không")
+        Boolean canReview,
+
+        @Schema(description = "Người mua hiện tại có thể chỉnh sửa đánh giá trong hạn 7 ngày không")
+        Boolean canEditReview,
+
+        @Schema(description = "Nội dung nhận xét đã đánh giá nếu có")
+        String reviewComment,
+
+        @Schema(description = "Thời điểm tạo đánh giá nếu có")
+        Instant reviewCreatedAt
 ) {
 }

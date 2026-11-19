@@ -2,7 +2,10 @@ package com.fpt.printhub_3d.dto.checkout;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Builder;
+
+import java.math.BigDecimal;
 
 @Builder
 @Schema(description = "Yêu cầu xác nhận đơn cha sau khi đã có báo giá")
@@ -12,5 +15,12 @@ public record CheckoutOrderConfirmRequestDTO(
         Long summaryVersion,
 
         @Schema(description = "Phương thức thanh toán: PAYOS hoặc COD", example = "PAYOS")
-        String paymentMethod
-) {}
+        String paymentMethod,
+
+        @PositiveOrZero
+        BigDecimal expectedTotalPayable
+) {
+    public CheckoutOrderConfirmRequestDTO(Long summaryVersion, String paymentMethod) {
+        this(summaryVersion, paymentMethod, null);
+    }
+}

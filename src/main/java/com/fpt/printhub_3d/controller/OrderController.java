@@ -86,7 +86,7 @@ public class OrderController implements OrderAPI {
     @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<Void>> updateOrderStatus(UUID id, OrderStatusUpdateRequestDTO request) {
         User user = SecurityUtils.getCurrentUser();
-        orderService.updateOrderStatus(id, request.status(), user);
+        orderService.updateOrderStatus(id, request.getEffectiveTarget(), user, request.codCollectedAmount());
         return ResponseEntity.ok(ApiResponse.<Void>builder()
                 .code(200)
                 .message("Cập nhật trạng thái đơn hàng thành công")

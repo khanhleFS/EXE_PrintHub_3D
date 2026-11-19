@@ -29,4 +29,6 @@ public interface CheckoutOrderRepository extends JpaRepository<CheckoutOrder, UU
 
     @EntityGraph(attributePaths = {"user"})
     List<CheckoutOrder> findByOrderTypeOrderByCreatedAtDesc(String orderType);
+
+    List<CheckoutOrder> findByStatus(String status);
 }

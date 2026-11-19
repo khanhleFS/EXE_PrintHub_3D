@@ -4,6 +4,8 @@ import com.fpt.printhub_3d.dto.custom_prints.CustomOrderDetailResponseDTO;
 import com.fpt.printhub_3d.dto.custom_prints.CustomOrderResponseDTO;
 import com.fpt.printhub_3d.dto.order.BlockedActionDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
+import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
+import com.fpt.printhub_3d.dto.payment.PaymentEvidenceResponseDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
@@ -12,7 +14,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-@Builder
+@Builder(toBuilder = true)
 @Schema(description = "Thông tin chi tiết Đơn thanh toán cha")
 public record CheckoutOrderResponseDTO(
         UUID id,
@@ -48,5 +50,9 @@ public record CheckoutOrderResponseDTO(
         String appliedSubscriptionName,
         Boolean priorityProduction,
         String cancelledByRole,
-        Instant cancelledAt
+        Instant cancelledAt,
+        PricingBreakdownDTO pricingBreakdown,
+        PaymentEvidenceResponseDTO paymentEvidence,
+        Integer estimatedRewardPoints,
+        String rewardStatus
 ) {}

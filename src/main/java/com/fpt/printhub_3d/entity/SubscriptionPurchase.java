@@ -15,6 +15,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.Nationalized;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -47,6 +48,10 @@ public class SubscriptionPurchase {
 
     @Column(name = "amount", nullable = false, precision = 18, scale = 2)
     private BigDecimal amount;
+
+    @Nationalized
+    @Column(name = "plan_name_snapshot", length = 255, updatable = false)
+    private String planNameSnapshot;
 
     @Column(name = "duration_days")
     private Integer durationDays;

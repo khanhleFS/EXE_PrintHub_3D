@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Biên nhận thanh toán - PrintHub 3D</title>
+</head>
+<body style="margin:0;padding:24px;background:#0a0c12;font-family:Arial,Helvetica,sans-serif;color:#e2e8f0;">
+<div style="max-width:600px;margin:0 auto;background:#111521;border:1px solid #1e293b;border-radius:16px;padding:28px;">
+    <h1 style="margin:0 0 8px;color:#39FF14;font-size:20px;">PrintHub 3D — Biên nhận thanh toán</h1>
+    <p style="margin:0 0 18px;font-size:13px;color:#94a3b8;">
+        Mã giao dịch: <strong style="color:#ffffff;" th:text="${paymentCode}">#00000000</strong>
+    </p>
+
+    <p style="font-size:14px;line-height:1.6;">
+        Xin chào <strong th:text="${recipientName}">Quý khách</strong>,<br>
+        Hệ thống PrintHub 3D xác nhận đã nhận thanh toán thành công cho giao dịch của bạn.
+    </p>
+
+    <div style="margin:18px 0;padding:16px;background:#090c14;border:1px solid #1e293b;border-radius:12px;font-size:13px;">
+        <table style="width:100%;border-collapse:collapse;color:#cbd5e1;">
+            <tr>
+                <td style="padding:6px 0;">Mã chứng từ:</td>
+                <td style="padding:6px 0;text-align:right;font-family:monospace;" th:text="${paymentId}">uuid</td>
+            </tr>
+            <tr th:if="${isSubscription and subscriptionPlanName != null}">
+                <td style="padding:6px 0;">Gói hội viên:</td>
+                <td style="padding:6px 0;text-align:right;font-weight:bold;color:#00e5ff;" th:text="${subscriptionPlanName}">Gói G1</td>
+            </tr>
+            <tr>
+                <td style="padding:6px 0;">Phương thức thanh toán:</td>
+                <td style="padding:6px 0;text-align:right;font-weight:bold;" th:text="${gateway}">PAYOS</td>
+            </tr>
+            <tr>
+                <td style="padding:6px 0;">Thời gian ghi nhận:</td>
+                <td style="padding:6px 0;text-align:right;" th:text="${paidAt}">10:00 19/11/2026 (GMT+7)</td>
+            </tr>
+            <tr style="border-top:1px solid #334155;">
+                <td style="padding:10px 0 0;font-weight:bold;color:#ffffff;font-size:14px;">Số tiền thực trả:</td>
+                <td style="padding:10px 0 0;text-align:right;font-weight:bold;color:#39FF14;font-size:18px;" th:text="${paidAmountVnd}">90.000đ</td>
+            </tr>
+        </table>
+    </div>
+
+    <div style="text-align:center;margin:24px 0 12px;">
+        <a th:href="${actionUrl}"
+           style="display:inline-block;padding:12px 24px;background:#39FF14;color:#040508;font-weight:bold;text-decoration:none;border-radius:10px;font-size:14px;"
+           th:text="${actionLabel}">
+            Xem chi tiết đơn hàng
+        </a>
+    </div>
+
+    <p style="font-size:12px;color:#64748b;margin-top:20px;line-height:1.5;">
+        Vui lòng lưu giữ email này để làm chứng từ đối soát khi cần hỗ trợ từ PrintHub 3D.
+    </p>
+</div>
+</body>
+</html>
