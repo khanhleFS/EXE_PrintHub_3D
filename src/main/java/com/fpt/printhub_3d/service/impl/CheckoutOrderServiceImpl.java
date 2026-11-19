@@ -70,6 +70,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private final CloudinaryService cloudinaryService;
     private final StoreSettingRepository storeSettingRepository;
     private final SubscriptionBenefitService subscriptionBenefitService;
+    private final OrderEmailEvents emailEvents;
 
     @Autowired
     private PaymentEvidenceService paymentEvidenceService;
@@ -94,7 +95,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             ObjectMapper objectMapper,
             CloudinaryService cloudinaryService,
             StoreSettingRepository storeSettingRepository,
-            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService,
+            OrderEmailEvents emailEvents
     ) {
         this.checkoutOrderRepository = checkoutOrderRepository;
         this.cartRepository = cartRepository;
@@ -113,6 +115,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         this.cloudinaryService = cloudinaryService;
         this.storeSettingRepository = storeSettingRepository;
         this.subscriptionBenefitService = subscriptionBenefitService;
+        this.emailEvents = emailEvents;
     }
 
     public CheckoutOrderServiceImpl(
@@ -150,6 +153,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 objectMapper,
                 cloudinaryService,
                 storeSettingRepository,
+                null,
                 null
         );
     }
@@ -187,7 +191,6 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 notificationService,
                 objectMapper,
                 cloudinaryService,
-                null,
                 null
         );
     }
@@ -219,8 +222,6 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 new OrderTransitionPolicy(),
                 null,
                 new ObjectMapper(),
-                null,
-                null,
                 null
         );
     }
@@ -241,15 +242,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     }
 
     private BigDecimal resolveCustomLineTotal(CustomOrder c) {
-        if (c == null) return BigDecimal.ZERO;
-        if (c.getQuotedPrice() != null && c.getQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
-            return c.getQuotedPrice();
-        }
-        int qty = c.getQuantity() != null && c.getQuantity() > 0 ? c.getQuantity() : 1;
-        if (c.getUnitQuotedPrice() != null && c.getUnitQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
-            return c.getUnitQuotedPrice().multiply(BigDecimal.valueOf(qty));
-        }
-        return BigDecimal.ZERO;
+        return c != null ? OrderPricing.quotedLineTotal(c) : BigDecimal.ZERO;
     }
 
     @Override
@@ -681,12 +674,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 ? payment.getStatus()
                 : ("PAID".equals(order.getStatus()) ? "SUCCESS" : "PENDING");
 
-        String resolvedOrderType = order.getOrderType();
-        if (resolvedOrderType == null || resolvedOrderType.isBlank()) {
-            if (!customs.isEmpty() && !orders.isEmpty()) resolvedOrderType = "MIXED";
-            else if (!customs.isEmpty()) resolvedOrderType = "CUSTOM";
-            else resolvedOrderType = "MARKETPLACE";
-        }
+        String resolvedOrderType = OrderPricing.checkoutOrderType(order, !customs.isEmpty(), !orders.isEmpty());
 
         List<CustomOrderDetailResponseDTO> customDetailDTOs = customs.stream()
                 .map(c -> toCustomDetailDTO(c, paymentStatus, payment, zeroAmountSettlement))
@@ -838,12 +826,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             if (!readyForConfirm) {
                 return OrderPricing.pendingQuote(version, customSubtotal, marketSubtotal, shippingFee);
             }
-            BenefitScope scope = switch (orderType) {
-                case "CUSTOM" -> BenefitScope.CUSTOM;
-                case "MIXED" -> BenefitScope.MIXED;
-                default -> BenefitScope.MARKETPLACE;
-            };
-            return OrderPricing.estimate(subscriptionBenefitService, order.getUser(), scope,
+            return OrderPricing.estimateCheckout(subscriptionBenefitService, order, orderType,
                     version, customSubtotal, marketSubtotal, shippingFee);
         }
         return OrderPricing.locked(version, customSubtotal, marketSubtotal, itemsSubtotal, order.getDiscountAmount(),
@@ -956,12 +939,18 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
         Instant now = Instant.now();
         BigDecimal customSubtotal = BigDecimal.ZERO;
+        boolean quoteChanged = !"QUOTED".equals(currentParentStatus);
         for (CheckoutOrderBatchQuoteRequestDTO.ItemQuote itemQuote : request.items()) {
             CustomOrder target = activeMap.get(itemQuote.customOrderId());
-            int qty = target.getQuantity() != null && target.getQuantity() > 0 ? target.getQuantity() : 1;
+            int qty = OrderPricing.quoteQuantity(target);
             BigDecimal unitPrice = itemQuote.unitPrice();
             BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(qty));
             String normalizedNote = itemQuote.note() != null && !itemQuote.note().isBlank() ? itemQuote.note().trim() : null;
+            customSubtotal = customSubtotal.add(lineTotal);
+            if (!OrderPricing.quoteChanged(target, unitPrice, lineTotal, normalizedNote)) {
+                continue;
+            }
+            quoteChanged = true;
 
             target.setUnitQuotedPrice(unitPrice);
             target.setQuotedPrice(lineTotal);
@@ -971,10 +960,11 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             target.setStatus("QUOTED");
             target.setUpdatedAt(now);
             customOrderRepository.save(target);
-
-            customSubtotal = customSubtotal.add(lineTotal);
         }
 
+        if (!quoteChanged) {
+            return toDTO(co, null);
+        }
         List<Order> marketOrders = orderRepository.findByCheckoutOrderId(id);
         BigDecimal marketSubtotal = OrderPricing.marketplaceSubtotal(marketOrders);
 
@@ -990,6 +980,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         co.setUpdatedAt(now);
         checkoutOrderRepository.save(co);
 
+        CheckoutOrderResponseDTO response = toDTO(co, null);
+        if (emailEvents != null) {
+            emailEvents.enqueueQuotation("CHECKOUT_ORDER", id, co.getUser(), response.pricingBreakdown(), activeCustoms);
+        }
         if (notificationService != null && co.getUser() != null) {
             notificationService.sendNotification(
                     co.getUser(),
@@ -1000,7 +994,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             );
         }
 
-        return toDTO(co, null);
+        return response;
     }
 
     @Override

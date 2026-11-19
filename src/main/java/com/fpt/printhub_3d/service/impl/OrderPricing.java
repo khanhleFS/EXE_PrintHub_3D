@@ -13,11 +13,51 @@ import com.fpt.printhub_3d.service.SubscriptionBenefitService.BenefitScope;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 final class OrderPricing {
     private OrderPricing() {}
+
+    static int quoteQuantity(CustomOrder order) {
+        return order.getQuantity() != null && order.getQuantity() > 0 ? order.getQuantity() : 1;
+    }
+
+    static BigDecimal quotedLineTotal(CustomOrder order) {
+        if (order.getQuotedPrice() != null && order.getQuotedPrice().signum() > 0) {
+            return order.getQuotedPrice();
+        }
+        BigDecimal unitPrice = order.getUnitQuotedPrice();
+        return unitPrice != null && unitPrice.signum() > 0
+                ? unitPrice.multiply(BigDecimal.valueOf(quoteQuantity(order))) : BigDecimal.ZERO;
+    }
+
+    static boolean quoteChanged(CustomOrder order, BigDecimal unitPrice, BigDecimal lineTotal, String note) {
+        return !"QUOTED".equals(order.getStatus()) || order.getUnitQuotedPrice() == null
+                || order.getUnitQuotedPrice().compareTo(unitPrice) != 0
+                || order.getQuotedPrice() == null || order.getQuotedPrice().compareTo(lineTotal) != 0
+                || !Objects.equals(order.getQuoteNote(), note);
+    }
+
+    static PricingBreakdownDTO estimateCheckout(SubscriptionBenefitService benefits, CheckoutOrder checkout,
+                                               String orderType, Long version, BigDecimal customSubtotal,
+                                               BigDecimal marketSubtotal, BigDecimal shippingFee) {
+        BenefitScope scope = switch (orderType) {
+            case "CUSTOM" -> BenefitScope.CUSTOM;
+            case "MIXED" -> BenefitScope.MIXED;
+            default -> BenefitScope.MARKETPLACE;
+        };
+        return estimate(benefits, checkout.getUser(), scope, version, customSubtotal, marketSubtotal, shippingFee);
+    }
+
+    static String checkoutOrderType(CheckoutOrder checkout, boolean hasCustoms, boolean hasMarketplace) {
+        String type = checkout.getOrderType();
+        if (type != null && !type.isBlank()) {
+            return type;
+        }
+        return hasCustoms ? (hasMarketplace ? "MIXED" : "CUSTOM") : "MARKETPLACE";
+    }
 
     static BigDecimal checkoutShippingFee(CheckoutOrder checkout, Supplier<BigDecimal> defaultFee) {
         BigDecimal fee = checkout.getShippingFee();

@@ -27,6 +27,7 @@ import com.fpt.printhub_3d.service.impl.CustomOrderReviewServiceImpl;
 import com.fpt.printhub_3d.service.impl.CustomOrderServiceImpl;
 import com.fpt.printhub_3d.service.impl.DashboardServiceImpl;
 import com.fpt.printhub_3d.service.impl.FinancialReportingService;
+import com.fpt.printhub_3d.service.impl.OrderEmailEvents;
 import com.fpt.printhub_3d.service.impl.PaymentEvidenceServiceImpl;
 import com.fpt.printhub_3d.service.impl.OrderRewardServiceImpl;
 import com.fpt.printhub_3d.service.impl.PaymentServiceImpl;
@@ -92,6 +93,8 @@ class CustomPricingAndPaymentFlowTest {
     @Mock private SubscriptionUsageLogRepository usageLogRepository;
     @Mock private StoreSettingRepository storeSettingRepository;
     @Mock private UserRepository userRepository;
+    @Mock private EmailOutboxService emailOutbox;
+    private OrderEmailEvents emailEvents;
 
     private User testUser;
     private Cart testCart;
@@ -100,6 +103,7 @@ class CustomPricingAndPaymentFlowTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        emailEvents = new OrderEmailEvents(emailOutbox);
 
         cartService = new CartServiceImpl(cartRepository, cartItemRepository, productRepository, productService);
         benefitService = new SubscriptionBenefitServiceImpl(
@@ -116,7 +120,7 @@ class CustomPricingAndPaymentFlowTest {
                 mockPaymentService,
                 mockInventoryService,
                 userRepository, paymentRepository, new OrderTransitionPolicy(), notificationService,
-                new ObjectMapper(), null, storeSettingRepository, benefitService
+                new ObjectMapper(), null, storeSettingRepository, benefitService, emailEvents
         );
 
         paymentService = new PaymentServiceImpl(
@@ -129,7 +133,7 @@ class CustomPricingAndPaymentFlowTest {
                 payOS,
                 notificationService,
                 mockInventoryService,
-                benefitService
+                benefitService, emailEvents
         );
 
         testUser = new User();
@@ -165,6 +169,15 @@ class CustomPricingAndPaymentFlowTest {
         verify(paymentRepository).save(first);
         verify(paymentRepository).save(second);
         verify(notificationService, times(2)).sendNotification(eq(testUser), any(), any(), eq("PAYMENT"), any());
+        var receipts = ArgumentCaptor.forClass(EmailOutboxService.PaymentReceiptEmailEvent.class);
+        verify(emailOutbox, times(2)).enqueuePaymentReceipt(receipts.capture());
+        assertEquals(List.of(first.getId(), second.getId()),
+                receipts.getAllValues().stream().map(EmailOutboxService.PaymentReceiptEmailEvent::paymentId).toList());
+        var firstReceipt = receipts.getAllValues().getFirst();
+        assertEquals("CHECKOUT_ORDER", firstReceipt.sourceType());
+        assertEquals(first.getCheckoutOrder().getId(), firstReceipt.sourceId());
+        assertEquals(testUser.getEmail(), firstReceipt.recipientEmail());
+        assertEquals(first.getPaidAt(), firstReceipt.paidAt());
     }
 
     @Test
@@ -186,7 +199,7 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals("CONFIRMED", payment.getCheckoutOrder().getStatus());
         assertNull(payment.getPaidAt());
         verify(paymentRepository).save(payment);
-        verifyNoInteractions(notificationService, usageLogRepository);
+        verifyNoInteractions(notificationService, usageLogRepository, emailOutbox);
     }
 
     @Test
@@ -218,7 +231,7 @@ class CustomPricingAndPaymentFlowTest {
         assertNull(payment.getPaidAt());
         assertNull(purchase.getSettledAt());
         assertEquals("CANCELLED", purchase.getStatus());
-        verifyNoInteractions(userSubscriptionService, notificationService, usageLogRepository);
+        verifyNoInteractions(userSubscriptionService, notificationService, usageLogRepository, emailOutbox);
         verify(paymentRepository).save(payment);
     }
 
@@ -237,7 +250,7 @@ class CustomPricingAndPaymentFlowTest {
         when(orderRepository.findById(child.getId())).thenReturn(Optional.of(child));
         when(orderRepository.findCheckoutId(child.getId())).thenReturn(Optional.of(checkout.getId()));
         var proofService = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository, orderRepository,
-                customOrderRepository, Clock.systemUTC(), benefitService);
+                customOrderRepository, Clock.systemUTC(), benefitService, emailEvents);
         ReflectionTestUtils.setField(checkoutOrderService, "paymentEvidenceService", proofService);
         User admin = new User();
         admin.setId(UUID.randomUUID());
@@ -248,6 +261,7 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals("COMPLETED", checkout.getStatus());
         assertTrue(proofService.findSettledEvidence(PaymentEvidenceService.SourceType.ORDER, child.getId()).isEmpty());
         verify(paymentRepository, never()).save(any());
+        verifyNoInteractions(emailOutbox);
 
         UUID receiptId = UUID.randomUUID();
         when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
@@ -267,6 +281,9 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals(replay, proofService.findSettledEvidence(PaymentEvidenceService.SourceType.ORDER, child.getId()).orElseThrow());
         verify(paymentRepository).save(any(Payment.class));
         verify(paymentRepository, never()).findByOrderId(child.getId());
+        verify(emailOutbox).enqueuePaymentReceipt(new EmailOutboxService.PaymentReceiptEmailEvent(receiptId,
+                "CHECKOUT_ORDER", checkout.getId(), testUser.getEmail(), testUser.getFullName(),
+                new BigDecimal("140000"), "COD", replay.paidAt(), null));
     }
 
     @Test
@@ -278,7 +295,7 @@ class CustomPricingAndPaymentFlowTest {
         order.setTotalAmount(new BigDecimal("140000"));
         when(orderRepository.findLockedById(order.getId())).thenReturn(Optional.of(order));
         var service = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
-                orderRepository, customOrderRepository, Clock.systemUTC(), benefitService);
+                orderRepository, customOrderRepository, Clock.systemUTC(), benefitService, emailEvents);
         User admin = new User();
         admin.setRole(UserRole.ADMIN);
         assertThrows(ApiException.class, () -> service.recordCodCollection(PaymentEvidenceService.SourceType.ORDER,
@@ -338,7 +355,7 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals(Payment.PENDING_RECONCILIATION, extra.getStatus());
         assertEquals("SUCCESS", parent.getStatus());
         var service = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
-                orderRepository, customOrderRepository, Clock.systemUTC(), benefitService);
+                orderRepository, customOrderRepository, Clock.systemUTC(), benefitService, emailEvents);
         assertEquals(parent.getId(), service.findSettledEvidence(
                 PaymentEvidenceService.SourceType.ORDER, child.getId()).orElseThrow().paymentId());
         verify(notificationService).sendNotification(eq(testUser), anyString(), anyString(), eq("PAYMENT"), anyString());
@@ -352,6 +369,7 @@ class CustomPricingAndPaymentFlowTest {
         when(checkoutOrderRepository.findLockedById(checkout.getId())).thenReturn(Optional.of(checkout));
         Payment payment = new Payment();
         payment.setCheckoutOrder(checkout);
+        payment.setId(UUID.randomUUID());
         payment.setStatus("PENDING");
         payment.setGateway("PAYOS");
         payment.setTransactionId(code);
@@ -463,7 +481,7 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals(completedAt, checkout.getCompletedAt());
 
         var evidenceService = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
-                orderRepository, customOrderRepository, java.time.Clock.systemUTC(), benefitService);
+                orderRepository, customOrderRepository, java.time.Clock.systemUTC(), benefitService, emailEvents);
         var evidence = evidenceService.findSettledEvidence(PaymentEvidenceService.SourceType.CUSTOM_ORDER, design.getId()).orElseThrow();
         assertEquals(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, evidence.sourceType());
         assertEquals(checkout.getId(), evidence.sourceId());
@@ -477,6 +495,7 @@ class CustomPricingAndPaymentFlowTest {
         assertThrows(ResponseStatusException.class, () -> paymentService.createPaymentLink(testUser.getId(), link));
         verify(paymentRepository, never()).save(any());
         verifyNoInteractions(payOS);
+        verifyNoInteractions(emailOutbox);
     }
 
     @Test
@@ -489,7 +508,7 @@ class CustomPricingAndPaymentFlowTest {
         var usage = trackBenefitUsage("CUSTOM_ORDER", custom.getId());
         var service = new CustomOrderServiceImpl(customOrderRepository, null, paymentRepository,
                 null, notificationService, null, new OrderTransitionPolicy(), null, null,
-                checkoutOrderRepository, orderRepository, storeSettingRepository, benefitService);
+                checkoutOrderRepository, orderRepository, storeSettingRepository, benefitService, emailEvents);
         var request = CustomOrderStatusRequestDTO.builder().status("ACCEPTED").paymentMethod("PAYOS")
                 .quoteVersion(3L).expectedTotalPayable(BigDecimal.ZERO).build();
 
@@ -515,7 +534,7 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals(0, service.completeRewards(custom.getId()).rewardPointsEarned());
 
         var evidenceService = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
-                orderRepository, customOrderRepository, java.time.Clock.systemUTC(), benefitService);
+                orderRepository, customOrderRepository, java.time.Clock.systemUTC(), benefitService, emailEvents);
         var evidence = evidenceService.findSettledEvidence(PaymentEvidenceService.SourceType.CUSTOM_ORDER, custom.getId())
                 .orElseThrow();
         assertNull(evidence.paymentId());
@@ -727,7 +746,7 @@ class CustomPricingAndPaymentFlowTest {
         when(customOrderRepository.findById(custom.getId())).thenReturn(Optional.of(custom));
         CustomOrderService customService = new CustomOrderServiceImpl(customOrderRepository, null, paymentRepository,
                 null, notificationService, null, new OrderTransitionPolicy(), null, null,
-                checkoutOrderRepository, orderRepository, storeSettingRepository, benefitService);
+                checkoutOrderRepository, orderRepository, storeSettingRepository, benefitService, emailEvents);
         var request = CustomOrderStatusRequestDTO.builder().status("ACCEPTED").paymentMethod("PAYOS")
                 .quoteVersion(5L).expectedTotalPayable(new BigDecimal("90000")).build();
 
@@ -983,7 +1002,7 @@ class CustomPricingAndPaymentFlowTest {
         when(customOrderRepository.findById(custom.getId())).thenReturn(Optional.of(custom));
         CustomOrderService customService = new CustomOrderServiceImpl(customOrderRepository, null, paymentRepository,
                 null, notificationService, null, new OrderTransitionPolicy(), null, null,
-                checkoutOrderRepository, orderRepository, storeSettingRepository, benefitService);
+                checkoutOrderRepository, orderRepository, storeSettingRepository, benefitService, emailEvents);
 
         var waiting = customService.getCustomOrderDetail(custom.getId(), testUser).pricingBreakdown();
         assertEquals(PricingStage.PENDING_QUOTE, waiting.pricingStage());
@@ -1000,6 +1019,15 @@ class CustomPricingAndPaymentFlowTest {
         customService.quoteCustomOrder(custom.getId(),
                 new CustomOrderQuoteRequestDTO(new BigDecimal("50000"), "PLA+"), testUser);
         assertEquals(3L, custom.getQuoteVersion());
+        var events = ArgumentCaptor.forClass(EmailOutboxService.QuotationEmailEvent.class);
+        verify(emailOutbox, times(2)).enqueueQuotationIssued(events.capture());
+        assertEquals(List.of(2L, 3L),
+                events.getAllValues().stream().map(EmailOutboxService.QuotationEmailEvent::quoteVersion).toList());
+        var firstQuote = events.getAllValues().getFirst();
+        assertEquals("CUSTOM_ORDER", firstQuote.sourceType());
+        assertEquals(custom.getId(), firstQuote.sourceId());
+        assertEquals(2, firstQuote.lines().getFirst().quantity());
+        assertEquals(new BigDecimal("100000"), firstQuote.estimatedPayableAmount());
     }
 
     @Test
@@ -1024,6 +1052,7 @@ class CustomPricingAndPaymentFlowTest {
         assertNull(second.getQuotedPrice());
         verify(customOrderRepository, never()).save(any());
         verify(checkoutOrderRepository, never()).save(any());
+        verifyNoInteractions(emailOutbox);
 
         ItemQuote secondQuote = new ItemQuote(second.getId(), new BigDecimal("25000"), null);
         var result = checkoutOrderService.batchQuoteCheckoutOrder(
@@ -1031,6 +1060,46 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals(3L, result.summaryVersion());
         assertEquals(new BigDecimal("125000"), result.pricingBreakdown().itemsSubtotal());
         assertEquals(new BigDecimal("155000"), result.pricingBreakdown().totalPayable());
+        var replay = checkoutOrderService.batchQuoteCheckoutOrder(
+                testUser, checkout.getId(), new CheckoutOrderBatchQuoteRequestDTO(List.of(secondQuote, firstQuote)));
+        assertEquals(result.summaryVersion(), replay.summaryVersion());
+        var event = ArgumentCaptor.forClass(EmailOutboxService.QuotationEmailEvent.class);
+        verify(emailOutbox).enqueueQuotationIssued(event.capture());
+        assertEquals("CHECKOUT_ORDER", event.getValue().sourceType());
+        assertEquals(result.summaryVersion().longValue(), event.getValue().quoteVersion());
+        assertEquals(result.pricingBreakdown().totalPayable(), event.getValue().estimatedPayableAmount());
+        assertEquals(2, event.getValue().lines().size());
+    }
+
+    @Test
+    void quotingCheckoutLinesEnqueuesOnlyTheCompleteParentQuote() {
+        CheckoutOrder checkout = quotedCheckout("CUSTOM", "30000");
+        checkout.setStatus("PENDING_QUOTE");
+        CustomOrder first = customLine("REQUESTED", null);
+        first.setCheckoutOrder(checkout);
+        CustomOrder second = customLine("REQUESTED", null);
+        second.setCheckoutOrder(checkout);
+        CustomOrder cancelled = customLine("CANCELLED", "5000");
+        when(checkoutOrderRepository.findLockedById(checkout.getId())).thenReturn(Optional.of(checkout));
+        when(customOrderRepository.findByCheckoutOrderId(checkout.getId())).thenReturn(List.of(first, second, cancelled));
+        for (CustomOrder order : List.of(first, second)) {
+            when(customOrderRepository.findCheckoutId(order.getId())).thenReturn(Optional.of(checkout.getId()));
+            when(customOrderRepository.findLockedById(order.getId())).thenReturn(Optional.of(order));
+        }
+        CustomOrderService service = new CustomOrderServiceImpl(customOrderRepository, null, paymentRepository,
+                null, notificationService, null, new OrderTransitionPolicy(), null, null, checkoutOrderRepository,
+                orderRepository, storeSettingRepository, benefitService, emailEvents);
+        var quote = new CustomOrderQuoteRequestDTO(new BigDecimal("50000"));
+        service.quoteCustomOrder(first.getId(), quote, testUser);
+        verifyNoInteractions(emailOutbox);
+        service.quoteCustomOrder(second.getId(), quote, testUser);
+        service.quoteCustomOrder(second.getId(), quote, testUser);
+        var event = ArgumentCaptor.forClass(EmailOutboxService.QuotationEmailEvent.class);
+        verify(emailOutbox).enqueueQuotationIssued(event.capture());
+        assertEquals(checkout.getId(), event.getValue().sourceId());
+        assertEquals(4L, event.getValue().quoteVersion());
+        assertEquals(2, event.getValue().lines().size());
+        assertEquals(new BigDecimal("130000"), event.getValue().estimatedPayableAmount());
     }
 
     private CheckoutOrder quotedCheckout(String orderType, String shippingFee) {

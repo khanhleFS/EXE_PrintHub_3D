@@ -23,6 +23,7 @@ import com.fpt.printhub_3d.service.impl.AdminSubscriptionHistoryService;
 import com.fpt.printhub_3d.service.impl.FinanceServiceImpl;
 import com.fpt.printhub_3d.service.impl.FinancialReportingService;
 import com.fpt.printhub_3d.service.impl.DashboardServiceImpl;
+import com.fpt.printhub_3d.service.impl.OrderEmailEvents;
 import com.fpt.printhub_3d.service.impl.PaymentServiceImpl;
 import com.fpt.printhub_3d.service.impl.UserSubscriptionServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -85,6 +86,7 @@ class SubscriptionCashPurchaseFlowTest {
     @Mock(answer = Answers.RETURNS_DEEP_STUBS) private PayOS payOS;
     @Mock private NotificationService notificationService;
     @Mock private InventoryService inventoryService;
+    @Mock private EmailOutboxService emailOutbox;
 
     private User testUser;
     private SubscriptionPlan testPlan;
@@ -113,7 +115,7 @@ class SubscriptionCashPurchaseFlowTest {
                 userSubscriptionService,
                 payOS,
                 notificationService,
-                inventoryService
+                inventoryService, null, new OrderEmailEvents(emailOutbox)
         );
 
         financialReporting = new FinancialReportingService(paymentRepository, checkoutOrderRepository, orderRepository,
@@ -395,6 +397,7 @@ class SubscriptionCashPurchaseFlowTest {
                 .id(UUID.randomUUID())
                 .user(testUser)
                 .plan(testPlan)
+                .planNameSnapshot("Tên gói tại thời điểm mua")
                 .amount(new BigDecimal("99000"))
                 .durationDays(30)
                 .status("PENDING")
@@ -404,6 +407,7 @@ class SubscriptionCashPurchaseFlowTest {
         Payment payment = new Payment();
         payment.setId(UUID.randomUUID());
         payment.setSubscriptionPurchase(purchase);
+        payment.setGateway("PAYOS");
         payment.setStatus("PENDING");
         payment.setAmount(new BigDecimal("99000"));
         payment.setTransactionId("PAYOS_TXN_001");
@@ -419,6 +423,10 @@ class SubscriptionCashPurchaseFlowTest {
         assertEquals("SUCCESS", payment.getStatus());
         assertEquals("PAID", purchase.getStatus());
         assertNotNull(purchase.getSettledAt());
+        settleMethod.invoke(paymentService, payment, new BigDecimal("99000"), Instant.now(), true);
+        verify(emailOutbox).enqueuePaymentReceipt(new EmailOutboxService.PaymentReceiptEmailEvent(payment.getId(),
+                "SUBSCRIPTION_PURCHASE", purchase.getId(), testUser.getEmail(), testUser.getFullName(),
+                payment.getAmount(), "PAYOS", purchase.getSettledAt(), "Tên gói tại thời điểm mua"));
 
         // Kích hoạt gói mới
         verify(userSubscriptionRepository, times(1)).save(any(UserSubscription.class));

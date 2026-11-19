@@ -249,7 +249,7 @@ Dùng các record và phương thức hiện có trong `EmailOutboxService`.
 
 | Điểm gọi của BE1 | Dữ liệu và khóa chống lặp |
 |---|---|
-| `enqueueQuotationIssued(QuotationEmailEvent)` | Gọi trong transaction phát hành báo giá checkout đủ dòng hoặc đơn custom lẻ. Gửi bảng tiền dự kiến cùng các dòng báo giá. Khóa gồm `sourceType`, `sourceId`, `quoteVersion`. |
-| `enqueuePaymentReceipt(PaymentReceiptEmailEvent)` | Gọi trong transaction xác nhận thu PayOS/COD hợp lệ lần đầu. Dùng `paymentId` đã lưu làm khóa. C1 dùng nguồn `CHECKOUT_ORDER`, S1 dùng `SUBSCRIPTION_PURCHASE`. Chỉ ghi sự kiện với khoản thu tiền hợp lệ lớn hơn 0. |
+| `enqueueQuotationIssued(QuotationEmailEvent)` | Gọi trong transaction phát hành báo giá checkout đủ dòng, qua báo giá theo lô hoặc qua dòng cuối cùng, và khi báo giá đơn custom lẻ. Gửi bảng tiền dự kiến cùng các dòng custom còn hiệu lực. Khóa gồm `sourceType`, `sourceId`, `quoteVersion`. Yêu cầu lặp nguyên giá và ghi chú giữ cùng phiên bản. |
+| `enqueuePaymentReceipt(PaymentReceiptEmailEvent)` | Gọi trong transaction xác nhận thu PayOS/COD hợp lệ lần đầu. Dùng `paymentId` đã lưu làm khóa. C1 dùng nguồn `CHECKOUT_ORDER`, S1 dùng `SUBSCRIPTION_PURCHASE` và tên gói đã lưu lúc mua. Chỉ ghi sự kiện với khoản thu tiền hợp lệ lớn hơn 0. |
 
 BE2 phụ trách worker gửi và thử lại. Khi nghiệm thu C1 và S1, kỳ vọng một email báo giá C1 và hai biên nhận tương ứng 90.000đ và 50.000đ.

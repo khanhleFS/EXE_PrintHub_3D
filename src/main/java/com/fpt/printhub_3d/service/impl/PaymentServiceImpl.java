@@ -69,6 +69,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final NotificationService notifications;
     private final InventoryService inventoryService;
     private final SubscriptionBenefitService subscriptionBenefitService;
+    private final OrderEmailEvents emailEvents;
 
     @Autowired
     public PaymentServiceImpl(
@@ -81,7 +82,8 @@ public class PaymentServiceImpl implements PaymentService {
             PayOS payOS,
             NotificationService notifications,
             InventoryService inventoryService,
-            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService,
+            OrderEmailEvents emailEvents
     ) {
         this.orders = orders;
         this.customs = customs;
@@ -93,6 +95,7 @@ public class PaymentServiceImpl implements PaymentService {
         this.notifications = notifications;
         this.inventoryService = inventoryService;
         this.subscriptionBenefitService = subscriptionBenefitService;
+        this.emailEvents = emailEvents;
     }
 
     public PaymentServiceImpl(
@@ -116,6 +119,7 @@ public class PaymentServiceImpl implements PaymentService {
                 payOS,
                 notifications,
                 inventoryService,
+                null,
                 null
         );
     }
@@ -759,6 +763,9 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setReconciliationReason(null);
         payment.setReconciliationReceivedAt(null);
         payments.save(payment);
+        if (emailEvents != null) {
+            emailEvents.enqueueReceipt(payment);
+        }
         notifications.sendNotification(buyer, "Đã nhận thanh toán", notificationMessage, "PAYMENT", notificationLink);
     }
 

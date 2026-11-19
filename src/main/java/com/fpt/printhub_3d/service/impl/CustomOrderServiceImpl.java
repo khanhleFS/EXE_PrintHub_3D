@@ -46,7 +46,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -68,6 +67,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final OrderRepository orderRepository;
     private final StoreSettingRepository storeSettingRepository;
     private final SubscriptionBenefitService subscriptionBenefitService;
+    private final OrderEmailEvents emailEvents;
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
@@ -85,7 +85,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             CheckoutOrderRepository checkoutOrderRepository,
             OrderRepository orderRepository,
             StoreSettingRepository storeSettingRepository,
-            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService
+            @Autowired(required = false) SubscriptionBenefitService subscriptionBenefitService,
+            OrderEmailEvents emailEvents
     ) {
         this.customOrderRepository = customOrderRepository;
         this.fileAssetRepository = fileAssetRepository;
@@ -100,6 +101,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         this.orderRepository = orderRepository;
         this.storeSettingRepository = storeSettingRepository;
         this.subscriptionBenefitService = subscriptionBenefitService;
+        this.emailEvents = emailEvents;
     }
 
     public CustomOrderServiceImpl(
@@ -129,6 +131,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 checkoutOrderRepository,
                 orderRepository,
                 storeSettingRepository,
+                null,
                 null
         );
     }
@@ -161,15 +164,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     }
 
     private BigDecimal resolveLineTotal(CustomOrder order) {
-        if (order == null) return BigDecimal.ZERO;
-        if (order.getQuotedPrice() != null && order.getQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
-            return order.getQuotedPrice();
-        }
-        int qty = order.getQuantity() != null && order.getQuantity() > 0 ? order.getQuantity() : 1;
-        if (order.getUnitQuotedPrice() != null && order.getUnitQuotedPrice().compareTo(BigDecimal.ZERO) > 0) {
-            return order.getUnitQuotedPrice().multiply(BigDecimal.valueOf(qty));
-        }
-        return BigDecimal.ZERO;
+        return order != null ? OrderPricing.quotedLineTotal(order) : BigDecimal.ZERO;
     }
 
     private BigDecimal resolveDefaultShippingFee() {
@@ -430,19 +425,16 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             }
         }
 
-        int qty = order.getQuantity() != null && order.getQuantity() > 0 ? order.getQuantity() : 1;
+        int qty = OrderPricing.quoteQuantity(order);
         BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(qty));
         String normalizedNote = request.note() != null && !request.note().isBlank() ? request.note().trim() : null;
+        if (!OrderPricing.quoteChanged(order, unitPrice, lineTotal, normalizedNote)) {
+            return;
+        }
         Instant now = Instant.now();
 
         if (order.getCheckoutOrder() == null) {
-            boolean quoteChanged = !"QUOTED".equals(order.getStatus()) || order.getUnitQuotedPrice() == null
-                    || order.getUnitQuotedPrice().compareTo(unitPrice) != 0
-                    || order.getQuotedPrice() == null || order.getQuotedPrice().compareTo(lineTotal) != 0
-                    || !Objects.equals(order.getQuoteNote(), normalizedNote);
-            if (quoteChanged) {
-                order.setQuoteVersion(order.getQuoteVersion() + 1);
-            }
+            order.setQuoteVersion(order.getQuoteVersion() + 1);
             if (order.getShippingFee() == null) {
                 order.setShippingFee(resolveDefaultShippingFee());
             }
@@ -462,24 +454,21 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 siblings.add(order);
             }
             List<CustomOrder> activeSiblings = siblings.stream()
+                    .map(c -> id.equals(c.getId()) ? order : c)
                     .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()))
                     .toList();
 
             BigDecimal customSubtotal = activeSiblings.stream()
-                    .map(c -> id.equals(c.getId()) ? lineTotal : resolveLineTotal(c))
+                    .map(this::resolveLineTotal)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-            BigDecimal marketSubtotal = orderRepository != null
-                    ? OrderPricing.marketplaceSubtotal(orderRepository.findByCheckoutOrderId(parent.getId()))
-                    : BigDecimal.ZERO;
+            List<Order> marketOrders = orderRepository != null
+                    ? orderRepository.findByCheckoutOrderId(parent.getId()) : List.of();
+            BigDecimal marketSubtotal = OrderPricing.marketplaceSubtotal(marketOrders);
 
             BigDecimal itemsSubtotal = customSubtotal.add(marketSubtotal);
             boolean allQuoted = !activeSiblings.isEmpty() && activeSiblings.stream()
-                    .allMatch(c -> {
-                        BigDecimal lTotal = id.equals(c.getId()) ? lineTotal : resolveLineTotal(c);
-                        String st = id.equals(c.getId()) ? "QUOTED" : c.getStatus();
-                        return lTotal.compareTo(BigDecimal.ZERO) > 0 && !"REQUESTED".equalsIgnoreCase(st);
-                    });
+                    .allMatch(c -> resolveLineTotal(c).signum() > 0 && !"REQUESTED".equalsIgnoreCase(c.getStatus()));
 
             parent.setItemsSubtotal(itemsSubtotal);
             if (allQuoted) {
@@ -496,6 +485,14 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             parent.setSummaryVersion((parent.getSummaryVersion() != null ? parent.getSummaryVersion() : 1L) + 1L);
             parent.setUpdatedAt(now);
             checkoutOrderRepository.save(parent);
+            if (allQuoted && emailEvents != null) {
+                String orderType = OrderPricing.checkoutOrderType(parent, true, !marketOrders.isEmpty());
+                var pricing = OrderPricing.estimateCheckout(subscriptionBenefitService, parent, orderType,
+                        parent.getSummaryVersion(), customSubtotal, marketSubtotal, parent.getShippingFee());
+                emailEvents.enqueueQuotation("CHECKOUT_ORDER", parent.getId(), parent.getUser(), pricing, activeSiblings);
+            }
+        } else if (order.getCheckoutOrder() == null && emailEvents != null) {
+            emailEvents.enqueueQuotation("CUSTOM_ORDER", id, order.getBuyer(), standalonePricing(order), List.of(order));
         }
 
         if (notificationService != null && order.getBuyer() != null) {

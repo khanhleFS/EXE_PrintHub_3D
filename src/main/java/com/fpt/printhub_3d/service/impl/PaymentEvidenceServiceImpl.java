@@ -33,6 +33,7 @@ public class PaymentEvidenceServiceImpl implements PaymentEvidenceService {
     private final CustomOrderRepository customs;
     private final Clock clock;
     private final SubscriptionBenefitService benefits;
+    private final OrderEmailEvents emailEvents;
 
     @Override
     @Transactional(readOnly = true)
@@ -122,6 +123,7 @@ public class PaymentEvidenceServiceImpl implements PaymentEvidenceService {
         benefits.commitAppliedBenefits(source.type() == SourceType.CHECKOUT_ORDER
                 ? SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER
                 : SubscriptionBenefitService.UsageTargetType.ORDER, source.id());
+        emailEvents.enqueueReceipt(saved);
         return toEvidence(saved, source);
     }
 
