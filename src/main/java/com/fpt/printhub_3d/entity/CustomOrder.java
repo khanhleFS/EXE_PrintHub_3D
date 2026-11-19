@@ -119,6 +119,17 @@ public class CustomOrder {
     @JoinColumn(name = "checkout_order_id")
     private CheckoutOrder checkoutOrder;
 
+    @Column(name = "zero_amount_settled_at")
+    private Instant zeroAmountSettledAt;
+
+    public Instant resolveZeroAmountSettledAt() {
+        if (checkoutOrder == null) {
+            return zeroAmountSettledAt;
+        }
+        return !"CANCELLED".equalsIgnoreCase(status) && !"EXPIRED".equalsIgnoreCase(status)
+                ? checkoutOrder.getZeroAmountSettledAt() : null;
+    }
+
     @Column(name = "subtotal_amount", precision = 18, scale = 2)
     private BigDecimal subtotalAmount;
 

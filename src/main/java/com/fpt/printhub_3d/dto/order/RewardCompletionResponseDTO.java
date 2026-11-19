@@ -15,4 +15,9 @@ public record RewardCompletionResponseDTO(
         Integer totalRewardPoints,
         Boolean alreadyProcessed
 ) {
+    public static RewardCompletionResponseDTO forZeroAmountPromo(
+            UUID orderId, UUID customerId, String customerName, Integer currentBalance) {
+        return new RewardCompletionResponseDTO(orderId, customerId, customerName, 0,
+                currentBalance != null ? currentBalance : 0, true);
+    }
 }

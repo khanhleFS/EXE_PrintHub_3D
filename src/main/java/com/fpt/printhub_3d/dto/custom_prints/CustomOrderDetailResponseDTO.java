@@ -1,6 +1,7 @@
 package com.fpt.printhub_3d.dto.custom_prints;
 
 import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
+import com.fpt.printhub_3d.dto.payment.PaymentEvidenceResponseDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
@@ -48,5 +49,6 @@ public record CustomOrderDetailResponseDTO(
         String cancelledByRole,
         Instant cancelledAt,
         Long quoteVersion,
-        PricingBreakdownDTO pricingBreakdown
+        PricingBreakdownDTO pricingBreakdown,
+        PaymentEvidenceResponseDTO paymentEvidence
 ) {}

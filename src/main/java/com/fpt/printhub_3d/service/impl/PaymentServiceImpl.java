@@ -151,6 +151,9 @@ public class PaymentServiceImpl implements PaymentService {
             if (custom.getCheckoutOrder() != null) {
                 throw bad("Vui lòng thanh toán theo đơn checkout.");
             }
+            if (custom.getZeroAmountSettledAt() != null) {
+                throw bad("Đơn đã được ưu đãi toàn bộ, số tiền phải thu là 0đ.");
+            }
             if (!"ACCEPTED".equals(custom.getStatus())) {
                 throw bad("Hãy chấp nhận báo giá trước khi thanh toán");
             }
@@ -170,6 +173,9 @@ public class PaymentServiceImpl implements PaymentService {
                     .orElseThrow(() -> bad("Không tìm thấy đơn thanh toán"));
             if (!checkoutOrder.getUser().getId().equals(userId)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+            }
+            if (checkoutOrder.getZeroAmountSettledAt() != null) {
+                throw bad("Đơn đã được ưu đãi toàn bộ, số tiền phải thu là 0đ.");
             }
             if (!"CONFIRMED".equals(checkoutOrder.getStatus())) {
                 throw bad("Đơn không ở trạng thái có thể thanh toán");

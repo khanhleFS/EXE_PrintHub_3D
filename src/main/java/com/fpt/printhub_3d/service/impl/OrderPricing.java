@@ -69,7 +69,7 @@ final class OrderPricing {
     static PricingBreakdownDTO locked(Long version, BigDecimal customSubtotal, BigDecimal marketplaceSubtotal,
                                      BigDecimal itemsSubtotal, BigDecimal itemDiscount, BigDecimal shippingFee,
                                      BigDecimal shippingDiscount, BigDecimal savedTotal, UUID subscriptionId,
-                                     String subscriptionName, Boolean priorityProduction) {
+                                     String subscriptionName, Boolean priorityProduction, boolean zeroAmountSettlement) {
         BigDecimal discount = zeroIfMissing(itemDiscount);
         BigDecimal baseShipping = zeroIfMissing(shippingFee);
         BigDecimal discountShipping = zeroIfMissing(shippingDiscount);
@@ -77,7 +77,7 @@ final class OrderPricing {
         BigDecimal payable = savedTotal != null ? savedTotal
                 : totalPayable(itemsSubtotal, discount, baseShipping, discountShipping);
         return new PricingBreakdownDTO(PricingStage.LOCKED, version, customSubtotal, marketplaceSubtotal,
-                itemsSubtotal, discount, baseShipping, discountShipping, finalShipping, payable, false,
+                itemsSubtotal, discount, baseShipping, discountShipping, finalShipping, payable, zeroAmountSettlement,
                 subscriptionId, subscriptionName, subscriptionId != null ? BenefitStatus.APPLIED : null,
                 null, Boolean.TRUE.equals(priorityProduction));
     }

@@ -328,6 +328,12 @@ public class OrderServiceImpl implements OrderService {
             throw new ApiException(OrderErrorCode.ORDER_NOT_COMPLETED, "Đơn hàng chưa ở trạng thái COMPLETED");
         }
 
+        if (order.resolveZeroAmountSettledAt() != null) {
+            User buyer = order.getBuyer();
+            return RewardCompletionResponseDTO.forZeroAmountPromo(
+                    order.getId(), buyer.getId(), buyer.getFullName(), buyer.getRewardPoints());
+        }
+
         Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
         if (payment == null && order.getCheckoutOrder() != null) {
             payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
@@ -407,7 +413,8 @@ public class OrderServiceImpl implements OrderService {
                 : (order.getCheckoutOrder() != null && order.getCheckoutOrder().getPaymentMethod() != null
                         ? order.getCheckoutOrder().getPaymentMethod()
                         : (payment != null ? payment.getGateway() : "PAYOS"));
-        String pStatus = payment != null ? payment.getStatus() : ("COD".equalsIgnoreCase(pMethod) ? "UNPAID" : "PENDING");
+        String pStatus = order.resolveZeroAmountSettledAt() != null ? "SUCCESS"
+                : payment != null ? payment.getStatus() : ("COD".equalsIgnoreCase(pMethod) ? "UNPAID" : "PENDING");
 
         User current = getCurrentUserSafely();
         boolean isAdmin = current != null && current.getRole() == UserRole.ADMIN;
@@ -561,7 +568,9 @@ public class OrderServiceImpl implements OrderService {
                 : (order.getCheckoutOrder() != null && order.getCheckoutOrder().getPaymentMethod() != null
                         ? order.getCheckoutOrder().getPaymentMethod()
                         : (payment != null ? payment.getGateway() : "PAYOS"));
-        String paymentStatus = payment != null ? payment.getStatus() : ("COD".equalsIgnoreCase(paymentMethod) ? "UNPAID" : "PENDING");
+        boolean zeroAmountSettlement = order.resolveZeroAmountSettledAt() != null;
+        String paymentStatus = zeroAmountSettlement ? "SUCCESS" : payment != null ? payment.getStatus()
+                : ("COD".equalsIgnoreCase(paymentMethod) ? "UNPAID" : "PENDING");
 
         String resolvedStatus = orderTransitionPolicy.validateAndResolveNextStatus(
                 OrderTransitionPolicy.OrderType.MARKETPLACE,
@@ -589,7 +598,7 @@ public class OrderServiceImpl implements OrderService {
             if ("PREPARING".equals(resolvedStatus) || "PRINTING".equals(resolvedStatus)) {
                 inventoryService.confirmReservation(order.getId());
             }
-            if ("COMPLETED".equals(resolvedStatus) && "COD".equalsIgnoreCase(paymentMethod)) {
+            if ("COMPLETED".equals(resolvedStatus) && !zeroAmountSettlement && "COD".equalsIgnoreCase(paymentMethod)) {
                 Payment codPayment = payment != null ? payment : new Payment();
                 codPayment.setOrder(order);
                 codPayment.setAmount(order.getTotalAmount() != null ? order.getTotalAmount() : BigDecimal.ZERO);

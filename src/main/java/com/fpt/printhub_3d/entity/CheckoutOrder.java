@@ -110,6 +110,9 @@ public class CheckoutOrder {
     @Column(name = "payment_expires_at")
     private Instant paymentExpiresAt;
 
+    @Column(name = "zero_amount_settled_at")
+    private Instant zeroAmountSettledAt;
+
     @Column(name = "reservation_expires_at")
     private Instant reservationExpiresAt;
 

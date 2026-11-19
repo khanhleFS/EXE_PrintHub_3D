@@ -169,6 +169,21 @@ HTTP 409 trong ví dụ hai đơn tranh lượt freeship cuối. Cùng phiên b�
 
 Khi xưởng đổi báo giá, backend dùng `checkout.version_conflict` và trả phiên bản mới trong cùng cấu trúc `result`. Với custom lẻ, mã tương ứng là `custom_print.price_changed` hoặc `custom_print.version_conflict`, và `result` dùng `quoteVersion` ở cấp đơn. Nếu API đọc bảng tiền lỗi, FE giữ trạng thái lỗi và cho thử lại.
 
+### Đơn được ưu đãi toàn bộ
+
+FE gửi `expectedTotalPayable: 0` khi xác nhận bảng tiền dự kiến 0đ. Backend kiểm tra lại phiên bản và quota như các đơn khác. Khi xác nhận thành công, đơn vào trạng thái `PAID`, bảng tiền `LOCKED` có `totalPayable: 0` và `zeroAmountSettlement: true`. FE hiển thị “Được ưu đãi toàn bộ” và bỏ qua bước mở PayOS. Trường `paymentEvidence` dùng cấu trúc dưới đây. `paidAt` là mốc xác nhận miễn phí đã lưu. Đơn custom lẻ đọc lại chi tiết sau khi gọi API chấp nhận báo giá.
+
+Mốc này nằm ở cột nullable `zero_amount_settled_at` của `checkout_orders` hoặc `custom_orders` cho đơn custom lẻ. Các dòng thuộc checkout dùng mốc của đơn cha.
+
+```json
+{
+  "status": "ZERO_AMOUNT_PROMO",
+  "gateway": "ZERO_AMOUNT_PROMO",
+  "paidAmount": 0,
+  "paidAt": "2026-11-19T03:15:00Z"
+}
+```
+
 ## Hợp đồng cho BE2
 
 ### Chứng từ và mốc hoàn tất

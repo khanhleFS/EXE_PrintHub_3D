@@ -17,6 +17,7 @@ import com.fpt.printhub_3d.dto.order.BlockedActionDTO;
 import com.fpt.printhub_3d.dto.order.OrderItemResponseDTO;
 import com.fpt.printhub_3d.dto.order.OrderResponseDTO;
 import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
+import com.fpt.printhub_3d.dto.payment.PaymentEvidenceResponseDTO;
 import com.fpt.printhub_3d.entity.*;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.repository.*;
@@ -359,6 +360,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             checkoutOrder.setPriorityProduction(snap.priorityProduction());
             checkoutOrder.setTotalAmount(snap.finalTotal());
             checkoutOrder.setUpdatedAt(Instant.now());
+            if (snap.fullyDiscounted()) {
+                settleZeroAmountCheckout(checkoutOrder, checkoutOrder.getUpdatedAt());
+            }
             checkoutOrder = checkoutOrderRepository.save(checkoutOrder);
         }
 
@@ -372,6 +376,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             notifyAdminsNewCustomCheckout(checkoutOrder, user, customLines.size());
         }
 
+        boolean zeroAmountSettlement = checkoutOrder.getZeroAmountSettledAt() != null;
         // Tạo Order cho các dòng sản phẩm Marketplace
         if (!marketplaceLines.isEmpty()) {
             User fallbackSeller = userRepository.findAll().stream()
@@ -402,9 +407,14 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 order.setSeller(seller);
                 order.setCheckoutOrder(checkoutOrder);
                 order.setPaymentMethod(checkoutOrder.getPaymentMethod());
-                order.setStatus("PENDING");
+                order.setStatus(zeroAmountSettlement ? "PAID" : "PENDING");
                 order.setSubtotalAmount(sellerTotal);
-                order.setTotalAmount(sellerTotal);
+                order.setTotalAmount(zeroAmountSettlement ? BigDecimal.ZERO : sellerTotal);
+                if (zeroAmountSettlement) {
+                    order.setDiscountAmount(sellerTotal);
+                    order.setAppliedSubscriptionId(checkoutOrder.getAppliedSubscriptionId());
+                    order.setAppliedSubscriptionName(checkoutOrder.getAppliedSubscriptionName());
+                }
                 order.setPriorityProduction(checkoutOrder.getPriorityProduction());
                 order.setCommissionFee(BigDecimal.ZERO);
                 order.setCreatedAt(Instant.now());
@@ -425,9 +435,12 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 for (CartItem ci : entry.getValue()) {
                     sellerProductQuantities.merge(ci.getProduct().getId(), ci.getQuantity(), Integer::sum);
                 }
-                Instant expiresAt = "PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod()) ? Instant.now().plus(15, java.time.temporal.ChronoUnit.MINUTES) : null;
+                Instant expiresAt = !zeroAmountSettlement && "PAYOS".equalsIgnoreCase(checkoutOrder.getPaymentMethod())
+                        ? Instant.now().plus(15, java.time.temporal.ChronoUnit.MINUTES) : null;
                 inventoryService.reserveForOrder(order.getId(), sellerProductQuantities, "CHECKOUT_ORDER_" + checkoutOrder.getId(), expiresAt);
-                if (expiresAt != null) {
+                if (zeroAmountSettlement) {
+                    inventoryService.confirmReservation(order.getId());
+                } else if (expiresAt != null) {
                     order.setPaymentDueAt(expiresAt);
                     orderRepository.save(order);
                 }
@@ -574,26 +587,51 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         checkoutOrder.setPriorityProduction(snapshot.priorityProduction());
         checkoutOrder.setTotalAmount(snapshot.finalTotal());
         checkoutOrder.setPaymentMethod(paymentMethod);
-        checkoutOrder.setStatus("PAYOS".equals(paymentMethod) ? "CONFIRMED" : "PROCESSING");
-        checkoutOrder.setUpdatedAt(Instant.now());
+        Instant now = Instant.now();
+        checkoutOrder.setUpdatedAt(now);
 
-        if ("PAYOS".equals(paymentMethod)) {
+        boolean zeroAmountSettlement = snapshot.fullyDiscounted();
+        if (zeroAmountSettlement) {
+            settleZeroAmountCheckout(checkoutOrder, now);
+        } else if ("PAYOS".equals(paymentMethod)) {
+            checkoutOrder.setStatus("CONFIRMED");
             prepareCheckoutPayment(checkoutOrder);
+        } else {
+            checkoutOrder.setStatus("PROCESSING");
         }
         checkoutOrderRepository.save(checkoutOrder);
         distributeSnapshotToChildren(checkoutOrder, activeCustoms, marketOrders, snapshot);
 
         for (CustomOrder custom : activeCustoms) {
-            custom.setStatus("ACCEPTED");
-            custom.setUpdatedAt(Instant.now());
+            custom.setStatus(zeroAmountSettlement ? "PAID" : "ACCEPTED");
+            custom.setUpdatedAt(now);
             customOrderRepository.save(custom);
         }
-        if ("COD".equals(paymentMethod)) {
+        if (zeroAmountSettlement || "COD".equals(paymentMethod)) {
             for (Order order : marketOrders) {
+                if (zeroAmountSettlement) {
+                    order.setStatus("PAID");
+                    if (order.getSubtotalAmount() == null) {
+                        order.setSubtotalAmount(order.getTotalAmount());
+                    }
+                    order.setTotalAmount(BigDecimal.ZERO);
+                    order.setPaymentDueAt(null);
+                    order.setUpdatedAt(now);
+                    orderRepository.save(order);
+                }
                 inventoryService.confirmReservation(order.getId());
             }
         }
         return toDTO(checkoutOrder, null);
+    }
+
+    private void settleZeroAmountCheckout(CheckoutOrder checkout, Instant settledAt) {
+        checkout.setZeroAmountSettledAt(settledAt);
+        checkout.setStatus("PAID");
+        checkout.setPaymentExpiresAt(null);
+        checkout.setReservationExpiresAt(null);
+        subscriptionBenefitService.commitAppliedBenefits(
+                SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, checkout.getId());
     }
 
     private void prepareCheckoutPayment(CheckoutOrder checkout) {
@@ -612,7 +650,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 || request.expectedTotalPayable().compareTo(estimate.totalPayable()) != 0) {
             throw checkoutConflict(checkout, CheckoutOrderErrorCode.CONFIRMATION_PRICE_CHANGED, estimate);
         }
-        if ("PAYOS".equals(paymentMethod)) {
+        if ("PAYOS".equals(paymentMethod) && estimate.totalPayable().signum() != 0) {
             QuotePayment.requirePayable(estimate.totalPayable());
         }
     }
@@ -633,7 +671,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         String paymentMethod = order.getPaymentMethod() != null
                 ? order.getPaymentMethod()
                 : (payment != null ? payment.getGateway() : "PAYOS");
-        String paymentStatus = payment != null
+        boolean zeroAmountSettlement = order.getZeroAmountSettledAt() != null;
+        String paymentStatus = zeroAmountSettlement ? "SUCCESS" : payment != null
                 ? payment.getStatus()
                 : ("PAID".equals(order.getStatus()) ? "SUCCESS" : "PENDING");
 
@@ -645,7 +684,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
 
         List<CustomOrderDetailResponseDTO> customDetailDTOs = customs.stream()
-                .map(c -> toCustomDetailDTO(c, paymentStatus))
+                .map(c -> toCustomDetailDTO(c, paymentStatus, zeroAmountSettlement))
                 .toList();
 
         List<CustomOrderResponseDTO> customDTOs = customs.stream().map(c -> CustomOrderResponseDTO.builder()
@@ -697,6 +736,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     .totalAmount(o.getTotalAmount())
                     .commissionFee(o.getCommissionFee())
                     .status(o.getStatus())
+                    .paymentStatus(o.resolveZeroAmountSettledAt() != null ? "SUCCESS" : null)
                     .items(itemDTOs)
                     .createdAt(o.getCreatedAt())
                     .updatedAt(o.getUpdatedAt())
@@ -776,6 +816,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .cancelledByRole(order.getCancelledByRole())
                 .cancelledAt(order.getCancelledAt())
                 .pricingBreakdown(pricing)
+                .paymentEvidence(PaymentEvidenceResponseDTO.forZeroAmountPromo(order.getZeroAmountSettledAt()))
                 .build();
     }
 
@@ -802,7 +843,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
         return OrderPricing.locked(version, customSubtotal, marketSubtotal, itemsSubtotal, order.getDiscountAmount(),
                 order.getShippingFee(), order.getShippingDiscountAmount(), order.getTotalAmount(),
-                order.getAppliedSubscriptionId(), order.getAppliedSubscriptionName(), order.getPriorityProduction());
+                order.getAppliedSubscriptionId(), order.getAppliedSubscriptionName(), order.getPriorityProduction(),
+                order.getZeroAmountSettledAt() != null);
     }
 
     @Override
@@ -984,7 +1026,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             return toDTO(co, null);
         }
 
-        boolean isPaid = "PAID".equals(current)
+        boolean isPaid = co.getZeroAmountSettledAt() != null || "PAID".equals(current)
                 || Set.of("PREPARING", "PRINTING", "SHIPPING", "COMPLETED").contains(current)
                 || (payment != null && "SUCCESS".equalsIgnoreCase(paymentStatus));
 
@@ -1176,9 +1218,12 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
     }
 
-    private CustomOrderDetailResponseDTO toCustomDetailDTO(CustomOrder order, String parentPaymentStatus) {
+    private CustomOrderDetailResponseDTO toCustomDetailDTO(CustomOrder order, String parentPaymentStatus,
+                                                         boolean zeroAmountSettlement) {
         String pMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : "PAYOS";
-        String pStatus = parentPaymentStatus != null ? parentPaymentStatus : "PENDING";
+        Instant zeroAmountSettledAt = order.resolveZeroAmountSettledAt();
+        String pStatus = parentPaymentStatus != null && (!zeroAmountSettlement || zeroAmountSettledAt != null)
+                ? parentPaymentStatus : "PENDING";
         User currentUser = getCurrentUserSafely();
         boolean isAdmin = currentUser != null && currentUser.getRole() == UserRole.ADMIN;
         boolean isOwner = currentUser == null || (order.getBuyer() != null && currentUser.getId().equals(order.getBuyer().getId()));
@@ -1225,6 +1270,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .cancelReason(order.getCancelReason())
                 .cancelledByRole(order.getCancelledByRole())
                 .cancelledAt(order.getCancelledAt())
+                .paymentEvidence(PaymentEvidenceResponseDTO.forZeroAmountPromo(zeroAmountSettledAt))
                 .build();
     }
 

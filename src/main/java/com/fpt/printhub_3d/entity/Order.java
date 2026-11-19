@@ -69,6 +69,11 @@ public class Order {
     @JoinColumn(name = "checkout_order_id")
     private CheckoutOrder checkoutOrder;
 
+    public Instant resolveZeroAmountSettledAt() {
+        return checkoutOrder != null && !"CANCELLED".equalsIgnoreCase(status) && !"EXPIRED".equalsIgnoreCase(status)
+                ? checkoutOrder.getZeroAmountSettledAt() : null;
+    }
+
     @Size(max = 20)
     @Column(name = "payment_method", length = 20)
     private String paymentMethod;

@@ -13,6 +13,7 @@ import java.util.UUID;
  * Khi BE 1 bàn giao bản PaymentEvidenceServiceImpl chính thức ở Đợt 2, Spring sẽ tự động dùng bean của BE 1.
  */
 public interface PaymentEvidenceService {
+    String ZERO_AMOUNT_PROMO = "ZERO_AMOUNT_PROMO";
 
     enum SourceType {
         CHECKOUT_ORDER,

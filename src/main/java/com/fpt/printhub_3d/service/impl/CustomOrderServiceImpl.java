@@ -7,6 +7,7 @@ import com.fpt.printhub_3d.common.exception.CustomPrintErrorCode;
 import com.fpt.printhub_3d.common.exception.VaultErrorCode;
 import com.fpt.printhub_3d.dto.custom_prints.*;
 import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
+import com.fpt.printhub_3d.dto.payment.PaymentEvidenceResponseDTO;
 import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Enumeration.CustomOrderStatus;
@@ -240,7 +241,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         }
 
         String pMethod = o.getPaymentMethod() != null ? o.getPaymentMethod() : (p != null ? p.getGateway() : "PAYOS");
-        String pStatus = p != null ? p.getStatus() : "PENDING";
+        Instant zeroAmountSettledAt = o.resolveZeroAmountSettledAt();
+        String pStatus = zeroAmountSettledAt != null ? "SUCCESS" : p != null ? p.getStatus() : "PENDING";
 
         User current = getCurrentUserSafely();
         boolean isAdmin = current != null && current.getRole() == UserRole.ADMIN;
@@ -297,6 +299,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .cancelledAt(o.getCancelledAt())
                 .quoteVersion(o.getCheckoutOrder() == null ? o.getQuoteVersion() : null)
                 .pricingBreakdown(standalonePricing(o))
+                .paymentEvidence(PaymentEvidenceResponseDTO.forZeroAmountPromo(zeroAmountSettledAt))
                 .build();
     }
 
@@ -318,7 +321,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         BigDecimal subtotal = order.getSubtotalAmount() != null ? order.getSubtotalAmount() : lineTotal;
         return OrderPricing.locked(order.getQuoteVersion(), subtotal, BigDecimal.ZERO, subtotal,
                 order.getDiscountAmount(), order.getShippingFee(), order.getShippingDiscountAmount(), null,
-                order.getAppliedSubscriptionId(), order.getAppliedSubscriptionName(), order.getPriorityProduction());
+                order.getAppliedSubscriptionId(), order.getAppliedSubscriptionName(), order.getPriorityProduction(),
+                order.getZeroAmountSettledAt() != null);
     }
 
     @Override
@@ -518,7 +522,8 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         }
 
         String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : (p != null ? p.getGateway() : "PAYOS");
-        String paymentStatus = p != null ? p.getStatus() : "PENDING";
+        boolean zeroAmountSettlement = order.resolveZeroAmountSettledAt() != null;
+        String paymentStatus = zeroAmountSettlement ? "SUCCESS" : p != null ? p.getStatus() : "PENDING";
 
         String target = orderTransitionPolicy.normalizeTargetStatus(request.getEffectiveTarget());
         if ("ACCEPTED".equals(target)) {
@@ -555,6 +560,9 @@ public class CustomOrderServiceImpl implements CustomOrderService {
 
         if ("ACCEPTED".equals(resolvedStatus)) {
             confirmCustomQuote(order, request);
+            if (order.getZeroAmountSettledAt() != null) {
+                resolvedStatus = "PAID";
+            }
         } else if ("CANCELLED".equals(resolvedStatus)) {
             boolean isAdminActor = user != null && user.getRole() == UserRole.ADMIN;
             String reason = request.getEffectiveCancelReason();
@@ -576,7 +584,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 subscriptionBenefitService.releaseReservedBenefits(
                         SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, order.getId());
             }
-        } else if ("COMPLETED".equals(resolvedStatus) && "COD".equalsIgnoreCase(paymentMethod)) {
+        } else if ("COMPLETED".equals(resolvedStatus) && !zeroAmountSettlement && "COD".equalsIgnoreCase(paymentMethod)) {
             Payment codPay = p != null ? p : new Payment();
             codPay.setCustomOrder(order);
             BigDecimal total = resolveLineTotal(order);
@@ -650,6 +658,12 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         order.setAppliedSubscriptionName(snapshot.appliedSubscriptionName());
         order.setPriorityProduction(snapshot.priorityProduction());
 
+        if (snapshot.fullyDiscounted()) {
+            order.setZeroAmountSettledAt(Instant.now());
+            subscriptionBenefitService.commitAppliedBenefits(
+                    SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, order.getId());
+            return;
+        }
         Payment payment = new Payment();
         payment.setCustomOrder(order);
         QuotePayment.prepare(paymentRepository, payment, snapshot.finalTotal());
@@ -660,7 +674,9 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 || request.expectedTotalPayable().compareTo(estimate.totalPayable()) != 0) {
             throw customPricingConflict(order, CustomPrintErrorCode.CONFIRMATION_PRICE_CHANGED, estimate);
         }
-        QuotePayment.requirePayable(estimate.totalPayable());
+        if (estimate.totalPayable().signum() != 0) {
+            QuotePayment.requirePayable(estimate.totalPayable());
+        }
     }
 
     private ApiException customPricingConflict(CustomOrder order, CustomPrintErrorCode error,
@@ -677,6 +693,12 @@ public class CustomOrderServiceImpl implements CustomOrderService {
 
         if (!"COMPLETED".equals(order.getStatus())) {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Yêu cầu in chưa ở trạng thái COMPLETED");
+        }
+
+        if (order.resolveZeroAmountSettledAt() != null) {
+            User buyer = order.getBuyer();
+            return RewardCompletionResponseDTO.forZeroAmountPromo(
+                    order.getId(), buyer.getId(), buyer.getFullName(), buyer.getRewardPoints());
         }
 
         Payment payment = paymentRepository.findByCustomOrderId(customOrderId).orElse(null);

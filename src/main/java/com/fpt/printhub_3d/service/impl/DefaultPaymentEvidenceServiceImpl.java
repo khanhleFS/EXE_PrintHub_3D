@@ -73,7 +73,11 @@ public class DefaultPaymentEvidenceServiceImpl implements PaymentEvidenceService
                 ));
             }
         }
-        return Optional.empty();
+        return switch (sourceType) {
+            case CHECKOUT_ORDER -> checkoutOrderRepository.findById(sourceId).flatMap(this::checkoutPromoEvidence);
+            case ORDER -> orderRepository.findById(sourceId).flatMap(this::marketplacePromoEvidence);
+            case CUSTOM_ORDER -> customOrderRepository.findById(sourceId).flatMap(this::customPromoEvidence);
+        };
     }
 
     @Override
@@ -99,8 +103,7 @@ public class DefaultPaymentEvidenceServiceImpl implements PaymentEvidenceService
 
         Payment codPayment = existingOpt.orElseGet(Payment::new);
         BigDecimal resolvedAmount = collectedAmount != null ? collectedAmount : BigDecimal.ZERO;
-
-        switch (sourceType) {
+        Optional<PaymentEvidence> promoEvidence = switch (sourceType) {
             case CHECKOUT_ORDER -> {
                 CheckoutOrder co = checkoutOrderRepository.findLockedById(sourceId)
                         .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy CheckoutOrder " + sourceId));
@@ -108,6 +111,7 @@ public class DefaultPaymentEvidenceServiceImpl implements PaymentEvidenceService
                 if (collectedAmount == null && co.getTotalAmount() != null) {
                     resolvedAmount = co.getTotalAmount();
                 }
+                yield checkoutPromoEvidence(co);
             }
             case ORDER -> {
                 Order order = orderRepository.findLockedById(sourceId)
@@ -116,6 +120,7 @@ public class DefaultPaymentEvidenceServiceImpl implements PaymentEvidenceService
                 if (collectedAmount == null && order.getTotalAmount() != null) {
                     resolvedAmount = order.getTotalAmount();
                 }
+                yield marketplacePromoEvidence(order);
             }
             case CUSTOM_ORDER -> {
                 CustomOrder custom = customOrderRepository.findLockedById(sourceId)
@@ -124,9 +129,16 @@ public class DefaultPaymentEvidenceServiceImpl implements PaymentEvidenceService
                 if (collectedAmount == null && custom.getQuotedPrice() != null) {
                     resolvedAmount = custom.getQuotedPrice();
                 }
+                yield customPromoEvidence(custom);
             }
-        }
+        };
 
+        if (promoEvidence.isPresent()) {
+            if (collectedAmount != null && collectedAmount.signum() != 0) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT, "Đơn đã được ưu đãi toàn bộ, số tiền phải thu là 0đ.");
+            }
+            return promoEvidence.get();
+        }
         codPayment.setAmount(resolvedAmount);
         codPayment.setGateway("COD");
         codPayment.setStatus("SUCCESS");
@@ -146,6 +158,29 @@ public class DefaultPaymentEvidenceServiceImpl implements PaymentEvidenceService
                 saved.getPaidAt(),
                 false
         );
+    }
+
+    private Optional<PaymentEvidence> checkoutPromoEvidence(CheckoutOrder checkout) {
+        return zeroAmountEvidence(SourceType.CHECKOUT_ORDER, checkout.getId(), checkout.getZeroAmountSettledAt());
+    }
+
+    private Optional<PaymentEvidence> marketplacePromoEvidence(Order order) {
+        return order.resolveZeroAmountSettledAt() != null ? checkoutPromoEvidence(order.getCheckoutOrder())
+                : Optional.empty();
+    }
+
+    private Optional<PaymentEvidence> customPromoEvidence(CustomOrder custom) {
+        if (custom.resolveZeroAmountSettledAt() == null) {
+            return Optional.empty();
+        }
+        return custom.getCheckoutOrder() != null ? checkoutPromoEvidence(custom.getCheckoutOrder())
+                : zeroAmountEvidence(SourceType.CUSTOM_ORDER, custom.getId(), custom.getZeroAmountSettledAt());
+    }
+
+    private Optional<PaymentEvidence> zeroAmountEvidence(SourceType sourceType, UUID sourceId, Instant settledAt) {
+        return settledAt == null ? Optional.empty()
+                : Optional.of(new PaymentEvidence(null, sourceType, sourceId, ZERO_AMOUNT_PROMO,
+                        BigDecimal.ZERO, settledAt, true));
     }
 
     private Optional<Payment> findPayment(SourceType sourceType, UUID sourceId) {

@@ -5,6 +5,7 @@ import com.fpt.printhub_3d.common.exception.ApiException;
 import com.fpt.printhub_3d.common.exception.GlobalExceptionHandler;
 import com.fpt.printhub_3d.dto.cart.CartItemRequestDTO;
 import com.fpt.printhub_3d.dto.cart.CartUpdateRequestDTO;
+import com.fpt.printhub_3d.dto.checkout.AdminCheckoutOrderStatusRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderBatchQuoteRequestDTO;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderBatchQuoteRequestDTO.ItemQuote;
 import com.fpt.printhub_3d.dto.checkout.CheckoutOrderConfirmRequestDTO;
@@ -14,13 +15,21 @@ import com.fpt.printhub_3d.dto.custom_prints.CustomOrderStatusRequestDTO;
 import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO;
 import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO.PricingStage;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
+import com.fpt.printhub_3d.dto.review.CustomOrderReviewRequestDTO;
 import com.fpt.printhub_3d.dto.subscription.BenefitPreviewResponseDTO.BenefitStatus;
 import com.fpt.printhub_3d.entity.*;
+import com.fpt.printhub_3d.entity.Enumeration.OrderRewardStatus;
+import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.repository.*;
 import com.fpt.printhub_3d.service.impl.CartServiceImpl;
 import com.fpt.printhub_3d.service.impl.CheckoutOrderServiceImpl;
+import com.fpt.printhub_3d.service.impl.CustomOrderReviewServiceImpl;
 import com.fpt.printhub_3d.service.impl.CustomOrderServiceImpl;
+import com.fpt.printhub_3d.service.impl.DashboardServiceImpl;
+import com.fpt.printhub_3d.service.impl.DefaultPaymentEvidenceServiceImpl;
+import com.fpt.printhub_3d.service.impl.OrderRewardServiceImpl;
 import com.fpt.printhub_3d.service.impl.PaymentServiceImpl;
+import com.fpt.printhub_3d.service.impl.PointWalletLockHelper;
 import com.fpt.printhub_3d.service.impl.SubscriptionBenefitServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -146,6 +155,231 @@ class CustomPricingAndPaymentFlowTest {
         verify(userSubscriptionRepository, never()).findLockedActiveSubscriptionsByUser(any());
         verifyNoInteractions(usageLogRepository, mockPaymentService);
         verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void zeroAmountCheckoutSettlesOnceAndCompletesWithoutAnyPayment() {
+        CheckoutOrder checkout = stubQuotedCustomCheckout();
+        CustomOrder design = customLine("QUOTED", "100000");
+        design.setCheckoutOrder(checkout);
+        when(customOrderRepository.findByCheckoutOrderId(checkout.getId())).thenReturn(List.of(design));
+        when(customOrderRepository.findById(design.getId())).thenReturn(Optional.of(design));
+        UserSubscription subscription = stubFullPromotion("CUSTOM");
+        List<SubscriptionUsageLog> usage = trackBenefitUsage("CHECKOUT_ORDER", checkout.getId());
+        var request = new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", BigDecimal.ZERO);
+
+        var estimate = checkoutOrderService.getCheckoutOrder(testUser, checkout.getId()).pricingBreakdown();
+        assertEquals(BigDecimal.ZERO, estimate.totalPayable());
+        assertFalse(estimate.zeroAmountSettlement());
+        assertEquals(0, subscription.getFreeShippingUsesUsed());
+
+        var confirmed = checkoutOrderService.confirmCheckoutOrder(testUser, checkout.getId(), request);
+        var replay = checkoutOrderService.confirmCheckoutOrder(testUser, checkout.getId(), request);
+        assertEquals("PAID", confirmed.status());
+        assertEquals("PAID", design.getStatus());
+        assertEquals(confirmed.paymentEvidence(), replay.paymentEvidence());
+        assertEquals(confirmed.paymentEvidence(), confirmed.customOrderDetails().getFirst().paymentEvidence());
+        assertEquals("ZERO_AMOUNT_PROMO", replay.paymentEvidence().status());
+        assertEquals(checkout.getZeroAmountSettledAt(), replay.paymentEvidence().paidAt());
+        assertTrue(replay.pricingBreakdown().zeroAmountSettlement());
+        assertEquals(BigDecimal.ZERO, replay.totalAmount());
+        assertNull(replay.paymentLinkUrl());
+        assertNull(checkout.getPaymentExpiresAt());
+        assertPromoAppliedOnce(subscription, usage, "CHECKOUT_ORDER", checkout.getId());
+
+        User admin = new User();
+        admin.setId(UUID.randomUUID());
+        admin.setRole(UserRole.ADMIN);
+        for (String status : List.of("PREPARING", "PRINTING", "SHIPPING", "COMPLETED")) {
+            var action = AdminCheckoutOrderStatusRequestDTO.builder().status(status).build();
+            assertEquals(status, checkoutOrderService.updateAdminCheckoutOrderStatus(admin, checkout.getId(), action).status());
+        }
+        assertEquals("COMPLETED", design.getStatus());
+
+        var evidenceService = new DefaultPaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
+                orderRepository, customOrderRepository, null);
+        var evidence = evidenceService.findSettledEvidence(PaymentEvidenceService.SourceType.CUSTOM_ORDER, design.getId()).orElseThrow();
+        assertEquals(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, evidence.sourceType());
+        assertEquals(checkout.getId(), evidence.sourceId());
+        assertEquals(checkout.getZeroAmountSettledAt(), evidence.paidAt());
+        assertTrue(evidence.zeroAmountPromo());
+        assertNull(evidence.paymentId());
+        assertEquals(evidence, evidenceService.recordCodCollection(
+                PaymentEvidenceService.SourceType.CHECKOUT_ORDER, checkout.getId(), BigDecimal.ZERO, admin));
+
+        var link = CreatePaymentLinkRequestDTO.builder().orderId(checkout.getId()).orderType("CHECKOUT_ORDER").build();
+        assertThrows(ResponseStatusException.class, () -> paymentService.createPaymentLink(testUser.getId(), link));
+        verify(paymentRepository, never()).save(any());
+        verifyNoInteractions(payOS);
+    }
+
+    @Test
+    void standaloneZeroAmountOrderCanBeReviewedAndEvaluatesZeroPoints() {
+        UserSubscription subscription = stubFullPromotion("CUSTOM");
+        CustomOrder custom = customLine("QUOTED", "100000");
+        custom.setQuoteVersion(3L);
+        when(customOrderRepository.findLockedById(custom.getId())).thenReturn(Optional.of(custom));
+        when(customOrderRepository.findById(custom.getId())).thenReturn(Optional.of(custom));
+        var usage = trackBenefitUsage("CUSTOM_ORDER", custom.getId());
+        var service = new CustomOrderServiceImpl(customOrderRepository, null, paymentRepository,
+                null, notificationService, null, new OrderTransitionPolicy(), null, null,
+                checkoutOrderRepository, orderRepository, storeSettingRepository, benefitService);
+        var request = CustomOrderStatusRequestDTO.builder().status("ACCEPTED").paymentMethod("PAYOS")
+                .quoteVersion(3L).expectedTotalPayable(BigDecimal.ZERO).build();
+
+        service.updateCustomOrderStatus(custom.getId(), request, testUser);
+        var firstSettlement = custom.getZeroAmountSettledAt();
+        service.updateCustomOrderStatus(custom.getId(), request, testUser);
+        var detail = service.getCustomOrderDetail(custom.getId(), testUser);
+        assertEquals("PAID", detail.status());
+        assertEquals("ZERO_AMOUNT_PROMO", detail.paymentEvidence().status());
+        assertEquals(firstSettlement, detail.paymentEvidence().paidAt());
+        assertTrue(detail.pricingBreakdown().zeroAmountSettlement());
+        assertPromoAppliedOnce(subscription, usage, "CUSTOM_ORDER", custom.getId());
+
+        User admin = new User();
+        admin.setId(UUID.randomUUID());
+        admin.setRole(UserRole.ADMIN);
+        for (String status : List.of("PREPARING", "PRINTING", "SHIPPING", "COMPLETED")) {
+            var action = CustomOrderStatusRequestDTO.builder().status(status).build();
+            service.updateCustomOrderStatus(custom.getId(), action, admin);
+        }
+        assertEquals("COMPLETED", custom.getStatus());
+        assertEquals(0, service.completeRewards(custom.getId()).rewardPointsEarned());
+
+        var evidenceService = new DefaultPaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
+                orderRepository, customOrderRepository, null);
+        var evidence = evidenceService.findSettledEvidence(PaymentEvidenceService.SourceType.CUSTOM_ORDER, custom.getId())
+                .orElseThrow();
+        assertNull(evidence.paymentId());
+        assertTrue(evidence.zeroAmountPromo());
+        assertEquals(firstSettlement, evidence.paidAt());
+
+        OrderRewardRecordRepository rewards = mock(OrderRewardRecordRepository.class);
+        PointWalletRepository wallets = mock(PointWalletRepository.class);
+        PointTransactionRepository points = mock(PointTransactionRepository.class);
+        PointWalletLockHelper walletLock = mock(PointWalletLockHelper.class);
+        when(walletLock.lockOrCreateWallet(eq(testUser), any())).thenReturn(PointWallet.builder().balance(20).build());
+        var rewardService = new OrderRewardServiceImpl(checkoutOrderRepository, orderRepository,
+                customOrderRepository, rewards, wallets, points, walletLock, evidenceService, null);
+        var reward = rewardService.processCompletionReward(PaymentEvidenceService.SourceType.CUSTOM_ORDER, custom.getId());
+        assertEquals(OrderRewardStatus.EVALUATED_ZERO, reward.status());
+        verifyNoInteractions(points, wallets);
+
+        CustomOrderReviewRepository reviews = mock(CustomOrderReviewRepository.class);
+        when(reviews.save(any(CustomOrderReview.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        var reviewService = new CustomOrderReviewServiceImpl(customOrderRepository, reviews, null);
+        var review = reviewService.upsertCustomOrderReview(custom.getId(),
+                new CustomOrderReviewRequestDTO((short) 5, "In đẹp", List.of()), testUser);
+        assertEquals((short) 5, review.rating());
+
+        when(customOrderRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(custom));
+        var dashboard = new DashboardServiceImpl(mock(OrderService.class), service, mock(DisputeRepository.class),
+                userRepository).getDashboard(admin, true);
+        assertEquals(BigDecimal.ZERO, dashboard.totalRevenue());
+        verify(paymentRepository, never()).save(any());
+        verifyNoInteractions(payOS);
+    }
+
+    @Test
+    void lostFreeShippingRequiresReconfirmationInsteadOfSettlingZero() {
+        CheckoutOrder checkout = stubQuotedCustomCheckout();
+        UserSubscription subscription = stubFullPromotion("CUSTOM");
+        subscription.setFreeShippingUsesUsed(1);
+
+        ApiException error = assertThrows(ApiException.class, () -> checkoutOrderService.confirmCheckoutOrder(
+                testUser, checkout.getId(), new CheckoutOrderConfirmRequestDTO(2L, "PAYOS", BigDecimal.ZERO)));
+        assertEquals("checkout.price_changed", error.getErrorCode().getErrorKey());
+        var pricing = (PricingBreakdownDTO) ((Map<?, ?>) error.getResult()).get("pricingBreakdown");
+        assertEquals(new BigDecimal("30000"), pricing.totalPayable());
+        assertNull(checkout.getZeroAmountSettledAt());
+        assertEquals("QUOTED", checkout.getStatus());
+        verify(usageLogRepository, never()).saveAll(any());
+        verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void marketplaceCheckoutAppliesZeroPromotionAndConfirmsInventoryOnCreation() {
+        UUID checkoutId = UUID.randomUUID();
+        UUID childOrderId = UUID.randomUUID();
+        Product product = new Product();
+        product.setId(UUID.randomUUID());
+        product.setPrice(new BigDecimal("100000"));
+        product.setSeller(testUser);
+        CartItem line = new CartItem();
+        line.setId(1L);
+        line.setClientLineId(UUID.randomUUID());
+        line.setCart(testCart);
+        line.setQuantity(1);
+        line.setProduct(product);
+        when(cartRepository.findByUserId(testUser.getId())).thenReturn(Optional.of(testCart));
+        when(cartItemRepository.findByCartIdOrderByIdAsc(testCart.getId())).thenReturn(List.of(line));
+        when(checkoutOrderRepository.save(any(CheckoutOrder.class))).thenAnswer(invocation -> {
+            CheckoutOrder checkout = invocation.getArgument(0);
+            checkout.setId(checkoutId);
+            return checkout;
+        });
+        List<Order> children = new ArrayList<>();
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            order.setId(childOrderId);
+            children.add(order);
+            return order;
+        });
+        when(orderRepository.findByCheckoutOrderId(checkoutId)).thenReturn(children);
+        UserSubscription subscription = stubFullPromotion("MARKETPLACE");
+        var usage = trackBenefitUsage("CHECKOUT_ORDER", checkoutId);
+
+        var request = CheckoutOrderCreateRequestDTO.builder()
+                .selectedLineIds(List.of(line.getClientLineId().toString()))
+                .paymentMethod("COD").shippingAddress("Địa chỉ kiểm thử").build();
+        var response = checkoutOrderService.createCheckoutOrder(testUser, request);
+
+        assertEquals("PAID", response.status());
+        assertEquals("ZERO_AMOUNT_PROMO", response.paymentEvidence().status());
+        assertTrue(response.pricingBreakdown().zeroAmountSettlement());
+        assertEquals(BigDecimal.ZERO, response.totalAmount());
+        assertEquals("PAID", children.getFirst().getStatus());
+        assertEquals(BigDecimal.ZERO, children.getFirst().getTotalAmount());
+        assertPromoAppliedOnce(subscription, usage, "CHECKOUT_ORDER", checkoutId);
+        verify(mockInventoryService).reserveForOrder(childOrderId, Map.of(product.getId(), 1),
+                "CHECKOUT_ORDER_" + checkoutId, null);
+        verify(mockInventoryService).confirmReservation(childOrderId);
+        verify(paymentRepository, never()).save(any());
+        verifyNoInteractions(payOS);
+    }
+
+    private UserSubscription stubFullPromotion(String scope) {
+        UserSubscription subscription = stubBenefitPlan("""
+                {"discount":{"percent":100,"appliesTo":["%s"]},
+                 "shipping":{"freeUsesPerTerm":1,"maxDiscountAmountPerUse":30000,"appliesTo":["%s"]}}
+                """.formatted(scope, scope));
+        when(userSubscriptionRepository.findLockedActiveSubscriptionsByUser(testUser)).thenReturn(List.of(subscription));
+        return subscription;
+    }
+
+    private List<SubscriptionUsageLog> trackBenefitUsage(String type, UUID id) {
+        List<SubscriptionUsageLog> usage = new ArrayList<>();
+        when(usageLogRepository.saveAll(any())).thenAnswer(invocation -> {
+            Iterable<SubscriptionUsageLog> entries = invocation.getArgument(0);
+            entries.forEach(entry -> {
+                if (!usage.contains(entry)) {
+                    usage.add(entry);
+                }
+            });
+            return usage;
+        });
+        when(usageLogRepository.findByTargetTypeAndTargetIdAndStatus(type, id, "RESERVED"))
+                .thenAnswer(invocation -> usage.stream().filter(entry -> "RESERVED".equals(entry.getStatus())).toList());
+        return usage;
+    }
+
+    private void assertPromoAppliedOnce(UserSubscription subscription, List<SubscriptionUsageLog> usage,
+                                        String type, UUID id) {
+        assertEquals(1, subscription.getFreeShippingUsesUsed());
+        assertEquals(2, usage.size());
+        assertTrue(usage.stream().allMatch(entry -> "APPLIED".equals(entry.getStatus())));
+        verify(usageLogRepository).findByTargetTypeAndTargetIdAndStatus(type, id, "RESERVED");
     }
 
     @Test

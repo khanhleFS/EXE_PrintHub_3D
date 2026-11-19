@@ -18,6 +18,8 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.fpt.printhub_3d.service.PaymentEvidenceService.ZERO_AMOUNT_PROMO;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -77,7 +79,8 @@ public class DashboardServiceImpl implements DashboardService {
                 customInProduction++;
             }
 
-            if ("PAID".equals(st) || "COMPLETED".equals(st)) {
+            boolean zeroAmountPromo = c.paymentEvidence() != null && ZERO_AMOUNT_PROMO.equals(c.paymentEvidence().status());
+            if (!zeroAmountPromo && ("PAID".equals(st) || "COMPLETED".equals(st))) {
                 if (c.quotedPrice() != null) {
                     paid = paid.add(c.quotedPrice());
                 }

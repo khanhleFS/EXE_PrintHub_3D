@@ -34,6 +34,11 @@ public interface SubscriptionBenefitService {
             BigDecimal finalTotal,
             boolean priorityProduction
     ) {
+        public boolean fullyDiscounted() {
+            return appliedSubscriptionId != null && finalTotal.signum() == 0
+                    && (discountAmount.signum() > 0 || shippingDiscountAmount.signum() > 0);
+        }
+
         public static AppliedBenefitSnapshot empty(BigDecimal itemsSubtotal, BigDecimal baseShippingFee) {
             BigDecimal sub = itemsSubtotal != null ? itemsSubtotal.max(BigDecimal.ZERO) : BigDecimal.ZERO;
             BigDecimal ship = baseShippingFee != null ? baseShippingFee.max(BigDecimal.ZERO) : BigDecimal.ZERO;
