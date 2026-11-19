@@ -184,6 +184,14 @@ Mốc này nằm ở cột nullable `zero_amount_settled_at` của `checkout_ord
 }
 ```
 
+### Thu COD và tiền chờ đối soát
+
+Admin gửi `{"status":"COMPLETED","codCollectedAmount":140000}` trên API chuyển trạng thái của đơn COD độc lập hoặc checkout cha. Bỏ trường `codCollectedAmount` thì thao tác chỉ đánh dấu giao xong. Admin có thể gửi lại `COMPLETED` kèm số tiền sau đó. Số tiền COD phải dương và bằng số phải thu đã chốt. Gửi lặp đúng số tiền trả lại cùng chứng từ. Chứng từ của mọi dòng thuộc checkout được tra theo checkout cha.
+
+Webhook và `verify` dùng số tiền PayOS xác nhận đã nhận theo mã giao dịch. Số phải thu lúc tạo link vẫn nằm ở `payments.amount`. Khoản chưa đủ căn cứ quyết toán lưu riêng ở `reconciliation_amount`, `reconciliation_received_at` và `reconciliation_reason`. Với khoản về muộn hoặc lệch trước quyết toán, `status` là `PENDING_RECONCILIATION` và `paidAt` trống. Khoản thu thêm sau khi đã quyết toán giữ chứng từ gốc ở `SUCCESS` và chỉ phần vượt nằm trong các trường đối soát.
+
+Checkout và chi tiết custom trả thông tin chứng từ trong `paymentEvidence`. API `verify` trả thêm `reconciliationAmount`, `reconciliationReceivedAt` và `reconciliationReason` khi cần. Mốc nhận tiền ưu tiên dữ liệu giao dịch của PayOS. Khi PayOS không cung cấp thời điểm đọc được, backend dùng mốc quan sát khoản thu.
+
 ## Hợp đồng cho BE2
 
 ### Chứng từ và mốc hoàn tất

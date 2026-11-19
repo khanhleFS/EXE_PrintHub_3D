@@ -33,6 +33,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     List<Order> findByCheckoutOrderId(UUID checkoutOrderId);
 
+    @Query("select co.id from Order o join o.checkoutOrder co where o.id = :id")
+    Optional<UUID> findCheckoutId(@Param("id") UUID id);
+
     interface ExpiryCandidate {
         UUID getId();
         UUID getCheckoutId();

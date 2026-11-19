@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.service.impl;
 
 import com.fpt.printhub_3d.common.exception.ApiException;
 import com.fpt.printhub_3d.common.exception.CommonErrorCode;
+import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.exception.OrderErrorCode;
 import com.fpt.printhub_3d.dto.order.*;
 import com.fpt.printhub_3d.entity.*;
@@ -10,6 +11,7 @@ import com.fpt.printhub_3d.repository.*;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
+import com.fpt.printhub_3d.service.PaymentEvidenceService;
 import lombok.RequiredArgsConstructor;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +44,9 @@ public class OrderServiceImpl implements OrderService {
     private final com.fpt.printhub_3d.service.InventoryService inventoryService;
     private final com.fpt.printhub_3d.service.OrderTransitionPolicy orderTransitionPolicy;
     private final SubscriptionBenefitService subscriptionBenefitService;
+
+    @Autowired
+    private PaymentEvidenceService paymentEvidenceService;
 
     @Autowired
     public OrderServiceImpl(
@@ -334,10 +339,7 @@ public class OrderServiceImpl implements OrderService {
                     order.getId(), buyer.getId(), buyer.getFullName(), buyer.getRewardPoints());
         }
 
-        Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
-        if (payment == null && order.getCheckoutOrder() != null) {
-            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
-        }
+        Payment payment = findOrderPayment(order);
         if (payment == null || !"SUCCESS".equalsIgnoreCase(payment.getStatus())) {
             throw new ApiException(OrderErrorCode.PAYMENT_REQUIRED, "Đơn hàng chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
         }
@@ -404,10 +406,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private OrderResponseDTO mapOrderToDTO(Order order, ShippingInfo shippingInfo, List<OrderItem> items) {
-        Payment payment = paymentRepository.findByOrderId(order.getId()).orElse(null);
-        if (payment == null && order.getCheckoutOrder() != null) {
-            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
-        }
+        Payment payment = findOrderPayment(order);
 
         String pMethod = order.getPaymentMethod() != null ? order.getPaymentMethod()
                 : (order.getCheckoutOrder() != null && order.getCheckoutOrder().getPaymentMethod() != null
@@ -555,14 +554,17 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public void updateOrderStatus(UUID id, String nextStatus, User currentUser) {
-        Order order = orderRepository.findById(id)
+        updateOrderStatus(id, nextStatus, currentUser, null);
+    }
+
+    @Override
+    @Transactional
+    public void updateOrderStatus(UUID id, String nextStatus, User currentUser, BigDecimal codCollectedAmount) {
+        Order order = orderRepository.findLockedById(id)
                 .orElseThrow(() -> new ApiException(OrderErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn hàng"));
 
         String currentStatus = order.getStatus();
-        Payment payment = paymentRepository.findByOrderId(id).orElse(null);
-        if (payment == null && order.getCheckoutOrder() != null) {
-            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
-        }
+        Payment payment = findOrderPayment(order);
 
         String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod()
                 : (order.getCheckoutOrder() != null && order.getCheckoutOrder().getPaymentMethod() != null
@@ -571,6 +573,21 @@ public class OrderServiceImpl implements OrderService {
         boolean zeroAmountSettlement = order.resolveZeroAmountSettledAt() != null;
         String paymentStatus = zeroAmountSettlement ? "SUCCESS" : payment != null ? payment.getStatus()
                 : ("COD".equalsIgnoreCase(paymentMethod) ? "UNPAID" : "PENDING");
+
+        boolean cod = "COD".equalsIgnoreCase(paymentMethod);
+        if (codCollectedAmount != null) {
+            if (!cod || order.getCheckoutOrder() != null
+                    || !"COMPLETED".equals(orderTransitionPolicy.normalizeTargetStatus(nextStatus))) {
+                throw new ApiException(CommonErrorCode.INVALID_INPUT,
+                        "Xác nhận tiền COD khi hoàn tất đúng cấp đơn thu tiền.");
+            }
+            if ("COMPLETED".equals(currentStatus)) {
+                paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.ORDER, id,
+                        codCollectedAmount, currentUser);
+                completeRewards(id);
+                return;
+            }
+        }
 
         String resolvedStatus = orderTransitionPolicy.validateAndResolveNextStatus(
                 OrderTransitionPolicy.OrderType.MARKETPLACE,
@@ -583,6 +600,9 @@ public class OrderServiceImpl implements OrderService {
         );
 
         if ("CANCELLED".equals(resolvedStatus)) {
+            if (payment != null && Payment.PENDING_RECONCILIATION.equals(payment.getStatus())) {
+                throw new ApiException(CommonErrorCode.CONFLICT, "Giao dịch đang chờ đối soát.");
+            }
             if (payment != null && "PAYOS".equalsIgnoreCase(payment.getGateway()) && payment.getTransactionId() != null) {
                 payment.setStatus("CANCELLED");
                 payment.setUpdatedAt(Instant.now());
@@ -598,17 +618,6 @@ public class OrderServiceImpl implements OrderService {
             if ("PREPARING".equals(resolvedStatus) || "PRINTING".equals(resolvedStatus)) {
                 inventoryService.confirmReservation(order.getId());
             }
-            if ("COMPLETED".equals(resolvedStatus) && !zeroAmountSettlement && "COD".equalsIgnoreCase(paymentMethod)) {
-                Payment codPayment = payment != null ? payment : new Payment();
-                codPayment.setOrder(order);
-                codPayment.setAmount(order.getTotalAmount() != null ? order.getTotalAmount() : BigDecimal.ZERO);
-                codPayment.setGateway("COD");
-                codPayment.setStatus("SUCCESS");
-                codPayment.setPaidAt(Instant.now());
-                if (codPayment.getCreatedAt() == null) codPayment.setCreatedAt(Instant.now());
-                codPayment.setUpdatedAt(Instant.now());
-                paymentRepository.save(codPayment);
-            }
         }
 
         order.setStatus(resolvedStatus);
@@ -616,7 +625,13 @@ public class OrderServiceImpl implements OrderService {
         orderRepository.save(order);
 
         if ("COMPLETED".equals(resolvedStatus)) {
-            completeRewards(id);
+            if (codCollectedAmount != null) {
+                paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.ORDER, id,
+                        codCollectedAmount, currentUser);
+            }
+            if (!cod || zeroAmountSettlement || codCollectedAmount != null || "SUCCESS".equals(paymentStatus)) {
+                completeRewards(id);
+            }
         }
 
         notificationService.sendNotification(order.getBuyer(),
@@ -624,5 +639,11 @@ public class OrderServiceImpl implements OrderService {
                 "Đơn hàng " + id + " đã chuyển sang trạng thái: " + resolvedStatus,
                 "ORDER",
                 "/orders");
+    }
+
+    private Payment findOrderPayment(Order order) {
+        return order.getCheckoutOrder() != null
+                ? paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null)
+                : paymentRepository.findByOrderId(order.getId()).orElse(null);
     }
 }

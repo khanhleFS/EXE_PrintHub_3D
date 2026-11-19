@@ -27,6 +27,7 @@ import com.fpt.printhub_3d.service.InventoryService;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import com.fpt.printhub_3d.service.PaymentService;
+import com.fpt.printhub_3d.service.PaymentEvidenceService;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService.BenefitScope;
 import lombok.extern.slf4j.Slf4j;
@@ -69,6 +70,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     private final CloudinaryService cloudinaryService;
     private final StoreSettingRepository storeSettingRepository;
     private final SubscriptionBenefitService subscriptionBenefitService;
+
+    @Autowired
+    private PaymentEvidenceService paymentEvidenceService;
+
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
     @Autowired
@@ -684,7 +689,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
 
         List<CustomOrderDetailResponseDTO> customDetailDTOs = customs.stream()
-                .map(c -> toCustomDetailDTO(c, paymentStatus, zeroAmountSettlement))
+                .map(c -> toCustomDetailDTO(c, paymentStatus, payment, zeroAmountSettlement))
                 .toList();
 
         List<CustomOrderResponseDTO> customDTOs = customs.stream().map(c -> CustomOrderResponseDTO.builder()
@@ -816,7 +821,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .cancelledByRole(order.getCancelledByRole())
                 .cancelledAt(order.getCancelledAt())
                 .pricingBreakdown(pricing)
-                .paymentEvidence(PaymentEvidenceResponseDTO.forZeroAmountPromo(order.getZeroAmountSettledAt()))
+                .paymentEvidence(PaymentEvidenceResponseDTO.from(payment, order.getZeroAmountSettledAt()))
                 .build();
     }
 
@@ -1021,8 +1026,16 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
         String nextStatus = normalizeCheckoutTarget(request.getEffectiveTarget());
         String current = co.getStatus() != null ? co.getStatus().toUpperCase() : "PENDING_QUOTE";
+        BigDecimal codCollectedAmount = request.codCollectedAmount();
+        if (codCollectedAmount != null && (!"COD".equalsIgnoreCase(paymentMethod) || !"COMPLETED".equals(nextStatus))) {
+            throw new ApiException(CommonErrorCode.INVALID_INPUT, "Chỉ xác nhận thu COD khi hoàn tất đơn COD.");
+        }
 
         if (current.equals(nextStatus)) {
+            if (codCollectedAmount != null) {
+                paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, id,
+                        codCollectedAmount, admin);
+            }
             return toDTO(co, null);
         }
 
@@ -1031,6 +1044,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 || (payment != null && "SUCCESS".equalsIgnoreCase(paymentStatus));
 
         if ("CANCELLED".equals(nextStatus)) {
+            if (payment != null && Payment.PENDING_RECONCILIATION.equals(payment.getStatus())) {
+                throw new ApiException(CommonErrorCode.CONFLICT, "Giao dịch đang chờ đối soát.");
+            }
             if (isPaid) {
                 throw new ApiException(CheckoutOrderErrorCode.CANNOT_CANCEL_CONFIRMED_ORDER);
             }
@@ -1100,6 +1116,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     o.setUpdatedAt(Instant.now());
                     orderRepository.save(o);
                 }
+            }
+            if (codCollectedAmount != null) {
+                paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, id,
+                        codCollectedAmount, admin);
             }
         }
 
@@ -1219,7 +1239,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     }
 
     private CustomOrderDetailResponseDTO toCustomDetailDTO(CustomOrder order, String parentPaymentStatus,
-                                                         boolean zeroAmountSettlement) {
+                                                         Payment parentPayment, boolean zeroAmountSettlement) {
         String pMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : "PAYOS";
         Instant zeroAmountSettledAt = order.resolveZeroAmountSettledAt();
         String pStatus = parentPaymentStatus != null && (!zeroAmountSettlement || zeroAmountSettledAt != null)
@@ -1270,7 +1290,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                 .cancelReason(order.getCancelReason())
                 .cancelledByRole(order.getCancelledByRole())
                 .cancelledAt(order.getCancelledAt())
-                .paymentEvidence(PaymentEvidenceResponseDTO.forZeroAmountPromo(zeroAmountSettledAt))
+                .paymentEvidence(PaymentEvidenceResponseDTO.from(parentPayment, zeroAmountSettledAt))
                 .build();
     }
 
@@ -1349,6 +1369,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
     ) {
         String st = order.getStatus() != null ? order.getStatus().toUpperCase() : "PENDING_QUOTE";
         if ("MARKETPLACE".equals(orderType)) {
+            if (isAdmin && "COD".equalsIgnoreCase(paymentMethod) && Set.of("CONFIRMED", "PROCESSING").contains(st)) {
+                return new OrderTransitionPolicy.TransitionEvaluation(List.of("START_PREPARATION", "CANCEL"), List.of());
+            }
             return orderTransitionPolicy.evaluateActions(
                     OrderTransitionPolicy.OrderType.MARKETPLACE,
                     st,

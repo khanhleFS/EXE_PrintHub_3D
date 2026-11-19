@@ -1,7 +1,10 @@
 package com.fpt.printhub_3d.dto.order;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Builder;
+
+import java.math.BigDecimal;
 
 @Builder
 @Schema(description = "Yêu cầu cập nhật trạng thái đơn hàng")
@@ -16,8 +19,15 @@ public record OrderStatusUpdateRequestDTO(
         String idempotencyKey,
 
         @Schema(description = "Phương thức thanh toán nếu có cập nhật")
-        String paymentMethod
+        String paymentMethod,
+
+        @PositiveOrZero
+        BigDecimal codCollectedAmount
 ) {
+    public OrderStatusUpdateRequestDTO(String status, String action, String idempotencyKey, String paymentMethod) {
+        this(status, action, idempotencyKey, paymentMethod, null);
+    }
+
     public String getEffectiveTarget() {
         if (action != null && !action.isBlank()) {
             return action;

@@ -378,9 +378,9 @@ class SubscriptionCashPurchaseFlowTest {
         when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> inv.getArgument(0));
 
         // Invoke private settle via reflection
-        Method settleMethod = PaymentServiceImpl.class.getDeclaredMethod("settle", Payment.class, BigDecimal.class);
+        Method settleMethod = PaymentServiceImpl.class.getDeclaredMethod("settle", Payment.class, BigDecimal.class, Instant.class, boolean.class);
         settleMethod.setAccessible(true);
-        settleMethod.invoke(paymentService, payment, new BigDecimal("99000"));
+        settleMethod.invoke(paymentService, payment, new BigDecimal("99000"), Instant.now(), true);
 
         assertEquals("SUCCESS", payment.getStatus());
         assertEquals("PAID", purchase.getStatus());
@@ -417,9 +417,9 @@ class SubscriptionCashPurchaseFlowTest {
         when(userSubscriptionRepository.findActiveSubscriptionsByUser(testUser)).thenReturn(List.of());
         when(userSubscriptionRepository.save(any(UserSubscription.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        Method settleMethod = PaymentServiceImpl.class.getDeclaredMethod("settle", Payment.class, BigDecimal.class);
+        Method settleMethod = PaymentServiceImpl.class.getDeclaredMethod("settle", Payment.class, BigDecimal.class, Instant.class, boolean.class);
         settleMethod.setAccessible(true);
-        settleMethod.invoke(paymentService, payment, new BigDecimal("99000"));
+        settleMethod.invoke(paymentService, payment, new BigDecimal("99000"), Instant.now(), true);
 
         // TUYỆT ĐỐI KHÔNG GỌI VÍ ĐIỂM HOẶC LƯU GIAO DỊCH ĐIỂM
         verify(pointWalletRepository, never()).findByUserIdForUpdate(any());

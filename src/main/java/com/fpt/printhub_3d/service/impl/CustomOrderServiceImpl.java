@@ -235,10 +235,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     }
 
     private CustomOrderDetailResponseDTO toDTO(CustomOrder o) {
-        Payment p = paymentRepository.findByCustomOrderId(o.getId()).orElse(null);
-        if (p == null && o.getCheckoutOrder() != null) {
-            p = paymentRepository.findByCheckoutOrderId(o.getCheckoutOrder().getId()).orElse(null);
-        }
+        Payment p = findOrderPayment(o);
 
         String pMethod = o.getPaymentMethod() != null ? o.getPaymentMethod() : (p != null ? p.getGateway() : "PAYOS");
         Instant zeroAmountSettledAt = o.resolveZeroAmountSettledAt();
@@ -299,7 +296,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .cancelledAt(o.getCancelledAt())
                 .quoteVersion(o.getCheckoutOrder() == null ? o.getQuoteVersion() : null)
                 .pricingBreakdown(standalonePricing(o))
-                .paymentEvidence(PaymentEvidenceResponseDTO.forZeroAmountPromo(zeroAmountSettledAt))
+                .paymentEvidence(PaymentEvidenceResponseDTO.from(p, zeroAmountSettledAt))
                 .build();
     }
 
@@ -516,10 +513,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
         CustomOrder order = customOrderRepository.findLockedById(id)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in"));
 
-        Payment p = paymentRepository.findByCustomOrderId(id).orElse(null);
-        if (p == null && order.getCheckoutOrder() != null) {
-            p = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
-        }
+        Payment p = findOrderPayment(order);
 
         String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : (p != null ? p.getGateway() : "PAYOS");
         boolean zeroAmountSettlement = order.resolveZeroAmountSettledAt() != null;
@@ -584,17 +578,6 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 subscriptionBenefitService.releaseReservedBenefits(
                         SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, order.getId());
             }
-        } else if ("COMPLETED".equals(resolvedStatus) && !zeroAmountSettlement && "COD".equalsIgnoreCase(paymentMethod)) {
-            Payment codPay = p != null ? p : new Payment();
-            codPay.setCustomOrder(order);
-            BigDecimal total = resolveLineTotal(order);
-            codPay.setAmount(total);
-            codPay.setGateway("COD");
-            codPay.setStatus("SUCCESS");
-            codPay.setPaidAt(Instant.now());
-            if (codPay.getCreatedAt() == null) codPay.setCreatedAt(Instant.now());
-            codPay.setUpdatedAt(Instant.now());
-            paymentRepository.save(codPay);
         }
 
         order.setStatus(resolvedStatus);
@@ -701,10 +684,7 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                     order.getId(), buyer.getId(), buyer.getFullName(), buyer.getRewardPoints());
         }
 
-        Payment payment = paymentRepository.findByCustomOrderId(customOrderId).orElse(null);
-        if (payment == null && order.getCheckoutOrder() != null) {
-            payment = paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null);
-        }
+        Payment payment = findOrderPayment(order);
         if (payment == null || !"SUCCESS".equalsIgnoreCase(payment.getStatus())) {
             throw new ApiException(CommonErrorCode.BAD_REQUEST, "Yêu cầu in chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
         }
@@ -767,6 +747,12 @@ public class CustomOrderServiceImpl implements CustomOrderService {
                 .totalRewardPoints(wallet.getBalance())
                 .alreadyProcessed(false)
                 .build();
+    }
+
+    private Payment findOrderPayment(CustomOrder order) {
+        return order.getCheckoutOrder() != null
+                ? paymentRepository.findByCheckoutOrderId(order.getCheckoutOrder().getId()).orElse(null)
+                : paymentRepository.findByCustomOrderId(order.getId()).orElse(null);
     }
 
     @Override

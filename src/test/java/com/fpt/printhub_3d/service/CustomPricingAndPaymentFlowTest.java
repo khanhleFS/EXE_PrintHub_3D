@@ -26,7 +26,7 @@ import com.fpt.printhub_3d.service.impl.CheckoutOrderServiceImpl;
 import com.fpt.printhub_3d.service.impl.CustomOrderReviewServiceImpl;
 import com.fpt.printhub_3d.service.impl.CustomOrderServiceImpl;
 import com.fpt.printhub_3d.service.impl.DashboardServiceImpl;
-import com.fpt.printhub_3d.service.impl.DefaultPaymentEvidenceServiceImpl;
+import com.fpt.printhub_3d.service.impl.PaymentEvidenceServiceImpl;
 import com.fpt.printhub_3d.service.impl.OrderRewardServiceImpl;
 import com.fpt.printhub_3d.service.impl.PaymentServiceImpl;
 import com.fpt.printhub_3d.service.impl.PointWalletLockHelper;
@@ -38,16 +38,22 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 import vn.payos.PayOS;
 import vn.payos.model.v2.paymentRequests.CreatePaymentLinkRequest;
 import vn.payos.model.v2.paymentRequests.CreatePaymentLinkResponse;
 import vn.payos.model.v2.paymentRequests.PaymentLink;
 import vn.payos.model.v2.paymentRequests.PaymentLinkStatus;
+import vn.payos.model.v2.paymentRequests.Transaction;
+import vn.payos.model.webhooks.Webhook;
+import vn.payos.model.webhooks.WebhookData;
 import vn.payos.service.blocking.v2.paymentRequests.PaymentRequestsService;
+import vn.payos.service.blocking.webhooks.WebhooksService;
 
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.*;
 
@@ -135,6 +141,259 @@ class CustomPricingAndPaymentFlowTest {
     }
 
     @Test
+    void webhookAndVerifySettleEachCheckoutOnceEvenForEqualAmounts() {
+        Payment first = stubCheckoutPayment("701", "70000");
+        Payment second = stubCheckoutPayment("702", "70000");
+        PaymentRequestsService gateway = stubPayosLinks();
+        PaymentLink firstLink = paidPayosLink(701L, 70000L);
+        PaymentLink secondLink = paidPayosLink(702L, 70000L);
+        when(gateway.get(701L)).thenReturn(firstLink);
+        when(gateway.get(702L)).thenReturn(secondLink);
+        Webhook webhook = stubWebhook(701L, 70000L);
+
+        paymentService.handleWebhook(webhook);
+        paymentService.verify("701", testUser.getId());
+        paymentService.handleWebhook(webhook);
+        paymentService.verify("702", testUser.getId());
+
+        assertEquals("SUCCESS", first.getStatus());
+        assertEquals("SUCCESS", second.getStatus());
+        assertEquals(Instant.parse("2026-11-19T03:15:00Z"), first.getPaidAt());
+        assertEquals("PAID", first.getCheckoutOrder().getStatus());
+        assertEquals("PAID", second.getCheckoutOrder().getStatus());
+        verify(paymentRepository).save(first);
+        verify(paymentRepository).save(second);
+        verify(notificationService, times(2)).sendNotification(eq(testUser), any(), any(), eq("PAYMENT"), any());
+    }
+
+    @Test
+    void mismatchedPaymentKeepsExpectedAmountAndPersistsObservedAmountForReconciliation() {
+        Payment payment = stubCheckoutPayment("801", "90000");
+        PaymentRequestsService gateway = stubPayosLinks();
+        PaymentLink live = paidPayosLink(801L, 89000L);
+        when(gateway.get(801L)).thenReturn(live);
+        Webhook webhook = stubWebhook(801L, 89000L);
+
+        paymentService.handleWebhook(webhook);
+        var verified = paymentService.verify("801", testUser.getId());
+        paymentService.handleWebhook(webhook);
+
+        assertEquals(Payment.PENDING_RECONCILIATION, verified.get("status"));
+        assertEquals(new BigDecimal("90000"), payment.getAmount());
+        assertEquals(new BigDecimal("89000"), payment.getReconciliationAmount());
+        assertEquals("AMOUNT_MISMATCH", payment.getReconciliationReason());
+        assertEquals("CONFIRMED", payment.getCheckoutOrder().getStatus());
+        assertNull(payment.getPaidAt());
+        verify(paymentRepository).save(payment);
+        verifyNoInteractions(notificationService, usageLogRepository);
+    }
+
+    @Test
+    void latePaymentForCancelledSubscriptionDoesNotActivateIt() {
+        SubscriptionPurchase purchase = SubscriptionPurchase.builder().id(UUID.randomUUID())
+                .user(testUser).amount(new BigDecimal("50000")).status("CANCELLED").build();
+        Payment payment = new Payment();
+        payment.setSubscriptionPurchase(purchase);
+        payment.setGateway("PAYOS");
+        payment.setTransactionId("901");
+        payment.setAmount(purchase.getAmount());
+        payment.setStatus("CANCELLED");
+        PaymentRepository.PaymentTarget target = mock(PaymentRepository.PaymentTarget.class);
+        when(target.getSubscriptionPurchaseId()).thenReturn(purchase.getId());
+        when(paymentRepository.findTargetByTransactionId("901")).thenReturn(Optional.of(target));
+        when(paymentRepository.findByTransactionId("901")).thenReturn(Optional.of(payment));
+        when(subscriptionPurchaseRepository.findLockedById(purchase.getId())).thenReturn(Optional.of(purchase));
+        var gateway = stubPayosLinks();
+        PaymentLink live = paidPayosLink(901L, 50000L);
+        when(gateway.get(901L)).thenReturn(live);
+        Webhook webhook = stubWebhook(901L, 50000L);
+
+        paymentService.handleWebhook(webhook);
+        paymentService.verify("901", testUser.getId());
+
+        assertEquals(Payment.PENDING_RECONCILIATION, payment.getStatus());
+        assertEquals("LATE_PAYMENT", payment.getReconciliationReason());
+        assertEquals(new BigDecimal("50000"), payment.getReconciliationAmount());
+        assertNull(payment.getPaidAt());
+        assertNull(purchase.getSettledAt());
+        assertEquals("CANCELLED", purchase.getStatus());
+        verifyNoInteractions(userSubscriptionService, notificationService, usageLogRepository);
+        verify(paymentRepository).save(payment);
+    }
+
+    @Test
+    void codCheckoutCompletesWithoutAReceiptUntilAdminConfirmsAndChildReadsParentReceipt() {
+        CheckoutOrder checkout = quotedCheckout("MARKETPLACE", "20000");
+        checkout.setStatus("SHIPPING");
+        checkout.setPaymentMethod("COD");
+        checkout.setTotalAmount(new BigDecimal("140000"));
+        Order child = new Order();
+        child.setId(UUID.randomUUID());
+        child.setCheckoutOrder(checkout);
+        child.setStatus("SHIPPING");
+        when(checkoutOrderRepository.findLockedById(checkout.getId())).thenReturn(Optional.of(checkout));
+        when(orderRepository.findByCheckoutOrderId(checkout.getId())).thenReturn(List.of(child));
+        when(orderRepository.findById(child.getId())).thenReturn(Optional.of(child));
+        when(orderRepository.findCheckoutId(child.getId())).thenReturn(Optional.of(checkout.getId()));
+        var proofService = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository, orderRepository,
+                customOrderRepository, Clock.systemUTC(), benefitService);
+        ReflectionTestUtils.setField(checkoutOrderService, "paymentEvidenceService", proofService);
+        User admin = new User();
+        admin.setId(UUID.randomUUID());
+        admin.setRole(UserRole.ADMIN);
+
+        checkoutOrderService.updateAdminCheckoutOrderStatus(admin, checkout.getId(),
+                AdminCheckoutOrderStatusRequestDTO.builder().status("COMPLETED").build());
+        assertEquals("COMPLETED", checkout.getStatus());
+        assertTrue(proofService.findSettledEvidence(PaymentEvidenceService.SourceType.ORDER, child.getId()).isEmpty());
+        verify(paymentRepository, never()).save(any());
+
+        UUID receiptId = UUID.randomUUID();
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
+            Payment receipt = invocation.getArgument(0);
+            receipt.setId(receiptId);
+            when(paymentRepository.findByCheckoutOrderId(checkout.getId())).thenReturn(Optional.of(receipt));
+            return receipt;
+        });
+        var request = AdminCheckoutOrderStatusRequestDTO.builder().status("COMPLETED")
+                .codCollectedAmount(new BigDecimal("140000")).build();
+        var confirmed = checkoutOrderService.updateAdminCheckoutOrderStatus(admin, checkout.getId(), request);
+        var replay = proofService.recordCodCollection(PaymentEvidenceService.SourceType.ORDER, child.getId(),
+                new BigDecimal("140000"), admin);
+        assertEquals("SETTLED", confirmed.paymentEvidence().status());
+        assertEquals(receiptId, replay.paymentId());
+        assertEquals(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, replay.sourceType());
+        assertEquals(replay, proofService.findSettledEvidence(PaymentEvidenceService.SourceType.ORDER, child.getId()).orElseThrow());
+        verify(paymentRepository).save(any(Payment.class));
+        verify(paymentRepository, never()).findByOrderId(child.getId());
+    }
+
+    @Test
+    void standaloneCodRejectsWrongAmountAndReturnsSameReceiptOnReplay() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus("COMPLETED");
+        order.setPaymentMethod("COD");
+        order.setTotalAmount(new BigDecimal("140000"));
+        when(orderRepository.findLockedById(order.getId())).thenReturn(Optional.of(order));
+        var service = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
+                orderRepository, customOrderRepository, Clock.systemUTC(), benefitService);
+        User admin = new User();
+        admin.setRole(UserRole.ADMIN);
+        assertThrows(ApiException.class, () -> service.recordCodCollection(PaymentEvidenceService.SourceType.ORDER,
+                order.getId(), new BigDecimal("120000"), admin));
+        verify(paymentRepository, never()).save(any());
+
+        UUID receiptId = UUID.randomUUID();
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> {
+            Payment receipt = invocation.getArgument(0);
+            receipt.setId(receiptId);
+            when(paymentRepository.findByOrderId(order.getId())).thenReturn(Optional.of(receipt));
+            return receipt;
+        });
+        PaymentEvidenceService.PaymentEvidence receipt = service.recordCodCollection(PaymentEvidenceService.SourceType.ORDER,
+                order.getId(), new BigDecimal("140000"), admin);
+        assertEquals(receiptId, receipt.paymentId());
+        assertEquals(receipt, service.recordCodCollection(PaymentEvidenceService.SourceType.ORDER,
+                order.getId(), new BigDecimal("140000"), admin));
+        verify(paymentRepository).save(any(Payment.class));
+    }
+
+    @Test
+    void receiptForCheckoutChildIsFlaggedWithoutReplacingParentEvidence() {
+        Payment parent = stubCheckoutPayment("951", "90000");
+        var gateway = stubPayosLinks();
+        PaymentLink parentLink = paidPayosLink(951L, 90000L);
+        PaymentLink childLink = paidPayosLink(952L, 90000L);
+        when(gateway.get(951L)).thenReturn(parentLink);
+        when(gateway.get(952L)).thenReturn(childLink);
+        paymentService.verify("951", testUser.getId());
+        parent.setId(UUID.randomUUID());
+        var checkout = parent.getCheckoutOrder();
+        Order child = new Order();
+        child.setId(UUID.randomUUID());
+        child.setBuyer(testUser);
+        child.setCheckoutOrder(checkout);
+        child.setStatus("PAID");
+        when(orderRepository.findLockedById(child.getId())).thenReturn(Optional.of(child));
+        when(orderRepository.findById(child.getId())).thenReturn(Optional.of(child));
+        when(paymentRepository.findByCheckoutOrderId(checkout.getId())).thenReturn(Optional.of(parent));
+
+        Payment extra = new Payment();
+        extra.setOrder(child);
+        extra.setGateway("PAYOS");
+        extra.setTransactionId("952");
+        extra.setStatus("PENDING");
+        extra.setAmount(new BigDecimal("90000"));
+        PaymentRepository.PaymentTarget target = mock(PaymentRepository.PaymentTarget.class);
+        when(target.getOrderId()).thenReturn(child.getId());
+        when(target.getParentCheckoutOrderId()).thenReturn(checkout.getId());
+        when(paymentRepository.findTargetByTransactionId("952")).thenReturn(Optional.of(target));
+        when(paymentRepository.findByTransactionId("952")).thenReturn(Optional.of(extra));
+        var verified = paymentService.verify("952", testUser.getId());
+
+        assertEquals("DUPLICATE_CHECKOUT_SOURCE", verified.get("reconciliationReason"));
+        assertEquals(new BigDecimal("90000"), extra.getReconciliationAmount());
+        assertEquals(Payment.PENDING_RECONCILIATION, extra.getStatus());
+        assertEquals("SUCCESS", parent.getStatus());
+        var service = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
+                orderRepository, customOrderRepository, Clock.systemUTC(), benefitService);
+        assertEquals(parent.getId(), service.findSettledEvidence(
+                PaymentEvidenceService.SourceType.ORDER, child.getId()).orElseThrow().paymentId());
+        verify(notificationService).sendNotification(eq(testUser), anyString(), anyString(), eq("PAYMENT"), anyString());
+    }
+
+    private Payment stubCheckoutPayment(String code, String amount) {
+        CheckoutOrder checkout = quotedCheckout("CUSTOM", "30000");
+        checkout.setStatus("CONFIRMED");
+        checkout.setPaymentMethod("PAYOS");
+        checkout.setTotalAmount(new BigDecimal(amount));
+        when(checkoutOrderRepository.findLockedById(checkout.getId())).thenReturn(Optional.of(checkout));
+        Payment payment = new Payment();
+        payment.setCheckoutOrder(checkout);
+        payment.setStatus("PENDING");
+        payment.setGateway("PAYOS");
+        payment.setTransactionId(code);
+        payment.setAmount(checkout.getTotalAmount());
+        PaymentRepository.PaymentTarget target = mock(PaymentRepository.PaymentTarget.class);
+        when(target.getCheckoutOrderId()).thenReturn(checkout.getId());
+        when(paymentRepository.findTargetByTransactionId(code)).thenReturn(Optional.of(target));
+        when(paymentRepository.findByTransactionId(code)).thenReturn(Optional.of(payment));
+        return payment;
+    }
+
+    private PaymentRequestsService stubPayosLinks() {
+        PaymentRequestsService gateway = mock(PaymentRequestsService.class);
+        when(payOS.paymentRequests()).thenReturn(gateway);
+        return gateway;
+    }
+
+    private PaymentLink paidPayosLink(long code, long received) {
+        PaymentLink live = mock(PaymentLink.class);
+        when(live.getStatus()).thenReturn(PaymentLinkStatus.PAID);
+        when(live.getOrderCode()).thenReturn(code);
+        when(live.getAmountPaid()).thenReturn(received);
+        Transaction tx = mock(Transaction.class);
+        when(tx.getTransactionDateTime()).thenReturn("2026-11-19 10:15:00");
+        when(live.getTransactions()).thenReturn(List.of(tx));
+        return live;
+    }
+
+    private Webhook stubWebhook(long code, long amount) {
+        when(paymentRepository.existsByTransactionId(Long.toString(code))).thenReturn(true);
+        WebhooksService webhooks = mock(WebhooksService.class);
+        when(payOS.webhooks()).thenReturn(webhooks);
+        Webhook webhook = mock(Webhook.class);
+        WebhookData data = mock(WebhookData.class);
+        when(data.getOrderCode()).thenReturn(code);
+        when(data.getCode()).thenReturn("00");
+        when(data.getCurrency()).thenReturn("VND");
+        when(data.getAmount()).thenReturn(amount);
+        when(webhooks.verify(webhook)).thenReturn(data);
+        return webhook;
+    }
+
+    @Test
     void returnsFreshQuoteInHttp409WithoutHoldingQuota() {
         CheckoutOrder checkout = stubQuotedCustomCheckout();
         CustomOrder design = customLine("QUOTED", "120000");
@@ -196,8 +455,8 @@ class CustomPricingAndPaymentFlowTest {
         }
         assertEquals("COMPLETED", design.getStatus());
 
-        var evidenceService = new DefaultPaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
-                orderRepository, customOrderRepository, null);
+        var evidenceService = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
+                orderRepository, customOrderRepository, java.time.Clock.systemUTC(), benefitService);
         var evidence = evidenceService.findSettledEvidence(PaymentEvidenceService.SourceType.CUSTOM_ORDER, design.getId()).orElseThrow();
         assertEquals(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, evidence.sourceType());
         assertEquals(checkout.getId(), evidence.sourceId());
@@ -247,8 +506,8 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals("COMPLETED", custom.getStatus());
         assertEquals(0, service.completeRewards(custom.getId()).rewardPointsEarned());
 
-        var evidenceService = new DefaultPaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
-                orderRepository, customOrderRepository, null);
+        var evidenceService = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
+                orderRepository, customOrderRepository, java.time.Clock.systemUTC(), benefitService);
         var evidence = evidenceService.findSettledEvidence(PaymentEvidenceService.SourceType.CUSTOM_ORDER, custom.getId())
                 .orElseThrow();
         assertNull(evidence.paymentId());
@@ -546,6 +805,7 @@ class CustomPricingAndPaymentFlowTest {
         Payment payment = new Payment();
         payment.setCustomOrder(custom);
         payment.setTransactionId("12345");
+        payment.setGateway("PAYOS");
         payment.setStatus("PENDING");
         payment.setAmount(new BigDecimal("90000"));
         when(customOrderRepository.findLockedById(custom.getId())).thenReturn(Optional.of(custom));
@@ -564,6 +824,7 @@ class CustomPricingAndPaymentFlowTest {
         PaymentRequestsService gateway = mock(PaymentRequestsService.class);
         when(payOS.paymentRequests()).thenReturn(gateway);
         PaymentLink cancelled = mockPaymentLink(PaymentLinkStatus.CANCELLED);
+        when(cancelled.getOrderCode()).thenReturn(12345L);
         when(gateway.get(12345L)).thenReturn(cancelled);
 
         paymentService.verify("12345", testUser.getId());
@@ -956,9 +1217,9 @@ class CustomPricingAndPaymentFlowTest {
         when(customOrderRepository.findByCheckoutOrderId(checkoutOrder.getId())).thenReturn(List.of(acceptedCustom, requestedCustom));
 
         // Invoke private settle(Payment payment, BigDecimal amount) via reflection
-        Method settleMethod = PaymentServiceImpl.class.getDeclaredMethod("settle", Payment.class, BigDecimal.class);
+        Method settleMethod = PaymentServiceImpl.class.getDeclaredMethod("settle", Payment.class, BigDecimal.class, Instant.class, boolean.class);
         settleMethod.setAccessible(true);
-        settleMethod.invoke(paymentService, payment, new BigDecimal("150000"));
+        settleMethod.invoke(paymentService, payment, new BigDecimal("150000"), Instant.now(), true);
 
         // Assertions
         assertEquals("PAID", checkoutOrder.getStatus());

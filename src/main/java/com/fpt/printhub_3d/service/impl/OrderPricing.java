@@ -5,6 +5,7 @@ import com.fpt.printhub_3d.dto.order.PricingBreakdownDTO.PricingStage;
 import com.fpt.printhub_3d.dto.subscription.BenefitPreviewResponseDTO;
 import com.fpt.printhub_3d.dto.subscription.BenefitPreviewResponseDTO.BenefitStatus;
 import com.fpt.printhub_3d.entity.CheckoutOrder;
+import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
@@ -86,6 +87,19 @@ final class OrderPricing {
                                   BigDecimal shippingFee, BigDecimal shippingDiscount) {
         return itemsSubtotal.subtract(zeroIfMissing(itemDiscount)).max(BigDecimal.ZERO)
                 .add(zeroIfMissing(shippingFee).subtract(zeroIfMissing(shippingDiscount)).max(BigDecimal.ZERO));
+    }
+
+    static BigDecimal customPayable(CustomOrder custom) {
+        if (custom.getSubtotalAmount() != null) {
+            return totalPayable(custom.getSubtotalAmount(), custom.getDiscountAmount(),
+                    custom.getShippingFee(), custom.getShippingDiscountAmount());
+        }
+        BigDecimal quoted = custom.getQuotedPrice();
+        if ((quoted == null || quoted.signum() <= 0) && custom.getUnitQuotedPrice() != null) {
+            int quantity = custom.getQuantity() != null && custom.getQuantity() > 0 ? custom.getQuantity() : 1;
+            return custom.getUnitQuotedPrice().multiply(BigDecimal.valueOf(quantity));
+        }
+        return quoted;
     }
 
     private static BigDecimal zeroIfMissing(BigDecimal amount) {

@@ -426,7 +426,7 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
     }
 
     @Override
-    @Transactional
+    @Transactional(noRollbackFor = ApiException.class)
     public UserSubscription activateSubscriptionFromPurchase(SubscriptionPurchase purchase) {
         log.info("Kích hoạt gói dịch vụ từ đơn mua [{}] cho người dùng [{}]", purchase.getId(), purchase.getUser().getId());
 
@@ -439,7 +439,8 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
         }
 
         // Kích hoạt hoặc gia hạn gói dịch vụ
-        UserSubscription userSub = processSubscriptionActivation(purchase.getUser(), purchase.getPlan());
+        User buyer = userRepository.findLockedById(purchase.getUser().getId()).orElse(purchase.getUser());
+        UserSubscription userSub = processSubscriptionActivation(buyer, purchase.getPlan());
 
         purchase.setStatus("PAID");
         purchase.setSettledAt(Instant.now());

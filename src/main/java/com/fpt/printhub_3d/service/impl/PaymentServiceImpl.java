@@ -3,6 +3,8 @@ package com.fpt.printhub_3d.service.impl;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkRequestDTO;
 import com.fpt.printhub_3d.dto.payment.CreatePaymentLinkResponseDTO;
 import com.fpt.printhub_3d.dto.payment.PayOSWebhookResponseDTO;
+import com.fpt.printhub_3d.common.exception.ApiException;
+import com.fpt.printhub_3d.common.exception.SubscriptionErrorCode;
 import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Order;
@@ -36,9 +38,16 @@ import vn.payos.model.webhooks.WebhookData;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+
+import static com.fpt.printhub_3d.entity.Payment.PENDING_RECONCILIATION;
 
 @Slf4j
 @Service
@@ -46,6 +55,9 @@ import java.util.UUID;
 public class PaymentServiceImpl implements PaymentService {
 
     private static final BigDecimal PAYOS_MIN_AMOUNT = new BigDecimal("2000");
+    private static final ZoneId PAYOS_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+    private static final Set<String> CLOSED_STATUSES = Set.of("CANCELLED", "EXPIRED");
+    private static final Set<String> FULFILLMENT_STATUSES = Set.of("PAID", "PREPARING", "PRINTING", "SHIPPING", "COMPLETED");
 
     private final OrderRepository orders;
     private final CustomOrderRepository customs;
@@ -157,15 +169,7 @@ public class PaymentServiceImpl implements PaymentService {
             if (!"ACCEPTED".equals(custom.getStatus())) {
                 throw bad("Hãy chấp nhận báo giá trước khi thanh toán");
             }
-            BigDecimal lineTotal = custom.getQuotedPrice();
-            if ((lineTotal == null || lineTotal.signum() <= 0) && custom.getUnitQuotedPrice() != null) {
-                int quantity = custom.getQuantity() != null && custom.getQuantity() > 0 ? custom.getQuantity() : 1;
-                lineTotal = custom.getUnitQuotedPrice().multiply(BigDecimal.valueOf(quantity));
-            }
-            total = custom.getSubtotalAmount() != null
-                    ? OrderPricing.totalPayable(custom.getSubtotalAmount(), custom.getDiscountAmount(),
-                            custom.getShippingFee(), custom.getShippingDiscountAmount())
-                    : lineTotal;
+            total = OrderPricing.customPayable(custom);
             payment = payments.findByCustomOrderId(custom.getId()).orElseGet(Payment::new);
 
         } else if ("CHECKOUT_ORDER".equals(request.orderType())) {
@@ -221,11 +225,14 @@ public class PaymentServiceImpl implements PaymentService {
         if ("SUCCESS".equals(payment.getStatus())) {
             throw bad("Đơn đã thanh toán");
         }
+        if (PENDING_RECONCILIATION.equals(payment.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Giao dịch đang chờ đối soát.");
+        }
         if ("COD".equals(payment.getGateway())) {
             throw bad("Đơn đã chọn thanh toán khi nhận hàng");
         }
 
-        boolean quotedPayment = checkoutOrder != null || custom != null;
+        boolean quotedPayment = checkoutOrder != null || custom != null || subscriptionPurchase != null;
         if (quotedPayment) {
             QuotePayment.requirePayable(total);
             if ("CANCELLED".equals(payment.getStatus()) || "EXPIRED".equals(payment.getStatus())
@@ -360,16 +367,25 @@ public class PaymentServiceImpl implements PaymentService {
                     .build();
         }
 
-        Payment payment = lockPayment(String.valueOf(data.getOrderCode()));
-        if (data.getAmount() == null) {
-            throw bad("Thiếu số tiền");
+        if (data.getOrderCode() == null || data.getAmount() == null || data.getAmount() <= 0
+                || (data.getCurrency() != null && !"VND".equalsIgnoreCase(data.getCurrency()))) {
+            throw bad("Thông tin số tiền PayOS không hợp lệ");
         }
-
-        settle(payment, BigDecimal.valueOf(data.getAmount()));
+        Payment payment = lockPayment(String.valueOf(data.getOrderCode()));
+        requirePayos(payment);
+        PaymentLink live = fetchPayosLink(data.getOrderCode().toString());
+        if (live == null || live.getAmountPaid() == null || live.getAmountPaid() < data.getAmount()
+                || (data.getPaymentLinkId() != null && !data.getPaymentLinkId().equals(live.getId()))
+                || !containsWebhookTransfer(live, data)) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Thông tin thu tiền từ PayOS chưa sẵn sàng, vui lòng gửi lại webhook.");
+        }
+        processPayosLink(payment, live, parsePayosTime(data.getTransactionDateTime()));
 
         return PayOSWebhookResponseDTO.builder()
                 .success(true)
-                .message("Đã xác nhận thanh toán")
+                .message("SUCCESS".equals(payment.getStatus()) && payment.getReconciliationAmount() == null
+                        ? "Đã xác nhận thanh toán" : "Đã ghi nhận giao dịch để đối soát")
                 .build();
     }
 
@@ -380,53 +396,10 @@ public class PaymentServiceImpl implements PaymentService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
 
-        if (!"SUCCESS".equals(payment.getStatus())) {
-            try {
-                var live = payOS.paymentRequests().get(Long.valueOf(code));
-                String liveStatus = live != null ? String.valueOf(live.getStatus()) : "UNKNOWN";
-
-                if ("PAID".equals(liveStatus)) {
-                    settle(payment, BigDecimal.valueOf(live.getAmountPaid()));
-                } else if (isQuotePayment(payment)) {
-                    if (canCloseQuote(live)) {
-                        closeQuotePayment(payment, "EXPIRED".equals(liveStatus) ? "EXPIRED" : "CANCELLED");
-                    }
-                } else if ("CANCELLED".equals(liveStatus)) {
-                    payment.setStatus("CANCELLED");
-                    payment.setUpdatedAt(Instant.now());
-                    payments.save(payment);
-
-                    // Đồng bộ hủy SubscriptionPurchase nguyên tử
-                    if (payment.getSubscriptionPurchase() != null) {
-                        SubscriptionPurchase purchase = payment.getSubscriptionPurchase();
-                        if (!"PAID".equals(purchase.getStatus())) {
-                            purchase.setStatus("CANCELLED");
-                            purchase.setSettledAt(Instant.now());
-                            subscriptionPurchases.save(purchase);
-                            log.info("Đã đồng bộ hủy SubscriptionPurchase [{}] theo cổng PayOS", purchase.getId());
-                        }
-                    }
-
-                    // Đồng bộ hủy Order đơn lẻ và trả kho
-                    if (payment.getOrder() != null) {
-                        Order order = payment.getOrder();
-                        if ("PENDING".equals(order.getStatus())) {
-                            order.setStatus("CANCELLED");
-                            order.setUpdatedAt(Instant.now());
-                            orders.save(order);
-                            inventoryService.releaseActiveReservations(order.getId(), "Hủy giao dịch cổng PayOS", "PAYOS_CANCEL_" + payment.getId());
-                            if (subscriptionBenefitService != null) {
-                                subscriptionBenefitService.releaseReservedBenefits(
-                                        SubscriptionBenefitService.UsageTargetType.ORDER, order.getId());
-                            }
-                            log.info("Đã đồng bộ hủy Order [{}] và giải phóng kho theo cổng PayOS", order.getId());
-                        }
-                    }
-
-                }
-            } catch (Exception ignored) {
-                // Tránh lỗi 500 nếu PayOS gặp gián đoạn tạm thời
-            }
+        requirePayos(payment);
+        PaymentLink live = fetchPayosLink(code);
+        if (live != null) {
+            processPayosLink(payment, live, null);
         }
 
         String targetType = "ORDER";
@@ -446,6 +419,11 @@ public class PaymentServiceImpl implements PaymentService {
         responseMap.put("orderCode", code);
         responseMap.put("status", "SUCCESS".equals(payment.getStatus()) ? "PAID" : payment.getStatus());
         responseMap.put("amount", payment.getAmount());
+        if (payment.getReconciliationAmount() != null) {
+            responseMap.put("reconciliationAmount", payment.getReconciliationAmount());
+            responseMap.put("reconciliationReceivedAt", payment.getReconciliationReceivedAt());
+            responseMap.put("reconciliationReason", payment.getReconciliationReason());
+        }
         responseMap.put("targetType", targetType);
         if (payment.getSubscriptionPurchase() != null) {
             responseMap.put("purchaseId", payment.getSubscriptionPurchase().getId());
@@ -456,6 +434,87 @@ public class PaymentServiceImpl implements PaymentService {
         }
         responseMap.put("verifiedAt", Instant.now().toString());
         return responseMap;
+    }
+
+    private void requirePayos(Payment payment) {
+        if (!"PAYOS".equalsIgnoreCase(payment.getGateway())) {
+            throw bad("Giao dịch không thuộc PayOS");
+        }
+    }
+
+    private PaymentLink fetchPayosLink(String orderCode) {
+        try {
+            long code = Long.parseLong(orderCode);
+            PaymentLink live = payOS.paymentRequests().get(code);
+            return live != null && Long.valueOf(code).equals(live.getOrderCode()) ? live : null;
+        } catch (Exception ex) {
+            log.warn("Chưa đọc được trạng thái PayOS cho mã {}", orderCode);
+            return null;
+        }
+    }
+
+    private boolean containsWebhookTransfer(PaymentLink live, WebhookData webhook) {
+        String reference = webhook.getReference();
+        return reference == null || reference.isBlank() || (live.getTransactions() != null
+                && live.getTransactions().stream().filter(Objects::nonNull)
+                        .anyMatch(tx -> reference.equals(tx.getReference()) && webhook.getAmount().equals(tx.getAmount())));
+    }
+
+    private void processPayosLink(Payment payment, PaymentLink live, Instant fallbackTime) {
+        if (live.getAmountPaid() != null && live.getAmountPaid() > 0) {
+            Instant receivedAt = live.getTransactions() == null ? null : live.getTransactions().stream()
+                    .filter(Objects::nonNull).map(tx -> parsePayosTime(tx.getTransactionDateTime()))
+                    .filter(Objects::nonNull).max(Instant::compareTo).orElse(null);
+            if (receivedAt == null) {
+                receivedAt = fallbackTime != null ? fallbackTime : Instant.now();
+            }
+            settle(payment, BigDecimal.valueOf(live.getAmountPaid()),
+                    receivedAt, live.getStatus() == PaymentLinkStatus.PAID);
+        } else if (canCloseQuote(live) && "PENDING".equals(payment.getStatus())) {
+            String status = live.getStatus() == PaymentLinkStatus.EXPIRED ? "EXPIRED" : "CANCELLED";
+            if (isQuotePayment(payment)) {
+                closeQuotePayment(payment, status);
+            } else {
+                closeStandalonePayment(payment, status);
+            }
+        }
+    }
+
+    private Instant parsePayosTime(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Instant.parse(value);
+        } catch (DateTimeParseException ignored) {
+            try {
+                return LocalDateTime.parse(value.trim().replace(' ', 'T')).atZone(PAYOS_ZONE).toInstant();
+            } catch (DateTimeParseException invalid) {
+                return null;
+            }
+        }
+    }
+
+    private void closeStandalonePayment(Payment payment, String status) {
+        Instant now = Instant.now();
+        payment.setStatus(status);
+        payment.setUpdatedAt(now);
+        payments.save(payment);
+        SubscriptionPurchase purchase = payment.getSubscriptionPurchase();
+        if (purchase != null && "PENDING".equals(purchase.getStatus())) {
+            purchase.setStatus(status);
+            subscriptionPurchases.save(purchase);
+        }
+        Order order = payment.getOrder();
+        if (order != null && order.getCheckoutOrder() == null && "PENDING".equals(order.getStatus())) {
+            order.setStatus(status);
+            order.setUpdatedAt(now);
+            orders.save(order);
+            inventoryService.releaseActiveReservations(order.getId(), "Giao dịch PayOS đã đóng", payment.getTransactionId());
+            if (subscriptionBenefitService != null) {
+                subscriptionBenefitService.releaseReservedBenefits(SubscriptionBenefitService.UsageTargetType.ORDER, order.getId());
+            }
+        }
     }
 
     // --- Private Helper Methods ---
@@ -482,15 +541,19 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     public void expireQuotePayment(String orderCode) {
         Payment payment = lockPayment(orderCode);
-        if (!isQuotePayment(payment) || !"PENDING".equals(payment.getStatus())
+        if ((!isQuotePayment(payment) && payment.getSubscriptionPurchase() == null) || !"PENDING".equals(payment.getStatus())
                 || payment.getExpiresAt() == null || payment.getExpiresAt().isAfter(Instant.now())) {
             return;
         }
         PaymentLink live = quoteLinkForClosing(orderCode, "Hết hạn thanh toán");
-        if (live != null && live.getStatus() == PaymentLinkStatus.PAID && live.getAmountPaid() != null) {
-            settle(payment, BigDecimal.valueOf(live.getAmountPaid()));
+        if (live != null && live.getAmountPaid() != null && live.getAmountPaid() > 0) {
+            processPayosLink(payment, live, null);
         } else if (live == null || canCloseQuote(live)) {
-            closeQuotePayment(payment, "EXPIRED");
+            if (isQuotePayment(payment)) {
+                closeQuotePayment(payment, "EXPIRED");
+            } else {
+                closeStandalonePayment(payment, "EXPIRED");
+            }
         }
     }
 
@@ -578,6 +641,9 @@ public class PaymentServiceImpl implements PaymentService {
         PaymentRepository.PaymentTarget target = payments.findTargetByTransactionId(code)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy giao dịch"));
 
+        if (target.getParentCheckoutOrderId() != null) {
+            checkoutOrders.findLockedById(target.getParentCheckoutOrderId()).orElseThrow();
+        }
         if (target.getOrderId() != null) {
             orders.findLockedById(target.getOrderId()).orElseThrow();
         } else if (target.getCustomOrderId() != null) {
@@ -604,128 +670,197 @@ public class PaymentServiceImpl implements PaymentService {
         throw bad("Giao dịch không có thông tin người sở hữu");
     }
 
-    private void settle(Payment payment, BigDecimal amount) {
-        if (payment.getAmount().compareTo(amount) != 0) {
-            throw bad("Số tiền giao dịch không khớp đơn hàng");
+    private void settle(Payment payment, BigDecimal received, Instant receivedAt, boolean confirmedPaid) {
+        String targetStatus = targetStatus(payment);
+        if (isCheckoutChild(payment)) {
+            flagReconciliation(payment, received, receivedAt, "DUPLICATE_CHECKOUT_SOURCE", false);
+            return;
+        }
+        if ((targetStatus != null && CLOSED_STATUSES.contains(targetStatus))
+                || (payment.getStatus() != null && CLOSED_STATUSES.contains(payment.getStatus()))
+                || "LATE_PAYMENT".equals(payment.getReconciliationReason())) {
+            flagReconciliation(payment, received, receivedAt, "LATE_PAYMENT", false);
+            return;
+        }
+        BigDecimal expected = payment.getAmount();
+        BigDecimal targetAmount = targetAmount(payment);
+        if (expected == null || (targetAmount != null && expected.compareTo(targetAmount) != 0)) {
+            flagReconciliation(payment, received, receivedAt, "AMOUNT_MISMATCH", false);
+            return;
         }
         if ("SUCCESS".equals(payment.getStatus())) {
+            BigDecimal excess = received.subtract(expected);
+            if (excess.signum() > 0) {
+                flagReconciliation(payment, excess, receivedAt, "EXCESS_AFTER_SETTLEMENT", true);
+            }
             return;
         }
 
-        payment.setStatus("SUCCESS");
-        payment.setPaidAt(Instant.now());
-        payment.setUpdatedAt(Instant.now());
+        if (!isPayableTarget(payment, targetStatus)) {
+            flagReconciliation(payment, received, receivedAt, "UNPAYABLE_TARGET", false);
+            return;
+        }
+        if (expected.compareTo(received) != 0) {
+            flagReconciliation(payment, received, receivedAt, "AMOUNT_MISMATCH", false);
+            return;
+        }
+        if (!confirmedPaid) {
+            flagReconciliation(payment, received, receivedAt, "PAYOS_NOT_CONFIRMED", false);
+            return;
+        }
 
-        User buyer;
+        User buyer = payment.getOrder() != null ? payment.getOrder().getBuyer()
+                : payment.getCustomOrder() != null ? payment.getCustomOrder().getBuyer()
+                : payment.getCheckoutOrder() != null ? payment.getCheckoutOrder().getUser()
+                : payment.getSubscriptionPurchase().getUser();
+        Instant now = Instant.now();
         String notificationMessage = "Giao dịch " + payment.getTransactionId() + " đã thanh toán thành công.";
         String notificationLink = "/orders";
 
         if (payment.getOrder() != null) {
             Order order = payment.getOrder();
-            if ("CANCELLED".equals(order.getStatus()) || "EXPIRED".equals(order.getStatus())) {
-                log.warn("Đơn hàng {} đã ở trạng thái {}, giao dịch PayOS {} ghi nhận thanh toán muộn cần đối soát",
-                        order.getId(), order.getStatus(), payment.getTransactionId());
-                buyer = order.getBuyer();
-            } else {
-                // Không kéo lùi tiến trình nếu đơn đã bước vào sản xuất / giao hàng
+            if ("PENDING".equals(order.getStatus())) {
+                order.setStatus("PAID");
+                order.setUpdatedAt(now);
+                orders.save(order);
+            }
+            inventoryService.confirmReservation(order.getId());
+            commitBenefits(SubscriptionBenefitService.UsageTargetType.ORDER, order.getId());
+        } else if (payment.getCustomOrder() != null) {
+            CustomOrder custom = payment.getCustomOrder();
+            if ("ACCEPTED".equals(custom.getStatus())) {
+                custom.setStatus("PAID");
+                custom.setUpdatedAt(now);
+                customs.save(custom);
+            }
+            commitBenefits(SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, custom.getId());
+        } else if (payment.getCheckoutOrder() != null) {
+            settleCheckout(payment.getCheckoutOrder(), now);
+        } else {
+            SubscriptionPurchase purchase = payment.getSubscriptionPurchase();
+            try {
+                userSubscriptionService.activateSubscriptionFromPurchase(purchase);
+            } catch (ApiException ex) {
+                if (ex.getErrorCode() != SubscriptionErrorCode.ACTIVE_PLAN_CONFLICT) {
+                    throw ex;
+                }
+                flagReconciliation(payment, received, receivedAt, "ACTIVE_PLAN_CONFLICT", false);
+                return;
+            }
+            purchase.setSettledAt(receivedAt);
+            notificationMessage = "Gói hội viên " + purchase.getPlan().getName() + " đã được kích hoạt thành công.";
+            notificationLink = "/profile";
+        }
+
+        payment.setStatus("SUCCESS");
+        payment.setPaidAt(receivedAt);
+        payment.setUpdatedAt(now);
+        payment.setReconciliationAmount(null);
+        payment.setReconciliationReason(null);
+        payment.setReconciliationReceivedAt(null);
+        payments.save(payment);
+        notifications.sendNotification(buyer, "Đã nhận thanh toán", notificationMessage, "PAYMENT", notificationLink);
+    }
+
+    private void settleCheckout(CheckoutOrder checkout, Instant now) {
+        if ("CONFIRMED".equals(checkout.getStatus())) {
+            checkout.setStatus("PAID");
+            checkout.setUpdatedAt(now);
+            checkoutOrders.save(checkout);
+        }
+        for (Order order : orders.findByCheckoutOrderId(checkout.getId())) {
+            if (!CLOSED_STATUSES.contains(order.getStatus())) {
                 if ("PENDING".equals(order.getStatus())) {
                     order.setStatus("PAID");
-                    order.setUpdatedAt(Instant.now());
+                    order.setUpdatedAt(now);
                     orders.save(order);
                 }
                 inventoryService.confirmReservation(order.getId());
-                buyer = order.getBuyer();
             }
-        } else if (payment.getCustomOrder() != null) {
-            CustomOrder customOrder = payment.getCustomOrder();
-            if ("CANCELLED".equals(customOrder.getStatus()) || "EXPIRED".equals(customOrder.getStatus())) {
-                log.warn("Yêu cầu in 3D {} đã ở trạng thái {}, giao dịch PayOS {} ghi nhận thanh toán muộn cần đối soát",
-                        customOrder.getId(), customOrder.getStatus(), payment.getTransactionId());
-                buyer = customOrder.getBuyer();
-            } else {
-                // Không kéo lùi tiến trình nếu đơn custom đã chuẩn bị hoặc in
-                if ("ACCEPTED".equals(customOrder.getStatus()) || "QUOTED".equals(customOrder.getStatus())) {
-                    customOrder.setStatus("PAID");
-                    customOrder.setUpdatedAt(Instant.now());
-                    customs.save(customOrder);
-                }
-                buyer = customOrder.getBuyer();
-            }
-        } else if (payment.getCheckoutOrder() != null) {
-            CheckoutOrder checkoutOrder = payment.getCheckoutOrder();
-            if ("CANCELLED".equals(checkoutOrder.getStatus()) || "EXPIRED".equals(checkoutOrder.getStatus())) {
-                log.warn("Đơn checkout {} đã ở trạng thái {}, giao dịch PayOS {} ghi nhận thanh toán muộn cần đối soát",
-                        checkoutOrder.getId(), checkoutOrder.getStatus(), payment.getTransactionId());
-                buyer = checkoutOrder.getUser();
-            } else {
-                if ("PENDING_QUOTE".equals(checkoutOrder.getStatus())
-                        || "QUOTED".equals(checkoutOrder.getStatus())
-                        || "CONFIRMED".equals(checkoutOrder.getStatus())) {
-                    checkoutOrder.setStatus("PAID");
-                    checkoutOrder.setUpdatedAt(Instant.now());
-                    checkoutOrders.save(checkoutOrder);
-                }
-                buyer = checkoutOrder.getUser();
-
-                List<Order> childOrders = orders.findByCheckoutOrderId(checkoutOrder.getId());
-                for (Order o : childOrders) {
-                    if (!"CANCELLED".equals(o.getStatus()) && !"EXPIRED".equals(o.getStatus())) {
-                        if ("PENDING".equals(o.getStatus())) {
-                            o.setStatus("PAID");
-                            o.setUpdatedAt(Instant.now());
-                            orders.save(o);
-                        }
-                        inventoryService.confirmReservation(o.getId());
-                    }
-                }
-                List<CustomOrder> childCustoms = customs.findByCheckoutOrderId(checkoutOrder.getId());
-                for (CustomOrder c : childCustoms) {
-                    if (!"CANCELLED".equals(c.getStatus()) && !"EXPIRED".equals(c.getStatus())) {
-                        if (("ACCEPTED".equals(c.getStatus()) || "QUOTED".equals(c.getStatus())) && c.getQuotedPrice() != null) {
-                            c.setStatus("PAID");
-                            c.setUpdatedAt(Instant.now());
-                            customs.save(c);
-                        }
-                    }
-                }
-            }
-        } else if (payment.getSubscriptionPurchase() != null) {
-            SubscriptionPurchase purchase = payment.getSubscriptionPurchase();
-            buyer = purchase.getUser();
-            if ("CANCELLED".equals(purchase.getStatus()) || "EXPIRED".equals(purchase.getStatus())) {
-                log.warn("Giao dịch mua gói {} đã ở trạng thái {}, giao dịch PayOS {} ghi nhận thanh toán muộn cần đối soát",
-                        purchase.getId(), purchase.getStatus(), payment.getTransactionId());
-            } else {
-                userSubscriptionService.activateSubscriptionFromPurchase(purchase);
-                notificationMessage = "Gói hội viên " + purchase.getPlan().getName() + " đã được kích hoạt thành công.";
-                notificationLink = "/profile";
-            }
-            // QUAN TRỌNG: Mua gói hội viên bằng tiền TUYỆT ĐỐI KHÔNG CỘNG ĐIỂM THƯỞNG để tránh loop tiền -> điểm -> đổi gói
-        } else {
-            throw bad("Giao dịch không có thông tin đơn hàng");
         }
+        for (CustomOrder custom : customs.findByCheckoutOrderId(checkout.getId())) {
+            if ("ACCEPTED".equals(custom.getStatus()) && custom.getQuotedPrice() != null) {
+                custom.setStatus("PAID");
+                custom.setUpdatedAt(now);
+                customs.save(custom);
+            }
+        }
+        commitBenefits(SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, checkout.getId());
+    }
 
+    private void commitBenefits(SubscriptionBenefitService.UsageTargetType type, UUID id) {
         if (subscriptionBenefitService != null) {
-            if (payment.getOrder() != null) {
-                subscriptionBenefitService.commitAppliedBenefits(
-                        SubscriptionBenefitService.UsageTargetType.ORDER, payment.getOrder().getId());
-            } else if (payment.getCustomOrder() != null) {
-                subscriptionBenefitService.commitAppliedBenefits(
-                        SubscriptionBenefitService.UsageTargetType.CUSTOM_ORDER, payment.getCustomOrder().getId());
-            } else if (payment.getCheckoutOrder() != null) {
-                subscriptionBenefitService.commitAppliedBenefits(
-                        SubscriptionBenefitService.UsageTargetType.CHECKOUT_ORDER, payment.getCheckoutOrder().getId());
-            }
+            subscriptionBenefitService.commitAppliedBenefits(type, id);
         }
+    }
 
+    private boolean isCheckoutChild(Payment payment) {
+        return (payment.getOrder() != null && payment.getOrder().getCheckoutOrder() != null)
+                || (payment.getCustomOrder() != null && payment.getCustomOrder().getCheckoutOrder() != null);
+    }
+
+    private String targetStatus(Payment payment) {
+        if (payment.getOrder() != null) {
+            return payment.getOrder().getStatus();
+        }
+        if (payment.getCustomOrder() != null) {
+            return payment.getCustomOrder().getStatus();
+        }
+        if (payment.getCheckoutOrder() != null) {
+            return payment.getCheckoutOrder().getStatus();
+        }
+        return payment.getSubscriptionPurchase() != null ? payment.getSubscriptionPurchase().getStatus() : "";
+    }
+
+    private BigDecimal targetAmount(Payment payment) {
+        if (payment.getOrder() != null) {
+            return payment.getOrder().getTotalAmount();
+        }
+        if (payment.getCheckoutOrder() != null) {
+            return payment.getCheckoutOrder().getTotalAmount();
+        }
+        if (payment.getCustomOrder() != null) {
+            return OrderPricing.customPayable(payment.getCustomOrder());
+        }
+        return payment.getSubscriptionPurchase() != null ? payment.getSubscriptionPurchase().getAmount() : null;
+    }
+
+    private boolean isPayableTarget(Payment payment, String targetStatus) {
+        if (targetStatus == null) {
+            return false;
+        }
+        if (payment.getSubscriptionPurchase() != null) {
+            return "PENDING".equals(targetStatus);
+        }
+        if (payment.getCheckoutOrder() != null) {
+            return payment.getCheckoutOrder().getZeroAmountSettledAt() == null
+                    && ("CONFIRMED".equals(targetStatus) || FULFILLMENT_STATUSES.contains(targetStatus));
+        }
+        if (payment.getCustomOrder() != null) {
+            return payment.getCustomOrder().getZeroAmountSettledAt() == null
+                    && ("ACCEPTED".equals(targetStatus) || FULFILLMENT_STATUSES.contains(targetStatus));
+        }
+        return payment.getOrder() != null && ("PENDING".equals(targetStatus) || FULFILLMENT_STATUSES.contains(targetStatus));
+    }
+
+    private void flagReconciliation(Payment payment, BigDecimal amount, Instant receivedAt,
+                                    String reason, boolean preserveSettlement) {
+        BigDecimal recorded = payment.getReconciliationAmount();
+        if (recorded != null && recorded.compareTo(amount) >= 0 && reason.equals(payment.getReconciliationReason())) {
+            return;
+        }
+        if (!preserveSettlement) {
+            payment.setStatus(PENDING_RECONCILIATION);
+            payment.setPaidAt(null);
+        }
+        if (recorded == null || amount.compareTo(recorded) > 0) {
+            payment.setReconciliationAmount(amount);
+            payment.setReconciliationReceivedAt(receivedAt);
+        }
+        payment.setReconciliationReason(reason);
+        payment.setUpdatedAt(Instant.now());
         payments.save(payment);
-        notifications.sendNotification(
-                buyer,
-                "Đã nhận thanh toán",
-                notificationMessage,
-                "PAYMENT",
-                notificationLink
-        );
+        log.warn("Giao dịch PayOS {} chờ đối soát: {}", payment.getTransactionId(), reason);
     }
 
     private CreatePaymentLinkResponseDTO response(Payment payment) {

@@ -2,7 +2,10 @@ package com.fpt.printhub_3d.dto.checkout;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Builder;
+
+import java.math.BigDecimal;
 
 @Builder
 @Schema(description = "Yêu cầu cập nhật trạng thái đơn cha CheckoutOrder từ Admin")
@@ -19,10 +22,17 @@ public record AdminCheckoutOrderStatusRequestDTO(
 
         @Schema(description = "Trường dự phòng tương thích cũ cho cancelReason")
         @Size(max = 1000)
-        String reason
+        String reason,
+
+        @PositiveOrZero
+        BigDecimal codCollectedAmount
 ) {
     public AdminCheckoutOrderStatusRequestDTO(String status, String action, String cancelReason) {
-        this(status, action, cancelReason, null);
+        this(status, action, cancelReason, null, null);
+    }
+
+    public AdminCheckoutOrderStatusRequestDTO(String status, String action, String cancelReason, String reason) {
+        this(status, action, cancelReason, reason, null);
     }
 
     public String getEffectiveTarget() {

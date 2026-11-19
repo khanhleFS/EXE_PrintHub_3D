@@ -29,14 +29,16 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
         UUID getOrderId();
         UUID getCustomOrderId();
         UUID getCheckoutOrderId();
+        UUID getParentCheckoutOrderId();
         UUID getSubscriptionPurchaseId();
     }
 
     @Query("""
             SELECT o.id AS orderId, c.id AS customOrderId, co.id AS checkoutOrderId,
-                   sp.id AS subscriptionPurchaseId
+                   sp.id AS subscriptionPurchaseId, COALESCE(op.id, cp.id) AS parentCheckoutOrderId
             FROM Payment p LEFT JOIN p.order o LEFT JOIN p.customOrder c
                  LEFT JOIN p.checkoutOrder co LEFT JOIN p.subscriptionPurchase sp
+                 LEFT JOIN o.checkoutOrder op LEFT JOIN c.checkoutOrder cp
             WHERE p.transactionId = :code
             """)
     Optional<PaymentTarget> findTargetByTransactionId(@Param("code") String code);
@@ -45,7 +47,7 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
             SELECT p.transactionId FROM Payment p
             WHERE p.status = 'PENDING' AND p.gateway = 'PAYOS' AND p.expiresAt <= :now
                   AND p.transactionId IS NOT NULL
-                  AND (p.checkoutOrder IS NOT NULL OR p.customOrder IS NOT NULL)
+                  AND (p.checkoutOrder IS NOT NULL OR p.customOrder IS NOT NULL OR p.subscriptionPurchase IS NOT NULL)
             """)
     List<String> findExpiredQuotePaymentCodes(@Param("now") Instant now);
 }

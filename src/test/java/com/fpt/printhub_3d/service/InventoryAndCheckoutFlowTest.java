@@ -211,7 +211,7 @@ class InventoryAndCheckoutFlowTest {
         pendingOrder.setBuyer(testBuyer);
         pendingOrder.setStatus("PENDING");
 
-        when(orderRepository.findById(testOrderId)).thenReturn(Optional.of(pendingOrder));
+        when(orderRepository.findLockedById(testOrderId)).thenReturn(Optional.of(pendingOrder));
         when(paymentRepository.findByOrderId(testOrderId)).thenReturn(Optional.empty());
 
         // Giáº£ láº­p reservation active Ä‘ang cÃ³

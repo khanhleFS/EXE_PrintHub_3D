@@ -54,10 +54,12 @@ public class Payment {
     @Column(name = "gateway", nullable = false, length = 30)
     private String gateway;
 
-    @Size(max = 20)
+    public static final String PENDING_RECONCILIATION = "PENDING_RECONCILIATION";
+
+    @Size(max = 30)
     @NotNull
     @ColumnDefault("'PENDING'")
-    @Column(name = "status", nullable = false, length = 20)
+    @Column(name = "status", nullable = false, length = 30)
     private String status;
 
     @Size(max = 150)
@@ -67,6 +69,15 @@ public class Payment {
 
     @Column(name = "paid_at")
     private Instant paidAt;
+
+    @Column(name = "reconciliation_amount", precision = 18, scale = 2)
+    private BigDecimal reconciliationAmount;
+
+    @Column(name = "reconciliation_received_at")
+    private Instant reconciliationReceivedAt;
+
+    @Column(name = "reconciliation_reason", length = 40)
+    private String reconciliationReason;
 
     @NotNull
     @ColumnDefault("CURRENT_TIMESTAMP")
