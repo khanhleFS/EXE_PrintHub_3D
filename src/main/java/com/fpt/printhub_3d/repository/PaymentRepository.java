@@ -2,6 +2,7 @@ package com.fpt.printhub_3d.repository;
 
 import com.fpt.printhub_3d.entity.Payment;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -24,6 +25,14 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     Optional<Payment> findByTransactionId(String transactionId);
 
     boolean existsByTransactionId(String transactionId);
+
+    @EntityGraph(attributePaths = {"checkoutOrder", "order", "order.checkoutOrder", "customOrder",
+            "customOrder.checkoutOrder", "subscriptionPurchase"})
+    @Query("""
+            SELECT p FROM Payment p WHERE p.status IN ('SUCCESS', 'PENDING_RECONCILIATION')
+                 OR p.reconciliationAmount IS NOT NULL
+            """)
+    List<Payment> findReportablePayments();
 
     interface PaymentTarget {
         UUID getOrderId();

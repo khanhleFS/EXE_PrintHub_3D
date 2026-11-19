@@ -81,6 +81,9 @@ public class Order {
     @Column(name = "payment_due_at")
     private Instant paymentDueAt;
 
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
     @Column(name = "subtotal_amount", precision = 18, scale = 2)
     private BigDecimal subtotalAmount;
 

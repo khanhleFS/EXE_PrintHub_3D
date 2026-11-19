@@ -8,8 +8,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,7 +23,5 @@ public interface SubscriptionPurchaseRepository extends JpaRepository<Subscripti
 
     Optional<SubscriptionPurchase> findByIdempotencyKey(String idempotencyKey);
 
-    @Query("SELECT COALESCE(SUM(sp.amount), 0) FROM SubscriptionPurchase sp WHERE sp.status = 'PAID' AND sp.settledAt >= :from AND sp.settledAt <= :to")
-    BigDecimal sumSettledRevenueBetween(@Param("from") Instant from, @Param("to") Instant to);
 }
 

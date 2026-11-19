@@ -620,8 +620,12 @@ public class OrderServiceImpl implements OrderService {
             }
         }
 
+        Instant transitionAt = Instant.now();
         order.setStatus(resolvedStatus);
-        order.setUpdatedAt(Instant.now());
+        order.setUpdatedAt(transitionAt);
+        if ("COMPLETED".equals(resolvedStatus) && order.getCompletedAt() == null) {
+            order.setCompletedAt(transitionAt);
+        }
         orderRepository.save(order);
 
         if ("COMPLETED".equals(resolvedStatus)) {

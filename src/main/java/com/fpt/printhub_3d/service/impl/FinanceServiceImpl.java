@@ -2,13 +2,13 @@ package com.fpt.printhub_3d.service.impl;
 
 import com.fpt.printhub_3d.dto.finance.CommissionFundResponseDTO;
 import com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO;
+import com.fpt.printhub_3d.dto.finance.FinancialReportPeriod;
 import com.fpt.printhub_3d.dto.finance.RevenueAnalyticsResponseDTO;
 import com.fpt.printhub_3d.entity.Order;
 import com.fpt.printhub_3d.entity.Payment;
 import com.fpt.printhub_3d.repository.OrderRepository;
 import com.fpt.printhub_3d.repository.PaymentRepository;
 import com.fpt.printhub_3d.repository.PointWalletRepository;
-import com.fpt.printhub_3d.repository.SubscriptionPurchaseRepository;
 import com.fpt.printhub_3d.service.FinanceService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -29,7 +30,7 @@ public class FinanceServiceImpl implements FinanceService {
     private final OrderRepository orderRepository;
     private final PaymentRepository paymentRepository;
     private final PointWalletRepository pointWalletRepository;
-    private final SubscriptionPurchaseRepository subscriptionPurchaseRepository;
+    private final FinancialReportingService financialReporting;
 
     @Override
     @Transactional(readOnly = true)
@@ -48,15 +49,21 @@ public class FinanceServiceImpl implements FinanceService {
     @Override
     @Transactional(readOnly = true)
     public RevenueAnalyticsResponseDTO getRevenueAnalytics(Instant from, Instant to) {
-        BigDecimal orderCommissionRevenue = orderRepository.sumCommissionFeeBetween(from, to);
+        var financialSummary = financialReporting.summarize(new FinancialReportPeriod(from, to));
+        BigDecimal orderCommissionRevenue;
+        if (from != null && to != null) {
+            orderCommissionRevenue = orderRepository.sumCommissionFeeBetween(from, to);
+        } else if (from != null) {
+            orderCommissionRevenue = orderRepository.sumCommissionFeeFrom(from);
+        } else if (to != null) {
+            orderCommissionRevenue = orderRepository.sumCommissionFeeBefore(to);
+        } else {
+            orderCommissionRevenue = orderRepository.sumCommissionFee();
+        }
         if (orderCommissionRevenue == null) {
             orderCommissionRevenue = BigDecimal.ZERO;
         }
-
-        BigDecimal customerSubscriptionRevenue = subscriptionPurchaseRepository.sumSettledRevenueBetween(from, to);
-        if (customerSubscriptionRevenue == null) {
-            customerSubscriptionRevenue = BigDecimal.ZERO;
-        }
+        BigDecimal customerSubscriptionRevenue = financialSummary.subscriptionCashVnd();
 
         return RevenueAnalyticsResponseDTO.builder()
                 .from(from)
@@ -64,20 +71,22 @@ public class FinanceServiceImpl implements FinanceService {
                 .orderCommissionRevenue(orderCommissionRevenue)
                 .customerSubscriptionRevenue(customerSubscriptionRevenue)
                 .totalRevenue(orderCommissionRevenue.add(customerSubscriptionRevenue))
+                .financialSummary(financialSummary)
                 .build();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public FinanceSummaryResponseDTO getFinanceSummary() {
+    public FinanceSummaryResponseDTO getFinanceSummary(FinancialReportPeriod period) {
+        var financialSummary = financialReporting.summarize(period);
         List<Order> orders = orderRepository.findAll();
-        BigDecimal totalGmv = BigDecimal.ZERO;
+        BigDecimal marketplaceGmv = BigDecimal.ZERO;
         BigDecimal totalCommission = BigDecimal.ZERO;
 
         for (Order o : orders) {
             if ("PAID".equals(o.getStatus()) || "COMPLETED".equals(o.getStatus())) {
                 if (o.getTotalAmount() != null) {
-                    totalGmv = totalGmv.add(o.getTotalAmount());
+                    marketplaceGmv = marketplaceGmv.add(o.getTotalAmount());
                 }
                 if (o.getCommissionFee() != null) {
                     totalCommission = totalCommission.add(o.getCommissionFee());
@@ -87,7 +96,7 @@ public class FinanceServiceImpl implements FinanceService {
             }
         }
 
-        BigDecimal factoryPayout = totalGmv.subtract(totalCommission);
+        BigDecimal factoryPayout = marketplaceGmv.subtract(totalCommission);
         if (factoryPayout.compareTo(BigDecimal.ZERO) < 0) {
             factoryPayout = BigDecimal.ZERO;
         }
@@ -98,11 +107,8 @@ public class FinanceServiceImpl implements FinanceService {
         BigDecimal studentWalletBalance = BigDecimal.valueOf(studentPointSum);
 
         List<Payment> payments = paymentRepository.findAll().stream()
-                .sorted((a, b) -> {
-                    Instant tA = a.getCreatedAt() != null ? a.getCreatedAt() : Instant.EPOCH;
-                    Instant tB = b.getCreatedAt() != null ? b.getCreatedAt() : Instant.EPOCH;
-                    return tB.compareTo(tA);
-                })
+                .filter(payment -> period.includes(transactionDate(payment)))
+                .sorted(Comparator.comparing(this::transactionDate).reversed().thenComparing(Payment::getId))
                 .limit(20)
                 .toList();
 
@@ -111,7 +117,10 @@ public class FinanceServiceImpl implements FinanceService {
             String userName = "Khách hàng";
             String type = "Thanh toán " + (p.getGateway() != null ? p.getGateway() : "Cổng sàn");
 
-            if (p.getOrder() != null && p.getOrder().getBuyer() != null) {
+            if (p.getCheckoutOrder() != null && p.getCheckoutOrder().getUser() != null) {
+                userName = p.getCheckoutOrder().getUser().getFullName();
+                type = "Checkout #" + p.getCheckoutOrder().getId().toString().substring(0, 8);
+            } else if (p.getOrder() != null && p.getOrder().getBuyer() != null) {
                 userName = p.getOrder().getBuyer().getFullName();
                 type = "Đơn hàng #" + p.getOrder().getId().toString().substring(0, 8);
             } else if (p.getCustomOrder() != null && p.getCustomOrder().getBuyer() != null) {
@@ -126,20 +135,28 @@ public class FinanceServiceImpl implements FinanceService {
                     .id(p.getTransactionId() != null ? p.getTransactionId() : "TXN-" + p.getId().toString().substring(0, 8))
                     .user(userName)
                     .type(type)
-                    .amount(p.getAmount())
+                    .amount(Payment.PENDING_RECONCILIATION.equals(p.getStatus()) ? p.getReconciliationAmount() : p.getAmount())
                     .status("SUCCESS".equalsIgnoreCase(p.getStatus()) || "PAID".equalsIgnoreCase(p.getStatus()) ? "Thành công" : p.getStatus())
                     .gateway(p.getGateway())
-                    .date(p.getPaidAt() != null ? p.getPaidAt() : p.getCreatedAt())
+                    .date(transactionDate(p))
                     .build());
         }
 
         return FinanceSummaryResponseDTO.builder()
-                .totalGmv(totalGmv)
+                .totalGmv(financialSummary.completedGoodsValueVnd())
                 .platformCommission(totalCommission)
                 .factoryPayout(factoryPayout)
                 .studentWalletBalance(studentWalletBalance)
                 .totalOrders((long) orders.size())
                 .recentTransactions(txList)
+                .financialSummary(financialSummary)
                 .build();
+    }
+
+    private Instant transactionDate(Payment payment) {
+        if (payment.getPaidAt() != null) {
+            return payment.getPaidAt();
+        }
+        return payment.getReconciliationReceivedAt() != null ? payment.getReconciliationReceivedAt() : payment.getCreatedAt();
     }
 }

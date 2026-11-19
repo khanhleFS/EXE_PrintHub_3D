@@ -580,8 +580,12 @@ public class CustomOrderServiceImpl implements CustomOrderService {
             }
         }
 
+        Instant transitionAt = Instant.now();
         order.setStatus(resolvedStatus);
-        order.setUpdatedAt(Instant.now());
+        order.setUpdatedAt(transitionAt);
+        if ("COMPLETED".equals(resolvedStatus) && order.getCompletedAt() == null) {
+            order.setCompletedAt(transitionAt);
+        }
         customOrderRepository.save(order);
 
         if ("COMPLETED".equals(resolvedStatus)) {

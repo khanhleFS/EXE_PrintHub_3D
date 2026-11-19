@@ -192,6 +192,22 @@ Webhook và `verify` dùng số tiền PayOS xác nhận đã nhận theo mã gi
 
 Checkout và chi tiết custom trả thông tin chứng từ trong `paymentEvidence`. API `verify` trả thêm `reconciliationAmount`, `reconciliationReceivedAt` và `reconciliationReason` khi cần. Mốc nhận tiền ưu tiên dữ liệu giao dịch của PayOS. Khi PayOS không cung cấp thời điểm đọc được, backend dùng mốc quan sát khoản thu.
 
+### Báo cáo tài chính dùng chung
+
+`GET /api/admin/dashboard` và `GET /api/admin/finance/summary` trả `result.financialSummary` cùng cấu trúc. Cả hai nhận `from` và `to`, ví dụ `?from=2026-11-19&to=2026-11-20` cho trọn ngày 19/11 giờ Việt Nam. Có thể gửi thời điểm ISO-8601 kèm múi giờ. Kỳ là `[from, to)`. Bỏ mốc nào thì kỳ mở về phía đó, bỏ cả hai thì xem toàn thời gian.
+
+| Field mới | Cách đọc |
+|---|---|
+| `orderCashVnd`, `subscriptionCashVnd`, `totalCashVnd` | Tiền từ chứng từ thu hợp lệ theo `paidAt`. Tiền gói cần đơn mua `PAID` và chứng từ PayOS `SUCCESS` khớp số tiền. |
+| `shippingCashVnd` | Phần phí giao thực thu đã nằm trong `orderCashVnd`, tính khi bảng phí giao đã chốt có đủ dữ liệu. |
+| `completedGoodsValueVnd` | Tiền hàng sau giảm theo `completedAt`, loại phí giao, tính một lần theo checkout cha hoặc theo đơn độc lập. |
+| `pendingReconciliationVnd`, `reconciliationItems` | Số tiền chờ đối soát có mốc trong kỳ và các dòng cần kiểm tra theo mã đơn, mã giao dịch, lý do. Dòng thiếu mốc vẫn hiện để tra. |
+| `completionIssues` | Đơn hoàn tất thiếu `completedAt`, bảng giá hoặc chứng từ cần kiểm tra. Đơn thiếu mốc giao hiển thị trong danh sách, không được gán vào kỳ hiện tại. |
+
+`paidAmount` và `totalRevenue` của Dashboard admin dùng tổng thực thu mới. `totalGmv` của Finance Summary dùng giá trị hàng hoàn tất. Hoa hồng, tiền trả xưởng và số dư ví giữ phạm vi toàn thời gian. Nhật ký Finance trả tối đa 20 dòng theo kỳ. Tổng hợp tài chính đọc toàn bộ chứng từ liên quan trước khi áp dụng giới hạn nhật ký.
+
+`completed_at` là cột nullable trên `checkout_orders`, `orders` và `custom_orders`. Luồng hoàn tất ghi lần đầu. Dữ liệu cũ thiếu mốc giữ giá trị trống để đối soát.
+
 ## Hợp đồng cho BE2
 
 ### Chứng từ và mốc hoàn tất

@@ -1098,14 +1098,21 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             }
             validateParentForwardTransition(current, nextStatus);
 
+            Instant transitionAt = Instant.now();
             co.setStatus(nextStatus);
-            co.setUpdatedAt(Instant.now());
+            co.setUpdatedAt(transitionAt);
+            if ("COMPLETED".equals(nextStatus) && co.getCompletedAt() == null) {
+                co.setCompletedAt(transitionAt);
+            }
             checkoutOrderRepository.save(co);
 
             for (CustomOrder c : customs) {
                 if (!"CANCELLED".equalsIgnoreCase(c.getStatus())) {
                     c.setStatus(nextStatus);
-                    c.setUpdatedAt(Instant.now());
+                    c.setUpdatedAt(transitionAt);
+                    if ("COMPLETED".equals(nextStatus) && c.getCompletedAt() == null) {
+                        c.setCompletedAt(transitionAt);
+                    }
                     customOrderRepository.save(c);
                 }
             }
@@ -1113,7 +1120,10 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
             for (Order o : orders) {
                 if (!"CANCELLED".equalsIgnoreCase(o.getStatus())) {
                     o.setStatus(marketplaceTarget);
-                    o.setUpdatedAt(Instant.now());
+                    o.setUpdatedAt(transitionAt);
+                    if ("COMPLETED".equals(marketplaceTarget) && o.getCompletedAt() == null) {
+                        o.setCompletedAt(transitionAt);
+                    }
                     orderRepository.save(o);
                 }
             }

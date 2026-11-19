@@ -28,4 +28,6 @@ public interface CustomOrderRepository extends JpaRepository<CustomOrder, UUID> 
     List<CustomOrder> findByCheckoutOrderId(UUID checkoutOrderId);
 
     List<CustomOrder> findAllByOrderByCreatedAtDesc();
+
+    List<CustomOrder> findByStatusAndCheckoutOrderIsNull(String status);
 }

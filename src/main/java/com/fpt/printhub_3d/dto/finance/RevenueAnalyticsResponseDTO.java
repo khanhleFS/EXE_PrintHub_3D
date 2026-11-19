@@ -11,6 +11,7 @@ public record RevenueAnalyticsResponseDTO(
         Instant to,
         BigDecimal orderCommissionRevenue,
         BigDecimal customerSubscriptionRevenue,
-        BigDecimal totalRevenue
+        BigDecimal totalRevenue,
+        FinancialReportDTO financialSummary
 ) {
 }

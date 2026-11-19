@@ -1,5 +1,6 @@
 package com.fpt.printhub_3d.dto.dashboard;
 
+import com.fpt.printhub_3d.dto.finance.FinancialReportDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
@@ -20,7 +21,8 @@ public record DashboardResponseDTO(
         int activePrintingOrders,
         int pendingDisputesCount,
         long totalUsersCount,
-        List<RecentPrintJobDTO> recentJobs
+        List<RecentPrintJobDTO> recentJobs,
+        FinancialReportDTO financialSummary
 ) {
     @Builder
     public record RecentPrintJobDTO(

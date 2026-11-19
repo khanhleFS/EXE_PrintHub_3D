@@ -26,6 +26,7 @@ import com.fpt.printhub_3d.service.impl.CheckoutOrderServiceImpl;
 import com.fpt.printhub_3d.service.impl.CustomOrderReviewServiceImpl;
 import com.fpt.printhub_3d.service.impl.CustomOrderServiceImpl;
 import com.fpt.printhub_3d.service.impl.DashboardServiceImpl;
+import com.fpt.printhub_3d.service.impl.FinancialReportingService;
 import com.fpt.printhub_3d.service.impl.PaymentEvidenceServiceImpl;
 import com.fpt.printhub_3d.service.impl.OrderRewardServiceImpl;
 import com.fpt.printhub_3d.service.impl.PaymentServiceImpl;
@@ -454,6 +455,12 @@ class CustomPricingAndPaymentFlowTest {
             assertEquals(status, checkoutOrderService.updateAdminCheckoutOrderStatus(admin, checkout.getId(), action).status());
         }
         assertEquals("COMPLETED", design.getStatus());
+        Instant completedAt = checkout.getCompletedAt();
+        assertNotNull(completedAt);
+        assertEquals(completedAt, design.getCompletedAt());
+        checkoutOrderService.updateAdminCheckoutOrderStatus(admin, checkout.getId(),
+                AdminCheckoutOrderStatusRequestDTO.builder().status("COMPLETED").build());
+        assertEquals(completedAt, checkout.getCompletedAt());
 
         var evidenceService = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
                 orderRepository, customOrderRepository, java.time.Clock.systemUTC(), benefitService);
@@ -504,6 +511,7 @@ class CustomPricingAndPaymentFlowTest {
             service.updateCustomOrderStatus(custom.getId(), action, admin);
         }
         assertEquals("COMPLETED", custom.getStatus());
+        assertNotNull(custom.getCompletedAt());
         assertEquals(0, service.completeRewards(custom.getId()).rewardPointsEarned());
 
         var evidenceService = new PaymentEvidenceServiceImpl(paymentRepository, checkoutOrderRepository,
@@ -533,8 +541,11 @@ class CustomPricingAndPaymentFlowTest {
         assertEquals((short) 5, review.rating());
 
         when(customOrderRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(custom));
+        when(customOrderRepository.findByStatusAndCheckoutOrderIsNull("COMPLETED")).thenReturn(List.of(custom));
+        var reporting = new FinancialReportingService(paymentRepository, checkoutOrderRepository, orderRepository,
+                customOrderRepository, Clock.systemUTC());
         var dashboard = new DashboardServiceImpl(mock(OrderService.class), service, mock(DisputeRepository.class),
-                userRepository).getDashboard(admin, true);
+                userRepository, reporting).getDashboard(admin, true);
         assertEquals(BigDecimal.ZERO, dashboard.totalRevenue());
         verify(paymentRepository, never()).save(any());
         verifyNoInteractions(payOS);

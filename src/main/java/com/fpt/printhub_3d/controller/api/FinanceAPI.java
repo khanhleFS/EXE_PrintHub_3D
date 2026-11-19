@@ -40,5 +40,6 @@ public interface FinanceAPI {
             security = @SecurityRequirement(name = "Bearer Authentication")
     )
     @GetMapping("/api/admin/finance/summary")
-    ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO>> getFinanceSummary();
+    ResponseEntity<ApiResponse<com.fpt.printhub_3d.dto.finance.FinanceSummaryResponseDTO>> getFinanceSummary(
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to);
 }

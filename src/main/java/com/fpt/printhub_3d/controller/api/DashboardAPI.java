@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 @Tag(name = "Dashboard APIs", description = "APIs for dashboard telemetry and metrics")
 public interface DashboardAPI {
@@ -17,5 +18,6 @@ public interface DashboardAPI {
 
     @Operation(summary = "Get system dashboard metrics (Admin)", security = @SecurityRequirement(name = "Bearer Authentication"))
     @GetMapping("/api/admin/dashboard")
-    ResponseEntity<ApiResponse<DashboardResponseDTO>> getAdminDashboard();
+    ResponseEntity<ApiResponse<DashboardResponseDTO>> getAdminDashboard(
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to);
 }

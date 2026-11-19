@@ -122,6 +122,9 @@ public class CustomOrder {
     @Column(name = "zero_amount_settled_at")
     private Instant zeroAmountSettledAt;
 
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
     public Instant resolveZeroAmountSettledAt() {
         if (checkoutOrder == null) {
             return zeroAmountSettledAt;

@@ -126,11 +126,7 @@ public class PaymentEvidenceServiceImpl implements PaymentEvidenceService {
     }
 
     private boolean isValidReceipt(Payment payment, Source source) {
-        return "SUCCESS".equalsIgnoreCase(payment.getStatus()) && payment.getPaidAt() != null
-                && payment.getAmount() != null && payment.getAmount().signum() > 0
-                && source.expectedAmount() != null && payment.getAmount().compareTo(source.expectedAmount()) == 0
-                && ("PAYOS".equalsIgnoreCase(payment.getGateway()) || "COD".equalsIgnoreCase(payment.getGateway()))
-                && (source.method() == null || source.method().equalsIgnoreCase(payment.getGateway()));
+        return payment.isSettledReceiptFor(source.expectedAmount(), source.method());
     }
 
     private Source checkoutSource(CheckoutOrder checkout) {

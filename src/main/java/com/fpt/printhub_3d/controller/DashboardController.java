@@ -4,6 +4,7 @@ import com.fpt.printhub_3d.common.response.ApiResponse;
 import com.fpt.printhub_3d.common.util.SecurityUtils;
 import com.fpt.printhub_3d.controller.api.DashboardAPI;
 import com.fpt.printhub_3d.dto.dashboard.DashboardResponseDTO;
+import com.fpt.printhub_3d.dto.finance.FinancialReportPeriod;
 import com.fpt.printhub_3d.entity.User;
 import com.fpt.printhub_3d.service.DashboardService;
 import lombok.RequiredArgsConstructor;
@@ -35,9 +36,9 @@ public class DashboardController implements DashboardAPI {
 
     @Override
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<DashboardResponseDTO>> getAdminDashboard() {
+    public ResponseEntity<ApiResponse<DashboardResponseDTO>> getAdminDashboard(String from, String to) {
         User user = SecurityUtils.getCurrentUser();
-        DashboardResponseDTO result = dashboardService.getDashboard(user, true);
+        DashboardResponseDTO result = dashboardService.getDashboard(user, true, FinancialReportPeriod.parse(from, to));
         return ResponseEntity.ok(ApiResponse.<DashboardResponseDTO>builder()
                 .code(200)
                 .message("Lấy toàn bộ số liệu dashboard thành công")

@@ -89,4 +89,10 @@ public class Payment {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    public boolean isSettledReceiptFor(BigDecimal expectedAmount, String expectedGateway) {
+        return "SUCCESS".equalsIgnoreCase(status) && paidAt != null && amount != null && amount.signum() > 0
+                && expectedAmount != null && amount.compareTo(expectedAmount) == 0
+                && ("PAYOS".equalsIgnoreCase(gateway) || "COD".equalsIgnoreCase(gateway))
+                && (expectedGateway == null || expectedGateway.equalsIgnoreCase(gateway));
+    }
 }
