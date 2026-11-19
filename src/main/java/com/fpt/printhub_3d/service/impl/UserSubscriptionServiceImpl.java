@@ -220,23 +220,30 @@ public class UserSubscriptionServiceImpl implements UserSubscriptionService {
                             " pts) không đủ để đổi gói " + plan.getName() + " (" + plan.getRequiredPoints() + " pts).");
         }
 
-        // 6. Trừ điểm và ghi nhận lịch sử giao dịch (Ledger audit)
+        // 6. Trừ điểm, kích hoạt/gia hạn gói và ghi nhận lịch sử giao dịch kèm liên kết gói (Ledger audit)
         wallet.setBalance(wallet.getBalance() - plan.getRequiredPoints());
         wallet.setUpdatedAt(LocalDateTime.now());
         pointWalletRepository.save(wallet);
 
+        // 7. Kích hoạt hoặc gia hạn gói dịch vụ trước khi lưu bút toán để gắn đầy đủ referenceSubscriptionId
+        UserSubscription userSub = processSubscriptionActivation(user, plan);
+
+        UUID subId = userSub != null ? userSub.getId() : null;
         PointTransaction tx = PointTransaction.builder()
                 .pointWallet(wallet)
                 .amount(-plan.getRequiredPoints())
                 .type(PointTransactionType.REDEEM)
                 .description("Đổi điểm lấy gói hội viên: " + plan.getName())
+                .sourceType("SUBSCRIPTION_REDEEM")
+                .sourceId(subId != null ? subId.toString() : plan.getId().toString())
+                .rewardType("SUBSCRIPTION_REDEEM")
+                .referencePlanId(plan.getId())
+                .referencePlanName(plan.getName())
+                .referenceSubscriptionId(subId)
                 .createdAt(LocalDateTime.now())
                 .build();
         pointTransactionRepository.save(tx);
         log.info("Đã trừ [{}] điểm của User [{}]. Số dư mới: [{}] pts", plan.getRequiredPoints(), userId, wallet.getBalance());
-
-        // 7. Kích hoạt hoặc gia hạn gói dịch vụ
-        UserSubscription userSub = processSubscriptionActivation(user, plan);
 
         // 8. Lưu Idempotency record nếu có
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {

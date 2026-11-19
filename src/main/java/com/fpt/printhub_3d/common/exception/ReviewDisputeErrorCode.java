@@ -21,7 +21,8 @@ public enum ReviewDisputeErrorCode implements ErrorCode {
     ORDER_ITEM_ALREADY_REVIEWED(50011, "Mục sản phẩm này đã được đánh giá", HttpStatus.CONFLICT, "review.order_item_already_reviewed"),
     REVIEW_NOT_FOUND(50012, "Đánh giá không tồn tại", HttpStatus.NOT_FOUND, "review.not_found"),
     REVIEW_EDIT_EXPIRED(50013, "Đã quá thời hạn 7 ngày để chỉnh sửa đánh giá", HttpStatus.BAD_REQUEST, "review.edit_expired"),
-    REVIEW_PUBLIC_LIMIT_REACHED(50014, "Đã đạt giới hạn tối đa 10 đánh giá công khai. Vui lòng ẩn bớt trước khi bật thêm.", HttpStatus.CONFLICT, "review.public_limit_reached");
+    REVIEW_PUBLIC_LIMIT_REACHED(50014, "Đã đạt giới hạn tối đa 10 đánh giá công khai. Vui lòng ẩn bớt trước khi bật thêm.", HttpStatus.CONFLICT, "review.public_limit_reached"),
+    INVALID_REVIEW_INPUT(50015, "Nội dung đánh giá không hợp lệ (số sao 1-5, tối đa 2000 ký tự, tối đa 5 ảnh)", HttpStatus.BAD_REQUEST, "review.invalid_input");
 
     private final int code;
     private final String message;

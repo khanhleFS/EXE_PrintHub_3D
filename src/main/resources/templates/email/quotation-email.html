@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Báo giá đơn in 3D - PrintHub 3D</title>
+</head>
+<body style="margin:0;padding:24px;background:#0a0c12;font-family:Arial,Helvetica,sans-serif;color:#e2e8f0;">
+<div style="max-width:600px;margin:0 auto;background:#111521;border:1px solid #1e293b;border-radius:16px;padding:28px;">
+    <h1 style="margin:0 0 8px;color:#39FF14;font-size:20px;">PrintHub 3D — Đã có báo giá mới</h1>
+    <p style="margin:0 0 18px;font-size:13px;color:#94a3b8;">
+        Mã đơn: <strong style="color:#ffffff;" th:text="${orderCode}">#00000000</strong> ·
+        Phiên bản báo giá: <strong style="color:#00e5ff;" th:text="${quoteVersion}">v1</strong>
+    </p>
+
+    <p style="font-size:14px;line-height:1.6;">
+        Xin chào <strong th:text="${recipientName}">Quý khách</strong>,<br>
+        Xưởng PrintHub 3D đã hoàn tất báo giá cho toàn bộ thiết kế trong yêu cầu của bạn.
+    </p>
+
+    <div th:if="${lines != null and !lines.isEmpty()}" style="margin:18px 0;padding:14px;background:#090c14;border:1px solid #1e293b;border-radius:12px;">
+        <div style="font-size:12px;font-weight:bold;color:#94a3b8;text-transform:uppercase;margin-bottom:8px;">Chi tiết thiết kế</div>
+        <div th:each="line : ${lines}" style="padding:6px 0;border-bottom:1px solid #1e293b;font-size:13px;">
+            <strong style="color:#ffffff;" th:text="${line.designName}">Thiết kế</strong>
+            <span style="color:#94a3b8;"> × <span th:text="${line.quantity}">1</span> bản</span>
+        </div>
+    </div>
+
+    <div style="margin:18px 0;padding:16px;background:#090c14;border:1px solid #1e293b;border-radius:12px;font-size:13px;">
+        <div style="font-size:11px;font-weight:bold;color:#f59e0b;text-transform:uppercase;margin-bottom:10px;">
+            Bảng tiền dự kiến sau ưu đãi (chưa chốt cho tới khi bạn xác nhận)
+        </div>
+        <table style="width:100%;border-collapse:collapse;color:#cbd5e1;">
+            <tr>
+                <td style="padding:4px 0;">Tiền hàng gia công:</td>
+                <td style="padding:4px 0;text-align:right;font-weight:bold;" th:text="${itemsSubtotal}">100.000đ</td>
+            </tr>
+            <tr>
+                <td style="padding:4px 0;">Ưu đãi hội viên dự kiến<span th:if="${appliedSubscriptionName != null}" th:text="' (' + ${appliedSubscriptionName} + ')'"></span>:</td>
+                <td style="padding:4px 0;text-align:right;color:#34d399;" th:text="'-' + ${itemDiscountAmount}">-0đ</td>
+            </tr>
+            <tr>
+                <td style="padding:4px 0;">Phí giao hàng gốc:</td>
+                <td style="padding:4px 0;text-align:right;" th:text="${shippingFee}">30.000đ</td>
+            </tr>
+            <tr>
+                <td style="padding:4px 0;">Giảm phí giao dự kiến:</td>
+                <td style="padding:4px 0;text-align:right;color:#34d399;" th:text="'-' + ${shippingDiscountAmount}">-0đ</td>
+            </tr>
+            <tr style="border-top:1px solid #334155;">
+                <td style="padding:10px 0 0;font-weight:bold;color:#ffffff;font-size:14px;">Tổng phải trả dự kiến:</td>
+                <td style="padding:10px 0 0;text-align:right;font-weight:bold;color:#39FF14;font-size:18px;" th:text="${estimatedPayableAmount}">90.000đ</td>
+            </tr>
+        </table>
+    </div>
+
+    <div style="text-align:center;margin:24px 0 12px;">
+        <a th:href="${actionUrl}"
+           style="display:inline-block;padding:12px 24px;background:#39FF14;color:#040508;font-weight:bold;text-decoration:none;border-radius:10px;font-size:14px;">
+            Xem báo giá &amp; Xác nhận thanh toán
+        </a>
+    </div>
+
+    <p style="font-size:12px;color:#64748b;margin-top:20px;line-height:1.5;">
+        Lưu ý: Mức ưu đãi hội viên sẽ được kiểm tra lại và chốt chính thức tại thời điểm bạn nhấn xác nhận đơn hàng.
+    </p>
+</div>
+</body>
+</html>

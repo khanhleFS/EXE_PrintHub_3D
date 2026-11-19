@@ -13,4 +13,6 @@ import java.util.UUID;
 public interface PointTransactionRepository extends JpaRepository<PointTransaction, Long> {
     List<PointTransaction> findByPointWallet_UserIdOrderByCreatedAtDesc(UUID userId);
     Page<PointTransaction> findByPointWallet_UserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
+    boolean existsBySourceTypeAndSourceIdAndRewardType(String sourceType, String sourceId, String rewardType);
+    List<PointTransaction> findBySourceTypeAndSourceId(String sourceType, String sourceId);
 }
