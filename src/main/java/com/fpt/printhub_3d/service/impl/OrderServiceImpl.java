@@ -12,6 +12,8 @@ import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import com.fpt.printhub_3d.service.PaymentEvidenceService;
+import com.fpt.printhub_3d.service.OrderRewardService;
+import com.fpt.printhub_3d.entity.Enumeration.OrderRewardStatus;
 import lombok.RequiredArgsConstructor;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import lombok.extern.slf4j.Slf4j;
@@ -47,6 +49,9 @@ public class OrderServiceImpl implements OrderService {
 
     @Autowired
     private PaymentEvidenceService paymentEvidenceService;
+
+    @Autowired
+    private OrderRewardService orderRewardService;
 
     @Autowired
     public OrderServiceImpl(
@@ -331,6 +336,15 @@ public class OrderServiceImpl implements OrderService {
 
         if (!"COMPLETED".equals(order.getStatus())) {
             throw new ApiException(OrderErrorCode.ORDER_NOT_COMPLETED, "Đơn hàng chưa ở trạng thái COMPLETED");
+        }
+
+        if (orderRewardService != null && order.getCheckoutOrder() != null) {
+            var reward = orderRewardService.processCompletionReward(PaymentEvidenceService.SourceType.CHECKOUT_ORDER,
+                    order.getCheckoutOrder().getId());
+            if (reward.status() == OrderRewardStatus.PENDING_PAYMENT_EVIDENCE) {
+                throw new ApiException(OrderErrorCode.PAYMENT_REQUIRED, "Đơn hàng chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
+            }
+            return reward.toLegacyResponse().withOrderId(orderId);
         }
 
         if (order.resolveZeroAmountSettledAt() != null) {

@@ -20,4 +20,9 @@ public record RewardCompletionResponseDTO(
         return new RewardCompletionResponseDTO(orderId, customerId, customerName, 0,
                 currentBalance != null ? currentBalance : 0, true);
     }
+
+    public RewardCompletionResponseDTO withOrderId(UUID requestedOrderId) {
+        return new RewardCompletionResponseDTO(requestedOrderId, customerId, customerName, rewardPointsEarned,
+                totalRewardPoints, alreadyProcessed);
+    }
 }

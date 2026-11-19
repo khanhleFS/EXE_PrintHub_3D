@@ -253,3 +253,30 @@ Dùng các record và phương thức hiện có trong `EmailOutboxService`.
 | `enqueuePaymentReceipt(PaymentReceiptEmailEvent)` | Gọi trong transaction xác nhận thu PayOS/COD hợp lệ lần đầu. Dùng `paymentId` đã lưu làm khóa. C1 dùng nguồn `CHECKOUT_ORDER`, S1 dùng `SUBSCRIPTION_PURCHASE` và tên gói đã lưu lúc mua. Chỉ ghi sự kiện với khoản thu tiền hợp lệ lớn hơn 0. |
 
 BE2 phụ trách worker gửi và thử lại. Khi nghiệm thu C1 và S1, kỳ vọng một email báo giá C1 và hai biên nhận tương ứng 90.000đ và 50.000đ.
+
+## Nghiệm thu E2E-01
+
+Chạy `E2e01AcceptanceTest` trên JDK 21 bằng Maven. Test dùng MockMvc, Spring Security, JPA và H2 trong bộ nhớ. Khách, admin, gói G1 và checkout một dòng custom được tạo riêng cho test. PayOS trả trạng thái giả lập. Test xác minh bản ghi outbox và HTML của email. Worker gửi thư được tắt trong lần chạy cô lập.
+
+| Mốc | Điều kiện kiểm tra |
+|---|---|
+| Báo giá và chốt C1 | Tiền hàng 100.000đ, giảm hàng 10.000đ, giảm ship 30.000đ. Báo giá, bảng tiền chốt và yêu cầu tạo link PayOS cùng ra 90.000đ. Gửi lại báo giá giữ phiên bản. |
+| Trước giao | Dashboard và Finance cùng báo thực thu 140.000đ, trong đó C1 là 90.000đ và S1 là 50.000đ. Giá trị hàng hoàn tất là 0đ, ví U1 là 0 xu. |
+| Sau giao | Thực thu vẫn 140.000đ. Giá trị hàng hoàn tất lên 90.000đ. Checkout cha ghi 9 xu một lần, kể cả khi lặp trạng thái hoàn tất hoặc gọi API thưởng của dòng con. |
+| Lịch sử hội viên | Ba trang kích thước 1 có ba giao dịch riêng và cùng tổng 50.000đ. S2 đổi 80 xu, S3 hủy. Khách gọi API admin nhận HTTP 403. |
+| Email | Ba bản ghi chờ gửi gồm báo giá C1, biên nhận C1 và biên nhận S1. Đối chiếu theo phiên bản báo giá và ID chứng từ. |
+
+Test in dòng `E2E-01` chứa ID checkout, đơn mua, chứng từ, bút toán và bản ghi email trong báo cáo Surefire. Để nghiệm thu trên môi trường chung, BE1 và BE2 đối chiếu các mốc tương tự trên PostgreSQL và hộp thư test, còn FE đối chiếu ba màn báo cáo và lịch sử với JSON API.
+
+Lần chạy JDK 21 ngày 19/11/2026 có 76 ca đạt, 0 lỗi, 0 ca bỏ qua. Các mã dưới đây thuộc cơ sở dữ liệu H2 của lần chạy đó.
+
+| Dữ liệu | ID |
+|---|---|
+| Checkout C1 | `74b7af6a-02a5-491a-95bb-a5f5d2a7bc94` |
+| Chứng từ C1 | `22855b62-519b-44e2-a769-ef2d1131944f` |
+| Đơn mua S1 | `06fea4d9-5223-4c27-9d6d-09bf72b9415d` |
+| Chứng từ S1 | `286f3f77-b541-4df6-81b4-e64dc6d9f167` |
+| Bút toán đổi 80 xu S2 | `1` |
+| Đơn mua đã hủy S3 | `114a4d70-24b8-4046-b947-5c4274a9db05` |
+| Bút toán cộng 9 xu C1 | `2` |
+| Ba bản ghi outbox | `e15e8f01-2b8c-47f6-b023-a90dd26f5a29`, `e47582df-3cfe-4df5-88ad-4c07c2c8e6ad`, `1a2d16ce-3fdf-4963-b1a5-b662cdc2ac0f` |

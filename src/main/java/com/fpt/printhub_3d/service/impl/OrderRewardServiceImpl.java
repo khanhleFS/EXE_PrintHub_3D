@@ -381,14 +381,18 @@ public class OrderRewardServiceImpl implements OrderRewardService {
         List<CustomOrder> customs = customOrderRepository.findByCheckoutOrderId(checkoutId);
         List<Order> orders = orderRepository.findByCheckoutOrderId(checkoutId);
         BigDecimal net = computeCheckoutEligibleNetGoods(co, customs, orders);
+        int legacyPoints = customs.stream().filter(custom -> Boolean.TRUE.equals(custom.getRewardProcessed()))
+                .mapToInt(custom -> custom.getRewardPointsEarned() != null ? custom.getRewardPointsEarned() : 0).sum()
+                + orders.stream().filter(order -> Boolean.TRUE.equals(order.getRewardProcessed()))
+                .mapToInt(order -> order.getRewardPointsEarned() != null ? order.getRewardPointsEarned() : 0).sum();
         return new CanonicalSource(
                 PaymentEvidenceService.SourceType.CHECKOUT_ORDER,
                 co.getId(),
                 co.getUser(),
                 co.getStatus(),
                 net,
-                false,
-                0,
+                legacyPoints > 0,
+                legacyPoints,
                 co,
                 null,
                 null

@@ -58,7 +58,7 @@ public class NotificationServiceImpl implements NotificationService {
 
     @Override
     public void markAllAsRead(User user) {
-        notificationRepository.markAllAsReadByUserId(user.getId());
+        notificationRepository.markAllAsReadByUserId(user.getId(), Instant.now());
     }
 
     @Override

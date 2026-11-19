@@ -25,6 +25,7 @@ import com.fpt.printhub_3d.service.CheckoutOrderService;
 import com.fpt.printhub_3d.service.CloudinaryService;
 import com.fpt.printhub_3d.service.InventoryService;
 import com.fpt.printhub_3d.service.NotificationService;
+import com.fpt.printhub_3d.service.OrderRewardService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
 import com.fpt.printhub_3d.service.PaymentService;
 import com.fpt.printhub_3d.service.PaymentEvidenceService;
@@ -74,6 +75,9 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
     @Autowired
     private PaymentEvidenceService paymentEvidenceService;
+
+    @Autowired
+    private OrderRewardService orderRewardService;
 
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
@@ -1027,8 +1031,7 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
 
         if (current.equals(nextStatus)) {
             if (codCollectedAmount != null) {
-                paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, id,
-                        codCollectedAmount, admin);
+                evaluateCompletionReward(id, codCollectedAmount, admin);
             }
             return toDTO(co, null);
         }
@@ -1121,9 +1124,8 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
                     orderRepository.save(o);
                 }
             }
-            if (codCollectedAmount != null) {
-                paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, id,
-                        codCollectedAmount, admin);
+            if ("COMPLETED".equals(nextStatus)) {
+                evaluateCompletionReward(id, codCollectedAmount, admin);
             }
         }
 
@@ -1149,6 +1151,20 @@ public class CheckoutOrderServiceImpl implements CheckoutOrderService {
         }
 
         return toDTO(co, null);
+    }
+
+    private void evaluateCompletionReward(UUID checkoutId, BigDecimal collectedAmount, User admin) {
+        if (orderRewardService != null) {
+            if (collectedAmount == null) {
+                orderRewardService.processCompletionReward(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, checkoutId);
+            } else {
+                orderRewardService.completeCodAndReward(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, checkoutId,
+                        collectedAmount, admin);
+            }
+        } else if (collectedAmount != null) {
+            paymentEvidenceService.recordCodCollection(PaymentEvidenceService.SourceType.CHECKOUT_ORDER, checkoutId,
+                    collectedAmount, admin);
+        }
     }
 
     private CustomOrder createChildCustomOrder(User user, CheckoutOrder checkoutOrder, CheckoutOrderCreateRequestDTO request, CartItem cItem) {

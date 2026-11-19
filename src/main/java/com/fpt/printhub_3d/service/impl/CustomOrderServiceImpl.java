@@ -11,6 +11,7 @@ import com.fpt.printhub_3d.dto.payment.PaymentEvidenceResponseDTO;
 import com.fpt.printhub_3d.entity.CheckoutOrder;
 import com.fpt.printhub_3d.entity.CustomOrder;
 import com.fpt.printhub_3d.entity.Enumeration.CustomOrderStatus;
+import com.fpt.printhub_3d.entity.Enumeration.OrderRewardStatus;
 import com.fpt.printhub_3d.entity.Enumeration.UserRole;
 import com.fpt.printhub_3d.entity.FileAsset;
 import com.fpt.printhub_3d.entity.Order;
@@ -34,6 +35,8 @@ import com.fpt.printhub_3d.repository.PointWalletRepository;
 import java.time.LocalDateTime;
 import com.fpt.printhub_3d.service.NotificationService;
 import com.fpt.printhub_3d.service.OrderTransitionPolicy;
+import com.fpt.printhub_3d.service.OrderRewardService;
+import com.fpt.printhub_3d.service.PaymentEvidenceService;
 import com.fpt.printhub_3d.service.SubscriptionBenefitService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -68,6 +71,9 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     private final StoreSettingRepository storeSettingRepository;
     private final SubscriptionBenefitService subscriptionBenefitService;
     private final OrderEmailEvents emailEvents;
+
+    @Autowired
+    private OrderRewardService orderRewardService;
     private static final BigDecimal REWARD_POINT_UNIT = new BigDecimal("10000");
     private static final BigDecimal DEFAULT_SHIPPING_FEE = new BigDecimal("30000");
 
@@ -672,6 +678,24 @@ public class CustomOrderServiceImpl implements CustomOrderService {
     @Override
     @Transactional
     public RewardCompletionResponseDTO completeRewards(UUID customOrderId) {
+        if (orderRewardService != null) {
+            var checkoutId = customOrderRepository.findCheckoutId(customOrderId);
+            if (checkoutId.isPresent()) {
+                CustomOrder child = customOrderRepository.findById(customOrderId)
+                        .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND,
+                                "Không tìm thấy yêu cầu in ID: " + customOrderId));
+                if (!"COMPLETED".equals(child.getStatus())) {
+                    throw new ApiException(CommonErrorCode.BAD_REQUEST, "Yêu cầu in chưa ở trạng thái COMPLETED");
+                }
+                var reward = orderRewardService.processCompletionReward(PaymentEvidenceService.SourceType.CHECKOUT_ORDER,
+                        checkoutId.get());
+                if (reward.status() == OrderRewardStatus.PENDING_PAYMENT_EVIDENCE) {
+                    throw new ApiException(CommonErrorCode.BAD_REQUEST,
+                            "Yêu cầu in chưa hoàn tất thanh toán hợp lệ để nhận điểm thưởng");
+                }
+                return reward.toLegacyResponse().withOrderId(customOrderId);
+            }
+        }
         CustomOrder order = customOrderRepository.findLockedById(customOrderId)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy yêu cầu in ID: " + customOrderId));
 
