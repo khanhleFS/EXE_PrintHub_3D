@@ -1,6 +1,9 @@
 package com.fpt.printhub_3d.repository;
 
 import com.fpt.printhub_3d.entity.CustomOrderReview;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -14,4 +17,10 @@ public interface CustomOrderReviewRepository extends JpaRepository<CustomOrderRe
     Optional<CustomOrderReview> findByCustomOrderId(UUID customOrderId);
     List<CustomOrderReview> findByCustomOrderIdIn(Collection<UUID> customOrderIds);
     boolean existsByCustomOrderId(UUID customOrderId);
+
+    @EntityGraph(attributePaths = {"reviewer", "customOrder", "customOrder.checkoutOrder"})
+    Page<CustomOrderReview> findAllBy(Pageable pageable);
+
+    @EntityGraph(attributePaths = {"reviewer", "customOrder", "customOrder.checkoutOrder"})
+    Page<CustomOrderReview> findByRating(Short rating, Pageable pageable);
 }

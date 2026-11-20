@@ -1,10 +1,12 @@
 package com.fpt.printhub_3d.controller;
 
 import com.fpt.printhub_3d.common.response.ApiResponse;
+import com.fpt.printhub_3d.dto.review.AdminCustomOrderReviewDTO;
 import com.fpt.printhub_3d.dto.review.AdminReviewSummaryDTO;
 import com.fpt.printhub_3d.dto.review.ProductReviewResponseDTO;
 import com.fpt.printhub_3d.dto.review.ReviewVisibilityRequestDTO;
 import com.fpt.printhub_3d.dto.review.ReviewVisibilityResponseDTO;
+import com.fpt.printhub_3d.service.CustomOrderReviewService;
 import com.fpt.printhub_3d.service.ReviewService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -30,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminReviewController {
 
     private final ReviewService reviewService;
+    private final CustomOrderReviewService customOrderReviewService;
 
     @Operation(summary = "Get customer reviews (Admin)",
             security = @SecurityRequirement(name = "Bearer Authentication"))
@@ -43,6 +46,20 @@ public class AdminReviewController {
                 .code(200)
                 .message("Lấy danh sách đánh giá khách hàng thành công")
                 .result(reviewService.getAdminReviews(rating, isPublic, pageable))
+                .build();
+    }
+
+    @Operation(summary = "Get custom order 3D print reviews (Admin)",
+            security = @SecurityRequirement(name = "Bearer Authentication"))
+    @GetMapping("/custom-orders")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ApiResponse<Page<AdminCustomOrderReviewDTO>> getAdminCustomOrderReviews(
+            @RequestParam(name = "rating", required = false) @Min(1) @Max(5) Short rating,
+            @PageableDefault(size = 10) Pageable pageable) {
+        return ApiResponse.<Page<AdminCustomOrderReviewDTO>>builder()
+                .code(200)
+                .message("Lấy danh sách đánh giá đơn in custom thành công")
+                .result(customOrderReviewService.getAdminCustomOrderReviews(rating, pageable))
                 .build();
     }
 

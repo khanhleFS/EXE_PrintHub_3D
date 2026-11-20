@@ -3,6 +3,7 @@ package com.fpt.printhub_3d.service.impl;
 import com.fpt.printhub_3d.common.exception.ApiException;
 import com.fpt.printhub_3d.common.exception.CommonErrorCode;
 import com.fpt.printhub_3d.common.exception.ReviewDisputeErrorCode;
+import com.fpt.printhub_3d.dto.review.AdminCustomOrderReviewDTO;
 import com.fpt.printhub_3d.dto.review.CustomOrderReviewRequestDTO;
 import com.fpt.printhub_3d.dto.review.CustomOrderReviewResponseDTO;
 import com.fpt.printhub_3d.entity.CustomOrder;
@@ -14,6 +15,10 @@ import com.fpt.printhub_3d.repository.CustomOrderReviewRepository;
 import com.fpt.printhub_3d.service.CustomOrderReviewService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -134,6 +139,22 @@ public class CustomOrderReviewServiceImpl implements CustomOrderReviewService {
         return toResponse(review, clock.instant());
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public Page<AdminCustomOrderReviewDTO> getAdminCustomOrderReviews(Short rating, Pageable pageable) {
+        int pageSize = pageable != null ? Math.min(pageable.getPageSize(), 50) : 10;
+        int pageNumber = pageable != null ? Math.max(pageable.getPageNumber(), 0) : 0;
+        Pageable newestFirst = PageRequest.of(
+                pageNumber,
+                pageSize,
+                Sort.by(Sort.Direction.DESC, "createdAt", "id")
+        );
+        Page<CustomOrderReview> reviews = rating != null
+                ? customOrderReviewRepository.findByRating(rating, newestFirst)
+                : customOrderReviewRepository.findAllBy(newestFirst);
+        return reviews.map(this::toAdminResponse);
+    }
+
     private void validateRequest(CustomOrderReviewRequestDTO request) {
         if (request == null || request.rating() == null || request.rating() < 1 || request.rating() > 5) {
             throw new ApiException(ReviewDisputeErrorCode.INVALID_REVIEW_INPUT,
@@ -176,11 +197,36 @@ public class CustomOrderReviewServiceImpl implements CustomOrderReviewService {
                 .reviewerName(review.getReviewer() != null ? review.getReviewer().getFullName() : null)
                 .rating(review.getRating())
                 .comment(review.getComment())
-                .imageUrls(review.getImageUrls() != null ? new ArrayList<>(review.getImageUrls()) : List.of())
+                .imageUrls(copyImageUrls(review))
                 .canEdit(canEdit)
                 .editDeadlineAt(deadline)
                 .createdAt(review.getCreatedAt())
                 .updatedAt(review.getUpdatedAt())
                 .build();
+    }
+
+    private AdminCustomOrderReviewDTO toAdminResponse(CustomOrderReview review) {
+        CustomOrder order = review.getCustomOrder();
+        return AdminCustomOrderReviewDTO.builder()
+                .id(review.getId())
+                .customOrderId(order != null ? order.getId() : null)
+                .checkoutOrderId(order != null && order.getCheckoutOrder() != null
+                        ? order.getCheckoutOrder().getId() : null)
+                .rulerModel(order != null ? order.getRulerModel() : null)
+                .quantity(order != null ? order.getQuantity() : null)
+                .color(order != null ? order.getColor() : null)
+                .customName(order != null ? order.getCustomName() : null)
+                .reviewerId(review.getReviewer() != null ? review.getReviewer().getId() : null)
+                .reviewerName(review.getReviewer() != null ? review.getReviewer().getFullName() : null)
+                .rating(review.getRating())
+                .comment(review.getComment())
+                .imageUrls(copyImageUrls(review))
+                .createdAt(review.getCreatedAt())
+                .updatedAt(review.getUpdatedAt())
+                .build();
+    }
+
+    private List<String> copyImageUrls(CustomOrderReview review) {
+        return review.getImageUrls() != null ? new ArrayList<>(review.getImageUrls()) : List.of();
     }
 }
